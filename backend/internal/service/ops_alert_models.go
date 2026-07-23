@@ -59,6 +59,22 @@ type OpsAlertEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// OpsAlertAccountDetail 是账号请求告警的非敏感账号快照，用于邮件和事件详情定位。
+type OpsAlertAccountDetail struct {
+	ID           int64     `json:"id"`
+	AlertEventID int64     `json:"alert_event_id"`
+	AccountID    int64     `json:"account_id"`
+	AccountName  string    `json:"account_name"`
+	Platform     string    `json:"platform"`
+	GroupID      *int64    `json:"group_id,omitempty"`
+	GroupName    string    `json:"group_name"`
+	Diagnosis    string    `json:"diagnosis"`
+	ErrorPhase   string    `json:"error_phase"`
+	StatusCode   int       `json:"status_code"`
+	OccurredAt   time.Time `json:"occurred_at"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type OpsAlertSilence struct {
 	ID int64 `json:"id"`
 

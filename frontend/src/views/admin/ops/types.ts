@@ -7,6 +7,7 @@ export type ChartState = 'loading' | 'empty' | 'ready'
 export type {
   AlertRule,
   AlertEvent,
+  AlertAccountDetail,
   AlertSeverity,
   ThresholdMode,
   MetricType,

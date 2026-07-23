@@ -764,7 +764,10 @@ func renderNotificationEmailString(event, raw string, variables map[string]strin
 }
 
 func notificationEmailRawHTMLAllowed(event, placeholder string) bool {
-	return event == NotificationEmailEventOpsScheduledReport && placeholder == "report_html"
+	if event == NotificationEmailEventOpsScheduledReport && placeholder == "report_html" {
+		return true
+	}
+	return event == NotificationEmailEventOpsAlert && placeholder == "account_detail_html"
 }
 
 func notificationEmailAllowedPlaceholderSet(event string) map[string]struct{} {
@@ -1136,7 +1139,7 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Category:    "ops",
 		Optional:    false,
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
-			"rule_name", "severity", "alert_status", "metric_type", "operator", "metric_value", "threshold_value", "triggered_at", "alert_description"),
+			"rule_name", "severity", "alert_status", "metric_type", "operator", "metric_value", "threshold_value", "triggered_at", "alert_description", "account_detail_html"),
 	},
 	NotificationEmailEventOpsScheduledReport: {
 		Event:       NotificationEmailEventOpsScheduledReport,
@@ -1167,7 +1170,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 邮箱验证码",
-			HTML: notificationEmailCard("#4f46e5", "邮箱验证码", `
+			HTML: notificationEmailCardChinese("#4f46e5", "邮箱验证码", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的验证码是：</p>
 <p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center;">{{verification_code}}</p>
@@ -1188,7 +1191,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 密码重置请求",
-			HTML: notificationEmailCard("#7c3aed", "密码重置", `
+			HTML: notificationEmailCardChinese("#7c3aed", "密码重置", `
 <p>{{recipient_name}}，您好：</p>
 <p>我们收到了您的密码重置请求，请点击下方按钮设置新密码。</p>
 <p><a class="button" href="{{reset_url}}">重置密码</a></p>
@@ -1210,7 +1213,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 通知邮箱验证码",
-			HTML: notificationEmailCard("#0ea5e9", "通知邮箱验证", `
+			HTML: notificationEmailCardChinese("#0ea5e9", "通知邮箱验证", `
 <p>{{recipient_name}}，您好：</p>
 <p>您正在添加额外的通知邮箱，请输入以下验证码完成验证。</p>
 <p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center;">{{verification_code}}</p>
@@ -1229,7 +1232,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 订阅购买成功",
-			HTML: notificationEmailCard("#2563eb", "订阅已开通", `
+			HTML: notificationEmailCardChinese("#2563eb", "订阅已开通", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的 <strong>{{subscription_group}}</strong> 订阅已成功开通，有效期 <strong>{{subscription_days}}</strong> 天。</p>
 <p>到期时间：<strong>{{expiry_time}}</strong></p>
@@ -1247,7 +1250,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 订阅将在 {{days_remaining}} 天后到期",
-			HTML: notificationEmailCard("#f97316", "订阅到期提醒", `
+			HTML: notificationEmailCardChinese("#f97316", "订阅到期提醒", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的 <strong>{{subscription_group}}</strong> 订阅将在 <strong>{{days_remaining}}</strong> 天后到期。</p>
 <p>到期时间：<strong>{{expiry_time}}</strong></p>
@@ -1266,7 +1269,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 余额不足提醒",
-			HTML: notificationEmailCard("#d97706", "余额不足提醒", `
+			HTML: notificationEmailCardChinese("#d97706", "余额不足提醒", `
 <p>{{recipient_name}}，您好：</p>
 <p>您当前余额为 <strong>${{current_balance}}</strong>，已低于提醒阈值 <strong>${{threshold}}</strong>。</p>
 <p>请及时充值以免服务中断。</p>
@@ -1285,7 +1288,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 余额充值成功",
-			HTML: notificationEmailCard("#16a34a", "余额充值成功", `
+			HTML: notificationEmailCardChinese("#16a34a", "余额充值成功", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的余额充值 <strong>${{recharge_amount}}</strong> 已完成。</p>
 <p>当前余额：<strong>${{current_balance}}</strong></p>
@@ -1308,7 +1311,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 账号限额告警 - {{account_name}}",
-			HTML: notificationEmailCard("#dc2626", "账号限额告警", `
+			HTML: notificationEmailCardChinese("#dc2626", "账号限额告警", `
 <p>上游账号 <strong>{{account_name}}</strong> 已触发配置的额度告警阈值。</p>
 <table style="width:100%;border-collapse:collapse;">
   <tr><td>账号 ID</td><td>{{account_id}}</td></tr>
@@ -1336,7 +1339,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 账户风控提醒",
-			HTML: notificationEmailCard("#ef4444", "账户风控提醒", `
+			HTML: notificationEmailCardChinese("#ef4444", "账户风控提醒", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的 API 请求触发了平台内容审核/风控策略。</p>
 <table style="width:100%;border-collapse:collapse;">
@@ -1364,7 +1367,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 账户已被禁用",
-			HTML: notificationEmailCard("#b91c1c", "账户已被禁用", `
+			HTML: notificationEmailCardChinese("#b91c1c", "账户已被禁用", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的账户在统计周期内多次触发平台内容审核/风控规则，系统已自动禁用该账户。</p>
 <table style="width:100%;border-collapse:collapse;">
@@ -1392,7 +1395,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 网络安全策略拦截提醒",
-			HTML: notificationEmailCard("#ef4444", "网络安全策略拦截提醒", `
+			HTML: notificationEmailCardChinese("#ef4444", "网络安全策略拦截提醒", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的请求被上游服务商的网络安全策略（cyber policy）拦截。</p>
 <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
@@ -1413,17 +1416,19 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p><strong>Status</strong>: {{alert_status}}</p>
 <p><strong>Metric</strong>: {{metric_type}} {{operator}} {{metric_value}} (threshold {{threshold_value}})</p>
 <p><strong>Fired at</strong>: {{triggered_at}}</p>
-<p><strong>Description</strong>: {{alert_description}}</p>`),
+<p><strong>Description</strong>: {{alert_description}}</p>
+{{account_detail_html}}`),
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[运维告警][{{severity}}] {{rule_name}}",
-			HTML: notificationEmailCard("#ea580c", "运维告警", `
+			HTML: notificationEmailCardChinese("#ea580c", "运维告警", `
 <p><strong>规则</strong>：{{rule_name}}</p>
 <p><strong>严重级别</strong>：{{severity}}</p>
 <p><strong>状态</strong>：{{alert_status}}</p>
 <p><strong>指标</strong>：{{metric_type}} {{operator}} {{metric_value}}（阈值 {{threshold_value}}）</p>
 <p><strong>触发时间</strong>：{{triggered_at}}</p>
-<p><strong>说明</strong>：{{alert_description}}</p>`),
+<p><strong>说明</strong>：{{alert_description}}</p>
+{{account_detail_html}}`),
 		},
 	},
 	NotificationEmailEventOpsScheduledReport: {
@@ -1631,6 +1636,14 @@ func notificationEmailOpsScheduledReportTemplate(locale string) string {
 }
 
 func notificationEmailCard(accent, title, content string) string {
+	return notificationEmailCardWithFooter(accent, title, content, "This email was sent by {{site_name}}. Please do not reply directly.")
+}
+
+func notificationEmailCardChinese(accent, title, content string) string {
+	return notificationEmailCardWithFooter(accent, title, content, "此邮件由 {{site_name}} 自动发送，请勿直接回复。")
+}
+
+func notificationEmailCardWithFooter(accent, title, content, footer string) string {
 	return `<!DOCTYPE html>
 <html>
 <head>
@@ -1651,7 +1664,7 @@ func notificationEmailCard(accent, title, content string) string {
   <div class="container">
     <div class="header"><h1>` + title + `</h1></div>
     <div class="content">` + content + `</div>
-    <div class="footer">This email was sent by {{site_name}}. Please do not reply directly.</div>
+    <div class="footer">` + footer + `</div>
   </div>
 </body>
 </html>`

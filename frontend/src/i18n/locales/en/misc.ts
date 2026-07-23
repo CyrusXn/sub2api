@@ -31,6 +31,7 @@ export default {
     refresh: 'Refresh',
     sourceMode: 'Source Build',
     sourceModeHint: 'Source build, use git pull to update',
+    customModeHint: 'Custom builds show official release notes only; update through the project deployment workflow',
     updateNow: 'Update Now',
     updating: 'Updating...',
     updateComplete: 'Update Complete',

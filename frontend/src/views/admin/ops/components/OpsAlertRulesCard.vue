@@ -234,6 +234,14 @@ const metricDefinitions = computed(() => {
       recommendedThreshold: 0
     },
     {
+      type: 'account_request_failure',
+      group: 'account',
+      label: t('admin.ops.alertRules.metrics.accountRequestFailure'),
+      description: t('admin.ops.alertRules.metricDescriptions.accountRequestFailure'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
+    },
+    {
       type: 'overload_account_count',
       group: 'account',
       label: t('admin.ops.alertRules.metrics.overloadAccountCount'),

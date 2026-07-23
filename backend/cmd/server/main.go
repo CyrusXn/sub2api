@@ -35,6 +35,7 @@ var (
 	Commit    = "unknown"
 	Date      = "unknown"
 	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	Edition   = ""
 )
 
 func init() {
@@ -146,6 +147,7 @@ func runMainServer() {
 	buildInfo := handler.BuildInfo{
 		Version:   Version,
 		BuildType: BuildType,
+		Edition:   Edition,
 	}
 
 	app, err := initializeApplication(buildInfo)

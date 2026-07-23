@@ -14,6 +14,10 @@ type OpsEmailAlertConfig struct {
 	RateLimitPerHour      int      `json:"rate_limit_per_hour"`
 	BatchingWindowSeconds int      `json:"batching_window_seconds"`
 	IncludeResolvedAlerts bool     `json:"include_resolved_alerts"`
+	QuietHoursEnabled     bool     `json:"quiet_hours_enabled"`
+	QuietHoursStart       string   `json:"quiet_hours_start"`
+	QuietHoursEnd         string   `json:"quiet_hours_end"`
+	QuietDigestEnabled    bool     `json:"quiet_digest_enabled"`
 }
 
 type OpsEmailReportConfig struct {

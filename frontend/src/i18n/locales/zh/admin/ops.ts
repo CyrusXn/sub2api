@@ -423,6 +423,17 @@ export default {
           resolved: '已恢复',
           manualResolved: '手动已解决'
         },
+        diagnosis: {
+          insufficient_balance: '余额或额度不足',
+          all_accounts_unavailable: '全部账号不可用',
+          partial_account_failure: '部分账号异常',
+          unknown: '原因未知'
+        },
+        dimensions: {
+          availableAccounts: '可用账号 {available}/{total}',
+          affectedAccounts: '受影响账号 {count}',
+          signals: '失败请求 {count}'
+        },
         detail: {
           title: '告警详情',
           loading: '加载详情中...',
@@ -440,6 +451,19 @@ export default {
           resolvedAt: '解决时间',
           ruleId: '规则 ID',
           dimensions: '维度信息',
+          accountDetailsTitle: '异常账号明细',
+          accountDetailsHint: '记录触发本次告警的具体账号，不包含任何凭据或上游原始响应',
+          accountDetailsCount: '共 {count} 个账号',
+          accountDetailsLoading: '加载异常账号明细中...',
+          accountDetailsLoadFailed: '加载异常账号明细失败',
+          accountDetailsLegacyEmpty: '该事件产生于精准账号记录启用前，暂无账号明细',
+          accountName: '账号名称',
+          accountId: '账号 ID',
+          accountPlatform: '平台',
+          accountGroup: '分组',
+          accountPhase: '故障阶段',
+          accountStatus: '状态码',
+          accountOccurredAt: '发生时间',
           historyTitle: '历史记录',
           historyHint: '同一规则 + 相同维度的最近事件',
           historyLoading: '加载历史中...',
@@ -497,6 +521,7 @@ export default {
           accountErrorCount: '错误账号数（不含临时不可调度）',
           accountErrorRatio: '错误账号比例 (%)',
           accountTempUnscheduledCount: '临时不可调度账号数',
+          accountRequestFailure: '账号请求连接异常',
           overloadAccountCount: '过载账号数'
         },
         metricDescriptions: {
@@ -515,6 +540,7 @@ export default {
           accountErrorCount: '统计窗口内产生错误的账号数量（不含临时不可调度）。',
           accountErrorRatio: '统计窗口内错误账号占比（0~100）。',
           accountTempUnscheduledCount: '当前处于临时不可调度状态的账号数量（如代理/凭据故障被自动摘除）。',
+          accountRequestFailure: '上游账号连接、凭证获取、重试耗尽或无可用账号时即时触发，并自动判别故障原因。',
           overloadAccountCount: '统计窗口内过载账号数量。'
         },
         hints: {
@@ -672,6 +698,11 @@ export default {
         emailPlaceholder: '输入邮箱地址',
         recipientsHint: '若为空，系统将使用第一个管理员邮箱作为默认收件人',
         minSeverity: '最低级别',
+        quietHours: '夜间免打扰',
+        quietHoursHint: '使用北京时间；静默期间只记录告警，到结束时间发送一封汇总邮件',
+        quietHoursStart: '静默开始',
+        quietHoursEnd: '静默结束',
+        quietDigest: '结束后发送汇总',
         reportConfig: '评估报告配置',
         enableReport: '开启评估报告',
         reportRecipients: '评估报告接收邮箱',
@@ -735,6 +766,39 @@ export default {
           requestErrorRateMaxRange: '请求错误率最大值必须在0-100之间',
           upstreamErrorRateMaxRange: '上游错误率最大值必须在0-100之间',
           openaiQuotaAutoPauseRange: 'OpenAI 配额自动暂停阈值必须在 0-100 之间'
+        }
+      },
+      alertEmailDeliveries: {
+        title: '告警邮件记录',
+        masterSwitch: '发送邮件',
+        quietHours: '北京时间 {start}-{end} 静默，结束后汇总夜间告警',
+        enabled: '告警邮件已开启',
+        disabled: '告警邮件已关闭',
+        switchFailed: '切换告警邮件状态失败',
+        loadFailed: '加载告警邮件记录失败',
+        empty: '暂无告警邮件记录',
+        detailTitle: '告警邮件详情',
+        mailDetail: '邮件中的脱敏异常详情',
+        failureReason: '未发送或失败原因',
+        openError: '错误日志 #{id}',
+        status: {
+          all: '全部状态',
+          sent: '已发送',
+          failed: '发送失败',
+          quietHours: '夜间静默',
+          disabled: '开关关闭',
+          rateLimited: '邮件限流',
+          silenced: '规则静默'
+        },
+        columns: {
+          time: '时间',
+          status: '状态',
+          recipient: '收件人',
+          rule: '规则',
+          severity: '级别',
+          targetSite: '请求目标站点',
+          account: '异常账号',
+          action: '操作'
         }
       },
       concurrency: {

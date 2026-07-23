@@ -99,6 +99,14 @@
     }"
   >
     <table class="w-full min-w-max divide-y divide-gray-200 dark:divide-dark-700">
+      <colgroup>
+        <col v-if="selectable" class="datatable-select-col" />
+        <col
+          v-for="column in columns"
+          :key="`col-${column.key}`"
+          :style="getColumnWidthStyle(column)"
+        />
+      </colgroup>
       <thead class="table-header bg-gray-50 dark:bg-dark-800">
         <tr>
           <th
@@ -121,23 +129,24 @@
             :key="column.key"
             scope="col"
             :aria-sort="column.sortable ? getColumnAriaSort(column.key) : undefined"
+            :style="getColumnWidthStyle(column)"
             :class="[
-              'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
+              'sticky-header-cell relative py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
               getAdaptivePaddingClass(),
-              { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable },
+              { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable && !isResizing },
               getStickyColumnClass(column, index),
               column.class
             ]"
-            @click="column.sortable && handleSort(column.key)"
+            @click="column.sortable && !isResizing && handleSort(column.key)"
           >
-            <div :class="['flex items-center space-x-1', getHeaderContentAlignmentClass(column)]">
+            <div :class="['flex min-w-0 items-center space-x-1 pr-2', getHeaderContentAlignmentClass(column)]">
               <slot
                 :name="`header-${column.key}`"
                 :column="column"
                 :sort-key="sortKey"
                 :sort-order="sortOrder"
               >
-                <span>{{ column.label }}</span>
+                <span class="truncate">{{ column.label }}</span>
               </slot>
               <span
                 v-if="column.sortable"
@@ -162,6 +171,15 @@
                 </svg>
               </span>
             </div>
+            <span
+              class="col-resize-handle"
+              :class="{ 'is-resizing': resizingColumnKey === column.key }"
+              data-test="column-resize-handle"
+              :aria-label="`Resize ${column.label || column.key}`"
+              @mousedown.prevent.stop="startColumnResize($event, column, index)"
+              @click.prevent.stop
+              @dblclick.prevent.stop="resetColumnWidth(column.key)"
+            ></span>
           </th>
         </tr>
       </thead>
@@ -171,7 +189,12 @@
           <td v-if="selectable" class="w-11 min-w-11 px-3 py-4">
             <div class="mx-auto h-4 w-4 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
           </td>
-          <td v-for="column in columns" :key="column.key" :class="['whitespace-nowrap py-4', getAdaptivePaddingClass()]">
+          <td
+            v-for="column in columns"
+            :key="column.key"
+            :style="getColumnWidthStyle(column)"
+            :class="['whitespace-nowrap py-4', getAdaptivePaddingClass()]"
+          >
             <div class="animate-pulse">
               <div class="h-4 w-3/4 rounded bg-gray-200 dark:bg-dark-700"></div>
             </div>
@@ -233,21 +256,33 @@
             <td
               v-for="(column, colIndex) in columns"
               :key="column.key"
+              :style="getColumnWidthStyle(column)"
               :class="[
-                'whitespace-nowrap py-4 text-sm text-gray-900 dark:text-gray-100',
+                'datatable-cell py-4 text-sm text-gray-900 dark:text-gray-100',
+                // 操作/分组等复杂单元格允许换行，普通文本列默认不换行
+                column.key === 'actions' || column.key === 'groups' ? 'whitespace-normal' : 'whitespace-nowrap',
                 getAdaptivePaddingClass(),
                 getStickyColumnClass(column, colIndex),
                 column.class
               ]"
+              @mouseenter="showCellTooltip($event, column, item.row)"
+              @mouseleave="hideCellTooltip"
+              @focusin="showCellTooltip($event, column, item.row)"
+              @focusout="hideCellTooltip"
             >
-              <slot :name="`cell-${column.key}`"
-                    :row="item.row"
-                    :value="item.row[column.key]"
-                    :expanded="actionsExpanded">
-                {{ column.formatter
-                   ? column.formatter(item.row[column.key], item.row)
-                   : item.row[column.key] }}
-              </slot>
+              <div
+                class="datatable-cell-content min-w-0"
+                :class="column.key === 'actions' || column.key === 'groups' ? '' : 'overflow-hidden text-ellipsis'"
+              >
+                <slot :name="`cell-${column.key}`"
+                      :row="item.row"
+                      :value="item.row[column.key]"
+                      :expanded="actionsExpanded">
+                  {{ column.formatter
+                     ? column.formatter(item.row[column.key], item.row)
+                     : item.row[column.key] }}
+                </slot>
+              </div>
             </td>
           </tr>
           <tr v-if="virtualPaddingBottom > 0" aria-hidden="true">
@@ -258,6 +293,16 @@
         </template>
       </tbody>
     </table>
+    <Teleport to="body">
+      <div
+        v-if="cellTooltipState.visible && cellTooltipState.text"
+        class="datatable-cell-tooltip"
+        data-test="cell-tooltip"
+        :style="{ left: cellTooltipState.x + 'px', top: cellTooltipState.y + 'px' }"
+      >
+        {{ cellTooltipState.text }}
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -401,6 +446,7 @@ const attachDesktopTableTracking = () => {
 }
 
 onMounted(() => {
+  syncColumnWidthsFromProps()
   if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)
     isDesktopViewport.value = desktopViewportMediaQuery.matches
@@ -416,6 +462,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cleanupColumnResizeListeners()
+  if (tooltipHideTimer) {
+    clearTimeout(tooltipHideTimer)
+    tooltipHideTimer = null
+  }
   detachDesktopTableTracking()
   if (desktopViewportMediaQuery && desktopViewportListener) {
     if (typeof desktopViewportMediaQuery.removeEventListener === 'function') {
@@ -448,6 +499,15 @@ interface Props {
    */
   sortStorageKey?: string
   /**
+   * Persist column widths to localStorage using this key.
+   * If omitted, widths are still saved using a key derived from column keys.
+   */
+  columnWidthStorageKey?: string
+  /** 是否允许拖拽调整列宽，默认开启 */
+  resizableColumns?: boolean
+  /** 是否为单元格显示悬停 tooltip，默认开启 */
+  cellTooltip?: boolean
+  /**
    * Enable server-side sorting mode. When true, clicking sort headers
    * will emit 'sort' events instead of performing client-side sorting.
    */
@@ -478,6 +538,8 @@ const props = withDefaults(defineProps<Props>(), {
   stickyActionsColumn: true,
   expandableActions: true,
   defaultSortOrder: 'asc',
+  resizableColumns: true,
+  cellTooltip: true,
   serverSideSort: false,
   selectable: false,
   selectedKeys: () => []
@@ -486,6 +548,224 @@ const props = withDefaults(defineProps<Props>(), {
 const sortKey = ref<string>('')
 const sortOrder = ref<'asc' | 'desc'>('asc')
 const actionsExpanded = ref(false)
+
+// --- 列宽拖拽与持久化 ---
+const MIN_COLUMN_WIDTH = 72
+const MAX_COLUMN_WIDTH = 960
+const DEFAULT_COLUMN_WIDTH = 160
+const ACTIONS_DEFAULT_WIDTH = 180
+const columnWidths = ref<Record<string, number>>({})
+const resizingColumnKey = ref<string | null>(null)
+const isResizing = ref(false)
+let resizeMoveHandler: ((event: MouseEvent) => void) | null = null
+let resizeUpHandler: ((event: MouseEvent) => void) | null = null
+let resizeStartX = 0
+let resizeStartWidth = 0
+let resizeActiveKey = ''
+let suppressSortUntil = 0
+
+// --- 单元格 tooltip ---
+const cellTooltipState = ref({
+  visible: false,
+  text: '',
+  x: 0,
+  y: 0
+})
+let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null
+
+const resolveColumnWidthStorageKey = () => {
+  if (props.columnWidthStorageKey) return props.columnWidthStorageKey
+  if (props.sortStorageKey) return `${props.sortStorageKey}:column-widths`
+  const keys = props.columns.map((column) => column.key).join('|')
+  return `datatable-column-widths:${keys || 'default'}`
+}
+
+const sanitizeColumnWidth = (value: unknown): number | null => {
+  const width = Number(value)
+  if (!Number.isFinite(width)) return null
+  const rounded = Math.round(width)
+  if (rounded < MIN_COLUMN_WIDTH || rounded > MAX_COLUMN_WIDTH) return null
+  return rounded
+}
+
+const readPersistedColumnWidths = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem(resolveColumnWidthStorageKey())
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object') return {}
+    const next: Record<string, number> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      const width = sanitizeColumnWidth(value)
+      if (width !== null) next[key] = width
+    }
+    return next
+  } catch (e) {
+    console.error('[DataTable] Failed to read persisted column widths:', e)
+    return {}
+  }
+}
+
+const writePersistedColumnWidths = (widths: Record<string, number>) => {
+  try {
+    localStorage.setItem(resolveColumnWidthStorageKey(), JSON.stringify(widths))
+  } catch (e) {
+    console.error('[DataTable] Failed to persist column widths:', e)
+  }
+}
+
+const getDefaultColumnWidth = (column: Column) => {
+  const configured = sanitizeColumnWidth(column.width)
+  if (configured !== null) return configured
+  if (column.key === 'actions') return ACTIONS_DEFAULT_WIDTH
+  // 分组列名称较长（如【GPT】Pro 20x），默认更宽，避免单行徽章被挤换行
+  if (column.key === 'groups') return 360
+  return DEFAULT_COLUMN_WIDTH
+}
+
+const getColumnMinWidth = (column: Column) => {
+  if (column.key === 'groups') return 220
+  if (column.key === 'actions') return 120
+  return MIN_COLUMN_WIDTH
+}
+
+const getColumnWidth = (column: Column) => {
+  const width = columnWidths.value[column.key] ?? getDefaultColumnWidth(column)
+  return Math.max(getColumnMinWidth(column), width)
+}
+
+const getColumnWidthStyle = (column: Column) => {
+  if (!props.resizableColumns) return undefined
+  const width = getColumnWidth(column)
+  return {
+    width: `${width}px`,
+    minWidth: `${width}px`,
+    maxWidth: `${width}px`
+  }
+}
+
+const syncColumnWidthsFromProps = () => {
+  const persisted = readPersistedColumnWidths()
+  const next: Record<string, number> = {}
+  for (const column of props.columns) {
+    next[column.key] = persisted[column.key] ?? getDefaultColumnWidth(column)
+  }
+  columnWidths.value = next
+}
+
+const cleanupColumnResizeListeners = () => {
+  if (resizeMoveHandler) {
+    window.removeEventListener('mousemove', resizeMoveHandler)
+    resizeMoveHandler = null
+  }
+  if (resizeUpHandler) {
+    window.removeEventListener('mouseup', resizeUpHandler)
+    resizeUpHandler = null
+  }
+  document.body.classList.remove('datatable-resizing')
+}
+
+const startColumnResize = (event: MouseEvent, column: Column, _index: number) => {
+  if (!props.resizableColumns || !isDesktopViewport.value) return
+  cleanupColumnResizeListeners()
+  resizeActiveKey = column.key
+  resizeStartX = event.clientX
+  resizeStartWidth = getColumnWidth(column)
+  resizingColumnKey.value = column.key
+  isResizing.value = true
+  document.body.classList.add('datatable-resizing')
+
+  resizeMoveHandler = (moveEvent: MouseEvent) => {
+    const delta = moveEvent.clientX - resizeStartX
+    const minWidth = getColumnMinWidth(column)
+    const nextWidth = Math.min(
+      MAX_COLUMN_WIDTH,
+      Math.max(minWidth, Math.round(resizeStartWidth + delta))
+    )
+    columnWidths.value = {
+      ...columnWidths.value,
+      [resizeActiveKey]: nextWidth
+    }
+  }
+
+  resizeUpHandler = () => {
+    cleanupColumnResizeListeners()
+    writePersistedColumnWidths(columnWidths.value)
+    resizingColumnKey.value = null
+    // 避免松手时误触发排序
+    suppressSortUntil = Date.now() + 120
+    requestAnimationFrame(() => {
+      isResizing.value = false
+      checkScrollable()
+    })
+  }
+
+  window.addEventListener('mousemove', resizeMoveHandler)
+  window.addEventListener('mouseup', resizeUpHandler)
+}
+
+const resetColumnWidth = (columnKey: string) => {
+  if (!props.resizableColumns) return
+  const column = props.columns.find((item) => item.key === columnKey)
+  if (!column) return
+  const next = {
+    ...columnWidths.value,
+    [columnKey]: getDefaultColumnWidth(column)
+  }
+  columnWidths.value = next
+  writePersistedColumnWidths(next)
+  nextTick(() => checkScrollable())
+}
+
+const extractTooltipText = (target: EventTarget | null): string => {
+  const cell = (target as HTMLElement | null)?.closest?.('.datatable-cell') as HTMLElement | null
+  if (!cell) return ''
+  const content = cell.querySelector('.datatable-cell-content') as HTMLElement | null
+  const text = (
+    content?.innerText || content?.textContent || cell.innerText || cell.textContent || ''
+  ).replace(/\s+/g, ' ').trim()
+  return text
+}
+
+const showCellTooltip = (event: Event, column: Column, _row: any) => {
+  if (!props.cellTooltip || !isDesktopViewport.value || isResizing.value) return
+  if (column.key === 'actions' || column.key === 'select') return
+  if (tooltipHideTimer) {
+    clearTimeout(tooltipHideTimer)
+    tooltipHideTimer = null
+  }
+
+  const text = extractTooltipText(event.target)
+  if (!text) {
+    hideCellTooltip()
+    return
+  }
+
+  const source = (event.currentTarget as HTMLElement | null) || (event.target as HTMLElement | null)
+  const rect = source?.getBoundingClientRect?.()
+  if (!rect) return
+
+  // 内容未溢出时也显示完整文本，方便复制查看
+  cellTooltipState.value = {
+    visible: true,
+    text,
+    x: Math.min(window.innerWidth - 24, Math.max(12, rect.left + Math.min(rect.width / 2, 180))),
+    y: Math.max(12, rect.top - 8)
+  }
+}
+
+const hideCellTooltip = () => {
+  if (tooltipHideTimer) clearTimeout(tooltipHideTimer)
+  tooltipHideTimer = setTimeout(() => {
+    cellTooltipState.value = {
+      visible: false,
+      text: '',
+      x: 0,
+      y: 0
+    }
+    tooltipHideTimer = null
+  }, 60)
+}
 
 type PersistedSortState = {
   key: string
@@ -654,11 +934,19 @@ watch(
 watch(
   [() => props.data.length, columnsSignature],
   async () => {
+    syncColumnWidthsFromProps()
     await nextTick()
     checkScrollable()
     checkActionsColumnWidth()
   },
   { flush: 'post' }
+)
+
+watch(
+  () => props.columnWidthStorageKey,
+  () => {
+    syncColumnWidthsFromProps()
+  }
 )
 
 // 单独监听展开状态变化，只更新滚动状态
@@ -668,6 +956,7 @@ watch(actionsExpanded, async () => {
 })
 
 const handleSort = (key: string) => {
+  if (isResizing.value || Date.now() < suppressSortUntil) return
   let newOrder: 'asc' | 'desc' = 'asc'
   if (sortKey.value === key) {
     newOrder = sortOrder.value === 'asc' ? 'desc' : 'asc'
@@ -991,6 +1280,45 @@ defineExpose({
   background-color: rgb(31 41 55);
 }
 
+/* 列宽拖拽手柄 */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 230;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+
+.col-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 3px;
+  width: 2px;
+  border-radius: 9999px;
+  background-color: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.col-resize-handle:hover::after,
+.col-resize-handle.is-resizing::after {
+  background-color: rgb(59 130 246 / 0.9);
+}
+
+.datatable-cell-content {
+  max-width: 100%;
+}
+
+.datatable-select-col {
+  width: 44px;
+  min-width: 44px;
+}
+
 /* Sticky 列基础样式 */
 .sticky-col {
   position: sticky;
@@ -1147,5 +1475,29 @@ tbody tr:hover .sticky-col {
   .dark .table-wrapper {
     scrollbar-color: rgba(75, 85, 99, 0.5) rgba(255, 255, 255, 0.05) !important;
   }
+}
+
+/* 单元格 tooltip（挂到 body，避免被表格 overflow 裁切） */
+.datatable-cell-tooltip {
+  position: fixed;
+  z-index: 9999;
+  max-width: min(480px, calc(100vw - 24px));
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(17, 24, 39, 0.95);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+}
+
+body.datatable-resizing,
+body.datatable-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 </style>

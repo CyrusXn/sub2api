@@ -2,12 +2,17 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"html"
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -23,18 +28,28 @@ const (
 	quotaDimTotal  = "total"
 
 	defaultSiteName = "Sub2API"
+
+	dailyLowBalanceReminderThreshold = 2.0
+	dailyLowBalanceReminderHour      = 9
+	dailyLowBalanceReminderTimeout   = 2 * time.Hour
+	dailyLowBalanceReminderLockKey   = "balance:daily-low-reminder"
 )
 
 // quotaDimLabels maps dimension names to display labels.
 var quotaDimLabels = map[string]string{
-	quotaDimDaily:  "日限额 / Daily",
-	quotaDimWeekly: "周限额 / Weekly",
-	quotaDimTotal:  "总限额 / Total",
+	quotaDimDaily:  "日限额",
+	quotaDimWeekly: "周限额",
+	quotaDimTotal:  "总限额",
 }
 
 // AccountQuotaReader provides read access to account quota data.
 type AccountQuotaReader interface {
 	GetByID(ctx context.Context, id int64) (*Account, error)
+}
+
+// LowBalanceReminderRepository 只返回有真实付费使用记录的低余额用户。
+type LowBalanceReminderRepository interface {
+	ListLowBalanceReminderUsers(ctx context.Context, threshold float64) ([]*User, error)
 }
 
 // BalanceNotifyService handles balance and quota threshold notifications.
@@ -43,6 +58,12 @@ type BalanceNotifyService struct {
 	settingRepo              SettingRepository
 	accountRepo              AccountQuotaReader
 	notificationEmailService *NotificationEmailService
+	dailyReminderRepo        LowBalanceReminderRepository
+	leaderLockCache          LeaderLockCache
+	leaderLockDB             *sql.DB
+	instanceID               string
+	dailyStartOnce           sync.Once
+	insufficientNotifyGroup  singleflight.Group
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
@@ -51,11 +72,29 @@ func NewBalanceNotifyService(emailService *EmailService, settingRepo SettingRepo
 		emailService: emailService,
 		settingRepo:  settingRepo,
 		accountRepo:  accountRepo,
+		instanceID:   uuid.NewString(),
 	}
 }
 
 func (s *BalanceNotifyService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
 	s.notificationEmailService = notificationEmailService
+}
+
+// SetDailyReminderDependencies 注入每日余额提醒所需的查询与跨实例互斥能力。
+func (s *BalanceNotifyService) SetDailyReminderDependencies(repo LowBalanceReminderRepository, lockCache LeaderLockCache, db *sql.DB) {
+	s.dailyReminderRepo = repo
+	s.leaderLockCache = lockCache
+	s.leaderLockDB = db
+}
+
+// Start 启动北京时间每天 09:00 的低余额提醒任务。
+func (s *BalanceNotifyService) Start() {
+	if s == nil || s.dailyReminderRepo == nil {
+		return
+	}
+	s.dailyStartOnce.Do(func() {
+		go s.runDailyLowBalanceReminder()
+	})
 }
 
 // resolveBalanceThreshold returns the effective balance threshold.
@@ -82,6 +121,102 @@ func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, u
 		return
 	}
 	s.dispatchBalanceLowEmail(ctx, user, newBalance, effectiveThreshold, rechargeURL)
+}
+
+// NotifyUserInsufficientBalance 在请求因用户自身余额不足而被拒绝时通知该用户。
+// 同一用户同一天与扣费阈值提醒共用幂等键，避免重复发送。
+func (s *BalanceNotifyService) NotifyUserInsufficientBalance(ctx context.Context, user *User, currentBalance float64) {
+	if !s.canNotifyBalance(user) || strings.TrimSpace(user.Email) == "" {
+		return
+	}
+	effectiveThreshold, rechargeURL, ok := s.resolveUserEffectiveThreshold(ctx, user)
+	if !ok {
+		return
+	}
+
+	userID := user.ID
+	userName := user.Username
+	userEmail := user.Email
+	siteName := s.getSiteName(ctx)
+	reminderKey := balanceReminderDay(time.Now())
+	singleflightKey := fmt.Sprintf("%d:%s", userID, reminderKey)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				slog.Error("发送用户余额不足提醒时发生异常", "user_id", userID, "recover", recovered)
+			}
+		}()
+		_, _, _ = s.insufficientNotifyGroup.Do(singleflightKey, func() (any, error) {
+			s.sendBalanceLowEmails([]string{userEmail}, userID, userName, userEmail, currentBalance, effectiveThreshold, siteName, rechargeURL)
+			return nil, nil
+		})
+	}()
+}
+
+func (s *BalanceNotifyService) runDailyLowBalanceReminder() {
+	for {
+		nextRun := nextDailyLowBalanceReminder(time.Now())
+		timer := time.NewTimer(time.Until(nextRun))
+		<-timer.C
+		s.sendDailyLowBalanceReminders()
+	}
+}
+
+func nextDailyLowBalanceReminder(now time.Time) time.Time {
+	localNow := now.In(beijingLocation())
+	next := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), dailyLowBalanceReminderHour, 0, 0, 0, localNow.Location())
+	if !localNow.Before(next) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
+}
+
+func balanceReminderDay(now time.Time) string {
+	return now.In(beijingLocation()).Format("2006-01-02")
+}
+
+func (s *BalanceNotifyService) sendDailyLowBalanceReminders() {
+	ctx, cancel := context.WithTimeout(context.Background(), dailyLowBalanceReminderTimeout)
+	defer cancel()
+
+	release, acquired := tryAcquireSingletonLeaderLock(
+		ctx,
+		s.leaderLockCache,
+		s.leaderLockDB,
+		dailyLowBalanceReminderLockKey,
+		s.instanceID,
+		dailyLowBalanceReminderTimeout,
+	)
+	if !acquired {
+		return
+	}
+	defer release()
+
+	enabled, _, rechargeURL := s.getBalanceNotifyConfig(ctx)
+	if !enabled {
+		return
+	}
+	users, err := s.dailyReminderRepo.ListLowBalanceReminderUsers(ctx, dailyLowBalanceReminderThreshold)
+	if err != nil {
+		slog.Error("查询每日低余额提醒用户失败", "error", err)
+		return
+	}
+	siteName := s.getSiteName(ctx)
+	for _, user := range users {
+		if user == nil || strings.TrimSpace(user.Email) == "" {
+			continue
+		}
+		s.sendBalanceLowEmails(
+			[]string{user.Email},
+			user.ID,
+			user.Username,
+			user.Email,
+			user.Balance,
+			dailyLowBalanceReminderThreshold,
+			siteName,
+			rechargeURL,
+		)
+	}
 }
 
 // canNotifyBalance checks nil guards and user-level toggle.
@@ -358,12 +493,13 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 			ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
 			err := s.notificationEmailService.Send(ctx, NotificationEmailSendInput{
 				Event:          NotificationEmailEventBalanceLow,
+				Locale:         notificationEmailLocaleChinese,
 				RecipientEmail: to,
 				RecipientName:  displayName,
 				UserID:         userID,
 				SourceType:     "balance_low",
 				SourceID:       firstNonEmpty(strconv.FormatInt(userID, 10), userEmail),
-				ReminderKey:    time.Now().UTC().Format("2006-01-02"),
+				ReminderKey:    balanceReminderDay(time.Now()),
 				Variables: map[string]string{
 					"current_balance": fmt.Sprintf("%.2f", balance),
 					"threshold":       fmt.Sprintf("%.2f", threshold),
@@ -385,7 +521,7 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 		}
 		recipients = fallbackRecipients
 	}
-	subject := fmt.Sprintf("[%s] 余额不足提醒 / Balance Low Alert", sanitizeEmailHeader(siteName))
+	subject := fmt.Sprintf("[%s] 余额不足提醒", sanitizeEmailHeader(siteName))
 	body := s.buildBalanceLowEmailBody(html.EscapeString(displayName), balance, threshold, html.EscapeString(siteName), rechargeURL)
 	s.sendEmails(recipients, subject, body, "user_email", userEmail, "balance", balance)
 }
@@ -413,11 +549,12 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 			ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
 			err := s.notificationEmailService.Send(ctx, NotificationEmailSendInput{
 				Event:          NotificationEmailEventAccountQuotaAlert,
+				Locale:         notificationEmailLocaleChinese,
 				RecipientEmail: to,
 				RecipientName:  emailRecipientName(to),
 				SourceType:     "account_quota",
 				SourceID:       fmt.Sprintf("%d-%s", accountID, dim.name),
-				ReminderKey:    time.Now().UTC().Format("2006-01-02"),
+				ReminderKey:    balanceReminderDay(time.Now()),
 				Variables: map[string]string{
 					"account_id":      strconv.FormatInt(accountID, 10),
 					"account_name":    accountName,
@@ -445,7 +582,7 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 		adminEmails = fallbackRecipients
 	}
 
-	subject := fmt.Sprintf("[%s] 账号限额告警 / Account Quota Alert - %s", sanitizeEmailHeader(siteName), sanitizeEmailHeader(accountName))
+	subject := fmt.Sprintf("[%s] 账号限额告警 - %s", sanitizeEmailHeader(siteName), sanitizeEmailHeader(accountName))
 	body := s.buildQuotaAlertEmailBody(accountID, html.EscapeString(accountName), html.EscapeString(platform), html.EscapeString(dimLabel), used, dim.limit, remaining, thresholdDisplay, html.EscapeString(siteName))
 	s.sendEmails(adminEmails, subject, body, "account", accountName, "dimension", dim.name)
 }
@@ -455,9 +592,8 @@ func sanitizeEmailHeader(s string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
 }
 
-// balanceLowEmailTemplate is the HTML template for balance low notifications.
-// Format args: siteName, userName, userName, balance, threshold, threshold.
-// The recharge button is appended dynamically when rechargeURL is set.
+// balanceLowEmailTemplate 是余额不足提醒的内置中文模板。
+// 格式化参数依次为站点名、用户名、余额、阈值和充值按钮。
 const balanceLowEmailTemplate = `<!DOCTYPE html>
 <html>
 <head>
@@ -478,15 +614,12 @@ const balanceLowEmailTemplate = `<!DOCTYPE html>
     <div class="container">
         <div class="header"><h1>%s</h1></div>
         <div class="content">
-            <p style="font-size: 18px; color: #333;">%s，您的余额不足</p>
-            <p style="color: #666;">Dear %s, your balance is running low</p>
-            <div class="balance">$%.2f</div>
-            <div class="info">
-                <p>您的账户余额已低于提醒阈值 <strong>$%.2f</strong>。</p>
-                <p>Your account balance has fallen below the alert threshold of <strong>$%.2f</strong>.</p>
-                <p>请及时充值以免服务中断。</p>
-                <p>Please top up to avoid service interruption.</p>
-            </div>
+	            <p style="font-size: 18px; color: #333;">%s，您的余额不足</p>
+	            <div class="balance">$%.2f</div>
+	            <div class="info">
+	                <p>您的账户余额已低于提醒阈值 <strong>$%.2f</strong>。</p>
+	                <p>请及时充值以免服务中断。</p>
+	            </div>
             %s
         </div>
         <div class="footer"><p>此邮件由系统自动发送，请勿回复。</p></div>
@@ -517,19 +650,18 @@ const quotaAlertEmailTemplate = `<!DOCTYPE html>
     <div class="container">
         <div class="header"><h1>%s</h1></div>
         <div class="content">
-            <p style="font-size: 18px; color: #333; text-align: center;">账号限额告警 / Account Quota Alert</p>
-            <div class="metric"><span class="metric-label">账号 ID / Account ID</span><span class="metric-value">#%d</span></div>
-            <div class="metric"><span class="metric-label">账号 / Account</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">平台 / Platform</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">维度 / Dimension</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">已使用 / Used</span><span class="metric-value">$%.2f</span></div>
-            <div class="metric"><span class="metric-label">限额 / Limit</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">剩余额度 / Remaining</span><span class="metric-value">$%.2f</span></div>
-            <div class="metric"><span class="metric-label">提醒阈值 / Alert Threshold</span><span class="metric-value">%s</span></div>
-            <div class="info">
-                <p>账号剩余额度已低于提醒阈值，请及时关注。</p>
-                <p>Account remaining quota has fallen below the alert threshold.</p>
-            </div>
+	            <p style="font-size: 18px; color: #333; text-align: center;">账号限额告警</p>
+	            <div class="metric"><span class="metric-label">账号 ID</span><span class="metric-value">#%d</span></div>
+	            <div class="metric"><span class="metric-label">账号</span><span class="metric-value">%s</span></div>
+	            <div class="metric"><span class="metric-label">平台</span><span class="metric-value">%s</span></div>
+	            <div class="metric"><span class="metric-label">维度</span><span class="metric-value">%s</span></div>
+	            <div class="metric"><span class="metric-label">已使用</span><span class="metric-value">$%.2f</span></div>
+	            <div class="metric"><span class="metric-label">限额</span><span class="metric-value">%s</span></div>
+	            <div class="metric"><span class="metric-label">剩余额度</span><span class="metric-value">$%.2f</span></div>
+	            <div class="metric"><span class="metric-label">提醒阈值</span><span class="metric-value">%s</span></div>
+	            <div class="info">
+	                <p>账号剩余额度已低于提醒阈值，请及时关注。</p>
+	            </div>
         </div>
         <div class="footer"><p>此邮件由系统自动发送，请勿回复。</p></div>
     </div>
@@ -540,16 +672,16 @@ const quotaAlertEmailTemplate = `<!DOCTYPE html>
 func (s *BalanceNotifyService) buildBalanceLowEmailBody(userName string, balance, threshold float64, siteName, rechargeURL string) string {
 	rechargeBlock := ""
 	if rechargeURL != "" {
-		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值 / Top Up Now</a>`, html.EscapeString(rechargeURL))
+		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值</a>`, html.EscapeString(rechargeURL))
 	}
-	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, userName, balance, threshold, threshold, rechargeBlock)
+	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, balance, threshold, rechargeBlock)
 }
 
 // buildQuotaAlertEmailBody builds HTML email for account quota alert.
 func (s *BalanceNotifyService) buildQuotaAlertEmailBody(accountID int64, accountName, platform, dimLabel string, used, limit, remaining float64, thresholdDisplay, siteName string) string {
 	limitStr := fmt.Sprintf("$%.2f", limit)
 	if limit <= 0 {
-		limitStr = "无限制 / Unlimited"
+		limitStr = "无限制"
 	}
 	return fmt.Sprintf(quotaAlertEmailTemplate, siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay)
 }

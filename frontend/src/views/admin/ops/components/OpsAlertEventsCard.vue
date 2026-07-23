@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import Select from '@/components/common/Select.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { opsAPI, type AlertEventsQuery } from '@/api/admin/ops'
+import { opsAPI, type AlertAccountDetail, type AlertEventsQuery } from '@/api/admin/ops'
 import type { AlertEvent } from '../types'
 import { formatDateTime } from '../utils/opsFormatters'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const appStore = useAppStore()
 
 // 与 DataTable 一致：< 768px 切换为卡片视图，避免宽表在移动端被截断。
@@ -20,8 +20,10 @@ const PAGE_SIZE = 10
 
 const loading = ref(false)
 const loadingMore = ref(false)
+const backgroundRefreshing = ref(false)
 const events = ref<AlertEvent[]>([])
 const hasMore = ref(true)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 // Detail modal
 const showDetail = ref(false)
@@ -30,6 +32,9 @@ const detailLoading = ref(false)
 const detailActionLoading = ref(false)
 const historyLoading = ref(false)
 const history = ref<AlertEvent[]>([])
+const accountDetailsLoading = ref(false)
+const accountDetailsFailed = ref(false)
+const accountDetails = ref<AlertAccountDetail[]>([])
 const historyRange = ref('7d')
 const historyRangeOptions = computed(() => [
   { value: '7d', label: t('admin.ops.timeRange.7d') },
@@ -104,6 +109,25 @@ async function loadFirstPage() {
     hasMore.value = false
   } finally {
     loading.value = false
+  }
+}
+
+// 页面可见时静默拉取最新一页，并保留用户已经向下加载的旧事件。
+async function refreshFirstPageSilently() {
+  if (document.visibilityState !== 'visible' || loading.value || loadingMore.value || backgroundRefreshing.value) return
+
+  backgroundRefreshing.value = true
+  try {
+    const data = await opsAPI.listAlertEvents(buildQuery())
+    const latestIds = new Set(data.map((item) => item.id))
+    const retainedLength = Math.max(PAGE_SIZE, events.value.length)
+    events.value = [...data, ...events.value.filter((item) => !latestIds.has(item.id))]
+      .slice(0, retainedLength)
+    if (events.value.length <= PAGE_SIZE) hasMore.value = data.length === PAGE_SIZE
+  } catch (err) {
+    console.error('[OpsAlertEventsCard] Failed to refresh alert events silently', err)
+  } finally {
+    backgroundRefreshing.value = false
   }
 }
 
@@ -183,12 +207,33 @@ function formatDurationLabel(event: AlertEvent): string {
 
 function formatDimensionsSummary(event: AlertEvent): string {
   const parts: string[] = []
+  const diagnosis = getDimensionString(event, 'diagnosis')
+  if (diagnosis) {
+    const diagnosisKey = `admin.ops.alertEvents.diagnosis.${diagnosis}`
+    parts.push(te(diagnosisKey) ? t(diagnosisKey) : diagnosis)
+  }
   const platform = getDimensionString(event, 'platform')
   if (platform) parts.push(`platform=${platform}`)
   const groupId = event.dimensions?.group_id
   if (groupId != null && groupId !== '') parts.push(`group_id=${String(groupId)}`)
   const region = getDimensionString(event, 'region')
   if (region) parts.push(`region=${region}`)
+  const availableAccounts = getDimensionString(event, 'available_account_count')
+  const totalAccounts = getDimensionString(event, 'total_account_count')
+  if (availableAccounts || totalAccounts) {
+    parts.push(t('admin.ops.alertEvents.dimensions.availableAccounts', {
+      available: availableAccounts || '0',
+      total: totalAccounts || '0'
+    }))
+  }
+  const affectedAccounts = getDimensionString(event, 'affected_account_count')
+  if (affectedAccounts) {
+    parts.push(t('admin.ops.alertEvents.dimensions.affectedAccounts', { count: affectedAccounts }))
+  }
+  const signalCount = getDimensionString(event, 'signal_count')
+  if (signalCount) {
+    parts.push(t('admin.ops.alertEvents.dimensions.signals', { count: signalCount }))
+  }
   return parts.length ? parts.join(' ') : '-'
 }
 
@@ -196,6 +241,8 @@ function closeDetail() {
   showDetail.value = false
   selected.value = null
   history.value = []
+  accountDetails.value = []
+  accountDetailsFailed.value = false
 }
 
 async function openDetail(row: AlertEvent) {
@@ -203,6 +250,7 @@ async function openDetail(row: AlertEvent) {
   selected.value = row
   detailLoading.value = true
   historyLoading.value = true
+  accountDetailsLoading.value = true
 
   try {
     const detail = await opsAPI.getAlertEvent(row.id)
@@ -214,7 +262,40 @@ async function openDetail(row: AlertEvent) {
     detailLoading.value = false
   }
 
-  await loadHistory()
+  await Promise.all([loadHistory(), loadAccountDetails()])
+}
+
+async function loadAccountDetails() {
+  const ev = selected.value
+  accountDetails.value = []
+  accountDetailsFailed.value = false
+  if (!ev || !getDimensionString(ev, 'diagnosis')) {
+    accountDetailsLoading.value = false
+    return
+  }
+
+  accountDetailsLoading.value = true
+  try {
+    accountDetails.value = await opsAPI.listAlertAccountDetails(ev.id)
+  } catch (err) {
+    console.error('[OpsAlertEventsCard] Failed to load alert account details', err)
+    accountDetailsFailed.value = true
+  } finally {
+    accountDetailsLoading.value = false
+  }
+}
+
+function formatAccountPhase(phase: string): string {
+  const normalized = String(phase || '').trim().toLowerCase()
+  if (!normalized) return '-'
+  const key = `admin.ops.errorDetails.phase.${normalized}`
+  return te(key) ? t(key) : normalized
+}
+
+function formatAccountGroup(detail: AlertAccountDetail): string {
+  if (detail.group_name) return detail.group_name
+  if (detail.group_id) return `#${detail.group_id}`
+  return '-'
 }
 
 async function loadHistory() {
@@ -306,7 +387,7 @@ async function manualResolve() {
     const detail = await opsAPI.getAlertEvent(selected.value.id)
     selected.value = detail
     await loadFirstPage()
-    await loadHistory()
+    await Promise.all([loadHistory(), loadAccountDetails()])
   } catch (err: any) {
     console.error('[OpsAlertEventsCard] Failed to resolve alert', err)
     appStore.showError(err?.response?.data?.detail || t('admin.ops.alertEvents.detail.manualResolvedFailed'))
@@ -317,6 +398,11 @@ async function manualResolve() {
 
 onMounted(() => {
   loadFirstPage()
+  refreshTimer = setInterval(refreshFirstPageSilently, 10_000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer != null) clearInterval(refreshTimer)
 })
 
 watch([timeRange, severity, status, emailSent], () => {
@@ -605,7 +691,7 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
           </div>
         </div>
 
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
               <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.alertEvents.detail.firedAt') }}</div>
               <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ formatDateTime(selected.fired_at || selected.created_at) }}</div>
@@ -637,13 +723,116 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
             <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
               <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.alertEvents.detail.dimensions') }}</div>
               <div class="mt-1 text-sm text-gray-900 dark:text-white">
+                <div v-if="getDimensionString(selected, 'diagnosis')">
+                  {{ te(`admin.ops.alertEvents.diagnosis.${getDimensionString(selected, 'diagnosis')}`)
+                    ? t(`admin.ops.alertEvents.diagnosis.${getDimensionString(selected, 'diagnosis')}`)
+                    : getDimensionString(selected, 'diagnosis') }}
+                </div>
                 <div v-if="getDimensionString(selected, 'platform')">platform={{ getDimensionString(selected, 'platform') }}</div>
                 <div v-if="selected.dimensions?.group_id">group_id={{ selected.dimensions.group_id }}</div>
                 <div v-if="getDimensionString(selected, 'region')">region={{ getDimensionString(selected, 'region') }}</div>
+                <div v-if="getDimensionString(selected, 'available_account_count') || getDimensionString(selected, 'total_account_count')">
+                  {{ t('admin.ops.alertEvents.dimensions.availableAccounts', {
+                    available: getDimensionString(selected, 'available_account_count') || '0',
+                    total: getDimensionString(selected, 'total_account_count') || '0'
+                  }) }}
+                </div>
+                <div v-if="getDimensionString(selected, 'affected_account_count')">
+                  {{ t('admin.ops.alertEvents.dimensions.affectedAccounts', {
+                    count: getDimensionString(selected, 'affected_account_count')
+                  }) }}
+                </div>
+                <div v-if="getDimensionString(selected, 'signal_count')">
+                  {{ t('admin.ops.alertEvents.dimensions.signals', {
+                    count: getDimensionString(selected, 'signal_count')
+                  }) }}
+                </div>
+              </div>
+            </div>
+        </div>
+
+        <section
+          v-if="getDimensionString(selected, 'diagnosis')"
+          class="border-y border-gray-200 py-4 dark:border-dark-700"
+        >
+          <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold text-gray-900 dark:text-white">
+                {{ t('admin.ops.alertEvents.detail.accountDetailsTitle') }}
+              </div>
+              <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.ops.alertEvents.detail.accountDetailsHint') }}
+              </div>
+            </div>
+            <span
+              v-if="accountDetails.length"
+              class="text-xs font-semibold text-gray-500 dark:text-gray-400"
+            >
+              {{ t('admin.ops.alertEvents.detail.accountDetailsCount', { count: accountDetails.length }) }}
+            </span>
+          </div>
+
+          <div v-if="accountDetailsLoading" class="py-5 text-center text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.ops.alertEvents.detail.accountDetailsLoading') }}
+          </div>
+          <div v-else-if="accountDetailsFailed" class="py-5 text-center text-xs text-red-600 dark:text-red-400">
+            {{ t('admin.ops.alertEvents.detail.accountDetailsLoadFailed') }}
+          </div>
+          <div v-else-if="!accountDetails.length" class="py-5 text-center text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.ops.alertEvents.detail.accountDetailsLegacyEmpty') }}
+          </div>
+
+          <div v-else-if="!isDesktopViewport" class="divide-y divide-gray-100 dark:divide-dark-700">
+            <div v-for="detail in accountDetails" :key="detail.id" class="space-y-2 py-3 first:pt-0 last:pb-0">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="break-words text-sm font-semibold text-gray-900 dark:text-white">
+                    {{ detail.account_name || `#${detail.account_id}` }}
+                  </div>
+                  <div class="mt-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                    ID {{ detail.account_id }}
+                  </div>
+                </div>
+                <span class="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-700 dark:bg-dark-700 dark:text-gray-300">
+                  {{ detail.status_code || '-' }}
+                </span>
+              </div>
+              <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
+                <span>{{ t('admin.ops.alertEvents.detail.accountPlatform') }}：{{ detail.platform || '-' }}</span>
+                <span>{{ t('admin.ops.alertEvents.detail.accountGroup') }}：{{ formatAccountGroup(detail) }}</span>
+                <span>{{ t('admin.ops.alertEvents.detail.accountPhase') }}：{{ formatAccountPhase(detail.error_phase) }}</span>
+                <span class="col-span-2">{{ t('admin.ops.alertEvents.detail.accountOccurredAt') }}：{{ formatDateTime(detail.occurred_at) }}</span>
               </div>
             </div>
           </div>
 
+          <div v-else class="overflow-x-auto">
+            <table class="min-w-full table-fixed divide-y divide-gray-200 text-left dark:divide-dark-700">
+              <thead>
+                <tr class="text-[11px] font-bold uppercase text-gray-500 dark:text-gray-400">
+                  <th class="w-[26%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountName') }}</th>
+                  <th class="w-[12%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountId') }}</th>
+                  <th class="w-[14%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountPlatform') }}</th>
+                  <th class="w-[16%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountGroup') }}</th>
+                  <th class="w-[14%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountPhase') }}</th>
+                  <th class="w-[10%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountStatus') }}</th>
+                  <th class="w-[18%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountOccurredAt') }}</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+                <tr v-for="detail in accountDetails" :key="detail.id" class="text-xs text-gray-700 dark:text-gray-200">
+                  <td class="break-words px-3 py-2 font-semibold">{{ detail.account_name || '-' }}</td>
+                  <td class="px-3 py-2 font-mono">{{ detail.account_id }}</td>
+                  <td class="break-words px-3 py-2">{{ detail.platform || '-' }}</td>
+                  <td class="break-words px-3 py-2">{{ formatAccountGroup(detail) }}</td>
+                  <td class="break-words px-3 py-2">{{ formatAccountPhase(detail.error_phase) }}</td>
+                  <td class="px-3 py-2 font-mono">{{ detail.status_code || '-' }}</td>
+                  <td class="whitespace-nowrap px-3 py-2">{{ formatDateTime(detail.occurred_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800">
           <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -692,4 +881,3 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
     </BaseDialog>
   </div>
 </template>
-

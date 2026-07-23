@@ -1,14 +1,14 @@
 <template>
   <span
     :class="[
-      'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
+      'inline-flex max-w-none shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
       badgeClass
     ]"
   >
     <!-- Platform logo -->
     <PlatformIcon v-if="platform" :platform="platform" size="sm" />
-    <!-- Group name -->
-    <span class="truncate">{{ name }}</span>
+    <!-- Group name：单行完整展示，不在中间折行 -->
+    <span class="whitespace-nowrap">{{ name }}</span>
     <!-- Right side label -->
     <span v-if="showLabel" :class="labelClass">
       <template v-if="hasCustomRate">

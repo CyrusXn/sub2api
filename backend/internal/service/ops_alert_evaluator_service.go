@@ -49,6 +49,9 @@ type OpsAlertEvaluatorService struct {
 	mu         sync.Mutex
 	ruleStates map[int64]*opsAlertRuleState
 
+	accountRequestAlertCh     chan []*opsAccountRequestAlertSignal
+	accountRequestAlertLastAt time.Time
+
 	emailLimiter *slidingWindowLimiter
 
 	skipLogMu sync.Mutex
@@ -71,15 +74,16 @@ func NewOpsAlertEvaluatorService(
 	proxyRepo ProxyRepository,
 ) *OpsAlertEvaluatorService {
 	return &OpsAlertEvaluatorService{
-		opsService:   opsService,
-		opsRepo:      opsRepo,
-		emailService: emailService,
-		proxyRepo:    proxyRepo,
-		redisClient:  redisClient,
-		cfg:          cfg,
-		instanceID:   uuid.NewString(),
-		ruleStates:   map[int64]*opsAlertRuleState{},
-		emailLimiter: newSlidingWindowLimiter(0, time.Hour),
+		opsService:            opsService,
+		opsRepo:               opsRepo,
+		emailService:          emailService,
+		proxyRepo:             proxyRepo,
+		redisClient:           redisClient,
+		cfg:                   cfg,
+		instanceID:            uuid.NewString(),
+		ruleStates:            map[int64]*opsAlertRuleState{},
+		accountRequestAlertCh: make(chan []*opsAccountRequestAlertSignal, 256),
+		emailLimiter:          newSlidingWindowLimiter(0, time.Hour),
 	}
 }
 
@@ -114,6 +118,9 @@ func (s *OpsAlertEvaluatorService) run() {
 	// Start immediately to produce early feedback in ops dashboard.
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	// 启动时补发遗漏汇总，之后固定在北京时间 08:00 检查夜间静默记录。
+	digestTimer := time.NewTimer(0)
+	defer digestTimer.Stop()
 
 	for {
 		select {
@@ -121,6 +128,11 @@ func (s *OpsAlertEvaluatorService) run() {
 			interval := s.getInterval()
 			s.evaluateOnce(interval)
 			timer.Reset(interval)
+		case signals := <-s.accountRequestAlertCh:
+			s.evaluateAccountRequestAlerts(signals)
+		case <-digestTimer.C:
+			s.sendQuietHoursDigestOnce()
+			digestTimer.Reset(durationUntilNextBeijingDigest(time.Now().UTC()))
 		case <-s.stopCh:
 			return
 		}
@@ -216,6 +228,11 @@ func (s *OpsAlertEvaluatorService) evaluateOnce(interval time.Duration) {
 			continue
 		}
 		rulesEnabled++
+		if strings.TrimSpace(rule.MetricType) == OpsAlertMetricAccountRequestFailure {
+			// 该规则由错误落库事件即时触发，定时任务仅负责恢复活跃事件。
+			rulesEvaluated++
+			continue
+		}
 
 		scopePlatform, scopeGroupID, scopeRegion := parseOpsAlertRuleScope(rule.Filters)
 
@@ -254,6 +271,7 @@ func (s *OpsAlertEvaluatorService) evaluateOnce(interval time.Duration) {
 				region := scopeRegion
 				if platform != "" {
 					if ok, err := s.opsService.IsAlertSilenced(ctx, rule.ID, platform, scopeGroupID, region, now); err == nil && ok {
+						s.recordDatabaseSilencedAlertEmails(ctx, rule, strings.TrimSpace(rule.Name), strings.TrimSpace(rule.Severity), platform, nil, nil, now)
 						continue
 					}
 				}
@@ -292,7 +310,7 @@ func (s *OpsAlertEvaluatorService) evaluateOnce(interval time.Duration) {
 
 			eventsCreated++
 			if created != nil && created.ID > 0 {
-				if s.maybeSendAlertEmail(ctx, runtimeCfg, rule, created) {
+				if s.maybeSendAlertEmail(ctx, runtimeCfg, rule, created, nil, nil) {
 					emailsSent++
 				}
 			}
@@ -309,7 +327,9 @@ func (s *OpsAlertEvaluatorService) evaluateOnce(interval time.Duration) {
 			}
 		}
 	}
-
+	if s.resolveRecoveredAccountRequestAlert(ctx, rules, now) {
+		eventsResolved++
+	}
 	result := truncateString(fmt.Sprintf("rules=%d enabled=%d evaluated=%d created=%d resolved=%d emails_sent=%d", rulesTotal, rulesEnabled, rulesEvaluated, eventsCreated, eventsResolved, emailsSent), 2048)
 	s.recordHeartbeatSuccess(runAt, time.Since(startedAt), result)
 }
@@ -675,40 +695,94 @@ func buildOpsAlertDescription(rule *OpsAlertRule, value float64, windowMinutes i
 	)
 }
 
-func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runtimeCfg *OpsAlertRuntimeSettings, rule *OpsAlertRule, event *OpsAlertEvent) bool {
+func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runtimeCfg *OpsAlertRuntimeSettings, rule *OpsAlertRule, event *OpsAlertEvent, accountDetails []*OpsAlertAccountDetail, providedSamples []*opsAlertErrorSample) bool {
 	if s == nil || s.emailService == nil || s.opsService == nil || event == nil || rule == nil {
 		return false
 	}
 	if event.EmailSent {
 		return false
 	}
-	if !rule.NotifyEmail {
-		return false
-	}
 
 	emailCfg, err := s.opsService.GetEmailNotificationConfig(ctx)
-	if err != nil || emailCfg == nil || !emailCfg.Alert.Enabled {
+	if err != nil || emailCfg == nil {
 		return false
 	}
-
 	if len(emailCfg.Alert.Recipients) == 0 {
 		return false
 	}
-	if !shouldSendOpsAlertEmailByMinSeverity(strings.TrimSpace(emailCfg.Alert.MinSeverity), strings.TrimSpace(rule.Severity)) {
+
+	alertTitle := redactOpsAlertEmailText(event.Title)
+	if alertTitle == "" {
+		alertTitle = redactOpsAlertEmailText(rule.Name)
+	}
+	subject := fmt.Sprintf("[运维告警][%s] %s", redactOpsAlertEmailText(event.Severity), alertTitle)
+	samples := providedSamples
+	if len(samples) == 0 {
+		samples = s.collectAlertErrorSamples(ctx, rule, event)
+	}
+	detailHTML := buildOpsAlertDetailHTML(accountDetails, samples)
+	metadata := buildOpsAlertEmailMetadata(accountDetails, samples)
+	body := buildOpsAlertEmailBody(rule, event, detailHTML)
+	now := time.Now().UTC()
+
+	recordOutcome := func(recipient string, status string, failureReason string, sentAt *time.Time) {
+		eventID := event.ID
+		s.recordAlertEmailDelivery(ctx, &OpsAlertEmailDeliveryInput{
+			AlertEventID:   &eventID,
+			IdempotencyKey: fmt.Sprintf("alert:%d:%s:%s", event.ID, notificationEmailHash(recipient), status),
+			RecipientEmail: recipient,
+			Status:         status,
+			Subject:        subject,
+			RuleName:       alertTitle,
+			Severity:       event.Severity,
+			TargetSite:     metadata.TargetSite,
+			AccountSummary: metadata.AccountSummary,
+			FailureReason:  truncateString(redactOpsAlertEmailText(failureReason), 1000),
+			ErrorIDs:       metadata.ErrorIDs,
+			DetailHTML:     detailHTML,
+			SentAt:         sentAt,
+		})
+	}
+
+	if !rule.NotifyEmail || !emailCfg.Alert.Enabled {
+		reason := "运维告警邮件总开关未开启"
+		if !rule.NotifyEmail {
+			reason = "该告警规则未开启邮件通知"
+		}
+		for _, recipient := range emailCfg.Alert.Recipients {
+			if addr := strings.TrimSpace(recipient); addr != "" {
+				recordOutcome(addr, OpsAlertEmailStatusDisabled, reason, nil)
+			}
+		}
+		return false
+	}
+	if !shouldSendOpsAlertEmailByMinSeverity(strings.TrimSpace(emailCfg.Alert.MinSeverity), strings.TrimSpace(event.Severity)) {
+		for _, recipient := range emailCfg.Alert.Recipients {
+			if addr := strings.TrimSpace(recipient); addr != "" {
+				recordOutcome(addr, OpsAlertEmailStatusDisabled, "告警级别低于邮件通知阈值", nil)
+			}
+		}
+		return false
+	}
+	if runtimeCfg != nil && runtimeCfg.Silencing.Enabled && isOpsAlertSilenced(now, rule, event, runtimeCfg.Silencing) {
+		for _, recipient := range emailCfg.Alert.Recipients {
+			if addr := strings.TrimSpace(recipient); addr != "" {
+				recordOutcome(addr, OpsAlertEmailStatusSilenced, "命中运维告警静默规则", nil)
+			}
+		}
+		return false
+	}
+	if isOpsAlertQuietHours(emailCfg.Alert, now) {
+		for _, recipient := range emailCfg.Alert.Recipients {
+			if addr := strings.TrimSpace(recipient); addr != "" {
+				recordOutcome(addr, OpsAlertEmailStatusQuietHours, event.Description, nil)
+			}
+		}
 		return false
 	}
 
-	if runtimeCfg != nil && runtimeCfg.Silencing.Enabled {
-		if isOpsAlertSilenced(time.Now().UTC(), rule, event, runtimeCfg.Silencing) {
-			return false
-		}
-	}
-
-	// Apply/update rate limiter.
+	// 按当前配置更新逐小时限流器。
 	s.emailLimiter.SetLimit(emailCfg.Alert.RateLimitPerHour)
-
-	subject := fmt.Sprintf("[Ops Alert][%s] %s", strings.TrimSpace(rule.Severity), strings.TrimSpace(rule.Name))
-	body := buildOpsAlertEmailBody(rule, event)
 
 	anySent := false
 	for _, to := range emailCfg.Alert.Recipients {
@@ -716,29 +790,37 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 		if addr == "" {
 			continue
 		}
-		if !s.emailLimiter.Allow(time.Now().UTC()) {
+		if !s.emailLimiter.Allow(now) {
+			recordOutcome(addr, OpsAlertEmailStatusRateLimited, "超过每小时邮件发送上限", nil)
 			continue
 		}
+		var sendErr error
 		if s.emailService.notificationEmailService != nil {
-			if err := s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
+			sendErr = s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
 				Event:          NotificationEmailEventOpsAlert,
+				Locale:         notificationEmailLocaleChinese,
 				RecipientEmail: addr,
 				RecipientName:  emailRecipientName(addr),
 				SourceType:     "ops_alert",
 				SourceID:       fmt.Sprintf("%d", event.ID),
-				Variables:      opsAlertEmailVariables(rule, event),
-			}); err == nil {
-				anySent = true
-				continue
-			} else if !shouldFallbackNotificationEmail(err) {
-				continue
+				Variables:      opsAlertEmailVariables(rule, event, detailHTML),
+				RawHTMLVariables: map[string]string{
+					"account_detail_html": detailHTML,
+				},
+			})
+			if sendErr != nil && shouldFallbackNotificationEmail(sendErr) {
+				sendErr = s.emailService.SendEmail(ctx, addr, subject, body)
 			}
+		} else {
+			sendErr = s.emailService.SendEmail(ctx, addr, subject, body)
 		}
-		if err := s.emailService.SendEmail(ctx, addr, subject, body); err != nil {
-			// Ignore per-recipient failures; continue best-effort.
+		if sendErr != nil {
+			recordOutcome(addr, OpsAlertEmailStatusFailed, sendErr.Error(), nil)
 			continue
 		}
 		anySent = true
+		sentAt := time.Now().UTC()
+		recordOutcome(addr, OpsAlertEmailStatusSent, "", &sentAt)
 	}
 
 	if anySent {
@@ -747,17 +829,18 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 	return anySent
 }
 
-func opsAlertEmailVariables(rule *OpsAlertRule, event *OpsAlertEvent) map[string]string {
+func opsAlertEmailVariables(rule *OpsAlertRule, event *OpsAlertEvent, detailHTML string) map[string]string {
 	variables := map[string]string{
-		"rule_name":         "-",
-		"severity":          "-",
-		"alert_status":      "-",
-		"metric_type":       "-",
-		"operator":          "-",
-		"metric_value":      "-",
-		"threshold_value":   "-",
-		"triggered_at":      time.Now().UTC().Format(time.RFC3339),
-		"alert_description": "-",
+		"rule_name":           "-",
+		"severity":            "-",
+		"alert_status":        "-",
+		"metric_type":         "-",
+		"operator":            "-",
+		"metric_value":        "-",
+		"threshold_value":     "-",
+		"triggered_at":        time.Now().In(beijingLocation()).Format("2006-01-02 15:04:05 MST"),
+		"alert_description":   "-",
+		"account_detail_html": "",
 	}
 	if rule != nil {
 		variables["rule_name"] = strings.TrimSpace(rule.Name)
@@ -770,6 +853,12 @@ func opsAlertEmailVariables(rule *OpsAlertRule, event *OpsAlertEvent) map[string
 		}
 	}
 	if event != nil {
+		if strings.TrimSpace(event.Title) != "" {
+			variables["rule_name"] = strings.TrimSpace(event.Title)
+		}
+		if strings.TrimSpace(event.Severity) != "" {
+			variables["severity"] = strings.TrimSpace(event.Severity)
+		}
 		variables["alert_status"] = strings.TrimSpace(event.Status)
 		if event.MetricValue != nil {
 			variables["metric_value"] = fmt.Sprintf("%.2f", *event.MetricValue)
@@ -778,16 +867,24 @@ func opsAlertEmailVariables(rule *OpsAlertRule, event *OpsAlertEvent) map[string
 			variables["threshold_value"] = fmt.Sprintf("%.2f", *event.ThresholdValue)
 		}
 		if !event.FiredAt.IsZero() {
-			variables["triggered_at"] = event.FiredAt.UTC().Format(time.RFC3339)
+			variables["triggered_at"] = event.FiredAt.In(beijingLocation()).Format("2006-01-02 15:04:05 MST")
 		}
 		if strings.TrimSpace(event.Description) != "" {
 			variables["alert_description"] = strings.TrimSpace(event.Description)
 		}
 	}
+	if strings.TrimSpace(detailHTML) != "" {
+		variables["account_detail_html"] = detailHTML
+	}
+	for key, value := range variables {
+		if key != "account_detail_html" {
+			variables[key] = redactOpsAlertEmailText(value)
+		}
+	}
 	return variables
 }
 
-func buildOpsAlertEmailBody(rule *OpsAlertRule, event *OpsAlertEvent) string {
+func buildOpsAlertEmailBody(rule *OpsAlertRule, event *OpsAlertEvent, detailHTML string) string {
 	if rule == nil || event == nil {
 		return ""
 	}
@@ -801,23 +898,74 @@ func buildOpsAlertEmailBody(rule *OpsAlertRule, event *OpsAlertEvent) string {
 		threshold = fmt.Sprintf("%.2f", *event.ThresholdValue)
 	}
 	return fmt.Sprintf(`
-<h2>Ops Alert</h2>
-<p><b>Rule</b>: %s</p>
-<p><b>Severity</b>: %s</p>
-<p><b>Status</b>: %s</p>
-<p><b>Metric</b>: %s %s %s</p>
-<p><b>Fired at</b>: %s</p>
-<p><b>Description</b>: %s</p>
+<h2>运维告警</h2>
+<p><b>规则</b>：%s</p>
+<p><b>严重级别</b>：%s</p>
+<p><b>状态</b>：%s</p>
+<p><b>指标</b>：%s %s %s</p>
+<p><b>触发时间</b>：%s</p>
+<p><b>说明</b>：%s</p>
+%s
 `,
-		htmlEscape(rule.Name),
-		htmlEscape(rule.Severity),
+		htmlEscape(redactOpsAlertEmailText(event.Title)),
+		htmlEscape(redactOpsAlertEmailText(event.Severity)),
 		htmlEscape(event.Status),
 		htmlEscape(metric),
 		htmlEscape(rule.Operator),
 		htmlEscape(fmt.Sprintf("%s (threshold %s)", value, threshold)),
-		event.FiredAt.Format(time.RFC3339),
-		htmlEscape(event.Description),
+		event.FiredAt.In(beijingLocation()).Format("2006-01-02 15:04:05 MST"),
+		htmlEscape(redactOpsAlertEmailText(event.Description)),
+		detailHTML,
 	)
+}
+
+func buildOpsAlertAccountDetailHTML(details []*OpsAlertAccountDetail, limit int) string {
+	if len(details) == 0 {
+		return ""
+	}
+	if limit <= 0 || limit > len(details) {
+		limit = len(details)
+	}
+
+	var rows strings.Builder
+	for _, detail := range details[:limit] {
+		if detail == nil {
+			continue
+		}
+		group := strings.TrimSpace(detail.GroupName)
+		if group == "" && detail.GroupID != nil {
+			group = fmt.Sprintf("ID %d", *detail.GroupID)
+		}
+		_, _ = fmt.Fprintf(&rows, `<tr>
+<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
+<td style="padding:8px;border:1px solid #e5e7eb;">%d</td>
+<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
+<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
+<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
+<td style="padding:8px;border:1px solid #e5e7eb;">%d</td>
+</tr>`,
+			htmlEscape(redactOpsAlertEmailText(detail.AccountName)),
+			detail.AccountID,
+			htmlEscape(redactOpsAlertEmailText(detail.Platform)),
+			htmlEscape(redactOpsAlertEmailText(group)),
+			htmlEscape(opsAccountRequestPhaseLabel(detail.ErrorPhase)),
+			detail.StatusCode,
+		)
+	}
+	if remaining := len(details) - limit; remaining > 0 {
+		_, _ = fmt.Fprintf(&rows, `<tr><td colspan="6" style="padding:8px;border:1px solid #e5e7eb;color:#6b7280;">另有 %d 个异常账号，请前往运维监控查看完整明细。</td></tr>`, remaining)
+	}
+
+	return `<p><strong>异常账号明细</strong>：</p>
+<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;">
+<thead><tr>
+<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">账号名称</th>
+<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">账号 ID</th>
+<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">平台</th>
+<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">分组</th>
+<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">故障阶段</th>
+<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">状态码</th>
+</tr></thead><tbody>` + rows.String() + `</tbody></table>`
 }
 
 func shouldSendOpsAlertEmailByMinSeverity(minSeverity string, ruleSeverity string) bool {

@@ -39,7 +39,8 @@ func (s *OpsService) GetEmailNotificationConfig(ctx context.Context) (*OpsEmailN
 		return nil, err
 	}
 
-	cfg := &OpsEmailNotificationConfig{}
+	// 旧版本 JSON 缺少夜间静默字段时保留新默认值，再用已保存配置覆盖。
+	cfg := defaultOpsEmailNotificationConfig()
 	if err := json.Unmarshal([]byte(raw), cfg); err != nil {
 		// Corrupted JSON should not break ops UI; fall back to defaults.
 		return defaultCfg, nil
@@ -73,6 +74,10 @@ func (s *OpsService) UpdateEmailNotificationConfig(ctx context.Context, req *Ops
 		cfg.Alert.RateLimitPerHour = req.Alert.RateLimitPerHour
 		cfg.Alert.BatchingWindowSeconds = req.Alert.BatchingWindowSeconds
 		cfg.Alert.IncludeResolvedAlerts = req.Alert.IncludeResolvedAlerts
+		cfg.Alert.QuietHoursEnabled = req.Alert.QuietHoursEnabled
+		cfg.Alert.QuietHoursStart = strings.TrimSpace(req.Alert.QuietHoursStart)
+		cfg.Alert.QuietHoursEnd = strings.TrimSpace(req.Alert.QuietHoursEnd)
+		cfg.Alert.QuietDigestEnabled = req.Alert.QuietDigestEnabled
 	}
 
 	if req.Report != nil {
@@ -116,6 +121,10 @@ func defaultOpsEmailNotificationConfig() *OpsEmailNotificationConfig {
 			RateLimitPerHour:      0,
 			BatchingWindowSeconds: 0,
 			IncludeResolvedAlerts: false,
+			QuietHoursEnabled:     true,
+			QuietHoursStart:       "23:00",
+			QuietHoursEnd:         "08:00",
+			QuietDigestEnabled:    true,
 		},
 		Report: OpsEmailReportConfig{
 			Enabled:                         false,
@@ -146,6 +155,14 @@ func normalizeOpsEmailNotificationConfig(cfg *OpsEmailNotificationConfig) {
 	}
 
 	cfg.Alert.MinSeverity = strings.TrimSpace(cfg.Alert.MinSeverity)
+	cfg.Alert.QuietHoursStart = strings.TrimSpace(cfg.Alert.QuietHoursStart)
+	cfg.Alert.QuietHoursEnd = strings.TrimSpace(cfg.Alert.QuietHoursEnd)
+	if cfg.Alert.QuietHoursStart == "" {
+		cfg.Alert.QuietHoursStart = "23:00"
+	}
+	if cfg.Alert.QuietHoursEnd == "" {
+		cfg.Alert.QuietHoursEnd = "08:00"
+	}
 	cfg.Report.DailySummarySchedule = strings.TrimSpace(cfg.Report.DailySummarySchedule)
 	cfg.Report.WeeklySummarySchedule = strings.TrimSpace(cfg.Report.WeeklySummarySchedule)
 	cfg.Report.ErrorDigestSchedule = strings.TrimSpace(cfg.Report.ErrorDigestSchedule)
@@ -181,6 +198,15 @@ func validateOpsEmailNotificationConfig(cfg *OpsEmailNotificationConfig) error {
 	case "", "critical", "warning", "info":
 	default:
 		return errors.New("alert.min_severity must be one of: critical, warning, info, or empty")
+	}
+	if _, err := time.Parse("15:04", cfg.Alert.QuietHoursStart); err != nil {
+		return errors.New("alert.quiet_hours_start must use HH:mm")
+	}
+	if _, err := time.Parse("15:04", cfg.Alert.QuietHoursEnd); err != nil {
+		return errors.New("alert.quiet_hours_end must use HH:mm")
+	}
+	if cfg.Alert.QuietHoursEnabled && cfg.Alert.QuietHoursStart == cfg.Alert.QuietHoursEnd {
+		return errors.New("alert quiet hours start and end must differ")
 	}
 
 	if cfg.Report.ErrorDigestMinCount < 0 {

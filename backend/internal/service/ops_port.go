@@ -61,7 +61,16 @@ type OpsRepository interface {
 	GetLatestDailyBucketDate(ctx context.Context) (time.Time, bool, error)
 }
 
+// OpsAlertAccountDetailRepository 隔离账号告警明细能力，避免扩大核心 OpsRepository。
+type OpsAlertAccountDetailRepository interface {
+	InsertAlertAccountDetails(ctx context.Context, details []*OpsAlertAccountDetail) error
+	ListAlertAccountDetails(ctx context.Context, eventID int64) ([]*OpsAlertAccountDetail, error)
+}
+
 type OpsInsertErrorLogInput struct {
+	// ErrorLogID 由仓储在成功落库后回填，仅用于关联告警邮件与错误详情。
+	ErrorLogID int64
+
 	RequestID       string
 	ClientRequestID string
 

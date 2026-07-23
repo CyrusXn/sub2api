@@ -96,6 +96,12 @@
       <!-- Alert Events -->
       <OpsAlertEventsCard v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)" />
 
+      <!-- Alert Email Deliveries -->
+      <OpsAlertEmailDeliveriesCard
+        v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)"
+        @open-error="openError"
+      />
+
       <!-- System Logs -->
       <OpsSystemLogTable
         v-if="opsEnabled && !(loading && !hasLoadedOnce)"
@@ -164,6 +170,7 @@ import OpsLatencyChart from './components/OpsLatencyChart.vue'
 import OpsThroughputTrendChart from './components/OpsThroughputTrendChart.vue'
 import OpsSwitchRateTrendChart from './components/OpsSwitchRateTrendChart.vue'
 import OpsAlertEventsCard from './components/OpsAlertEventsCard.vue'
+import OpsAlertEmailDeliveriesCard from './components/OpsAlertEmailDeliveriesCard.vue'
 import OpsOpenAITokenStatsCard from './components/OpsOpenAITokenStatsCard.vue'
 import OpsSystemLogTable from './components/OpsSystemLogTable.vue'
 import OpsRequestDetailsModal, { type OpsRequestDetailsPreset } from './components/OpsRequestDetailsModal.vue'

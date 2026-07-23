@@ -30,6 +30,7 @@ var validOpsAlertMetricTypes = []string{
 	"account_error_count",
 	"account_error_ratio",
 	"account_temp_unscheduled_count",
+	"account_request_failure",
 	"overload_account_count",
 	"proxy_expired_count",
 	"proxy_expiring_soon_count",
@@ -409,6 +410,32 @@ func (h *OpsHandler) GetAlertEvent(c *gin.Context) {
 		return
 	}
 	response.Success(c, ev)
+}
+
+// ListAlertAccountDetails 返回单个告警事件的非敏感账号快照。
+// GET /api/v1/admin/ops/alert-events/:id/account-details
+func (h *OpsHandler) ListAlertAccountDetails(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid event ID")
+		return
+	}
+
+	details, err := h.opsService.ListAlertAccountDetails(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, details)
 }
 
 // UpdateAlertEventStatus updates an ops alert event status.

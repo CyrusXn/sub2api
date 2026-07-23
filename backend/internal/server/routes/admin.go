@@ -190,12 +190,14 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.DELETE("/alert-rules/:id", h.Admin.Ops.DeleteAlertRule)
 		ops.GET("/alert-events", h.Admin.Ops.ListAlertEvents)
 		ops.GET("/alert-events/:id", h.Admin.Ops.GetAlertEvent)
+		ops.GET("/alert-events/:id/account-details", h.Admin.Ops.ListAlertAccountDetails)
 		ops.PUT("/alert-events/:id/status", h.Admin.Ops.UpdateAlertEventStatus)
 		ops.POST("/alert-silences", h.Admin.Ops.CreateAlertSilence)
 
 		// Email notification config (DB-backed)
 		ops.GET("/email-notification/config", h.Admin.Ops.GetEmailNotificationConfig)
 		ops.PUT("/email-notification/config", h.Admin.Ops.UpdateEmailNotificationConfig)
+		ops.GET("/email-notification/deliveries", h.Admin.Ops.ListAlertEmailDeliveries)
 
 		// Runtime settings (DB-backed)
 		runtime := ops.Group("/runtime")

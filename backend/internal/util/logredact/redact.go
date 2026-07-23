@@ -12,7 +12,12 @@ import (
 const maxRedactDepth = 32
 
 var defaultSensitiveKeys = map[string]struct{}{
+	"authorization":      {},
 	"authorization_code": {},
+	"api_key":            {},
+	"apikey":             {},
+	"cookie":             {},
+	"set-cookie":         {},
 	"code":               {},
 	"code_verifier":      {},
 	"access_token":       {},
@@ -20,10 +25,23 @@ var defaultSensitiveKeys = map[string]struct{}{
 	"id_token":           {},
 	"client_secret":      {},
 	"password":           {},
+	"passwd":             {},
+	"passphrase":         {},
+	"private_key":        {},
+	"secret":             {},
+	"credential":         {},
+	"session":            {},
+	"jwt":                {},
+	"signature":          {},
 }
 
 var defaultSensitiveKeyList = []string{
+	"authorization",
 	"authorization_code",
+	"api_key",
+	"apikey",
+	"cookie",
+	"set-cookie",
 	"code",
 	"code_verifier",
 	"access_token",
@@ -31,6 +49,14 @@ var defaultSensitiveKeyList = []string{
 	"id_token",
 	"client_secret",
 	"password",
+	"passwd",
+	"passphrase",
+	"private_key",
+	"secret",
+	"credential",
+	"session",
+	"jwt",
+	"signature",
 }
 
 type textRedactPatterns struct {
@@ -42,6 +68,8 @@ type textRedactPatterns struct {
 var (
 	reGOCSPX = regexp.MustCompile(`GOCSPX-[0-9A-Za-z_-]{24,}`)
 	reAIza   = regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)
+	reBearer = regexp.MustCompile(`(?i)\bBearer\s+[0-9A-Za-z._~+/=-]+`)
+	reAPIKey = regexp.MustCompile(`\b(?:sk|sess|xox[a-z]?)-[0-9A-Za-z_-]{16,}\b`)
 
 	defaultTextRedactPatterns = compileTextRedactPatterns(nil)
 	extraTextPatternCache     sync.Map // map[string]*textRedactPatterns
@@ -99,6 +127,8 @@ func RedactText(input string, extraKeys ...string) string {
 	out := input
 	out = reGOCSPX.ReplaceAllString(out, "GOCSPX-***")
 	out = reAIza.ReplaceAllString(out, "AIza***")
+	out = reBearer.ReplaceAllString(out, "Bearer ***")
+	out = reAPIKey.ReplaceAllString(out, "***")
 	out = patterns.reJSONLike.ReplaceAllString(out, `$1***$3`)
 	out = patterns.reQueryLike.ReplaceAllString(out, `$1=***`)
 	out = patterns.rePlain.ReplaceAllString(out, `$1$2***`)
