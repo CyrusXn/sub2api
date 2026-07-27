@@ -423,6 +423,17 @@ export default {
           resolved: 'RESOLVED',
           manualResolved: 'MANUAL RESOLVED'
         },
+        diagnosis: {
+          insufficient_balance: 'Insufficient balance or quota',
+          all_accounts_unavailable: 'All accounts unavailable',
+          partial_account_failure: 'Partial account failure',
+          unknown: 'Unknown cause'
+        },
+        dimensions: {
+          availableAccounts: 'Available accounts {available}/{total}',
+          affectedAccounts: 'Affected accounts {count}',
+          signals: 'Failed requests {count}'
+        },
         detail: {
           title: 'Alert Detail',
           loading: 'Loading detail...',
@@ -440,6 +451,19 @@ export default {
           resolvedAt: 'Resolved At',
           ruleId: 'Rule ID',
           dimensions: 'Dimensions',
+          accountDetailsTitle: 'Affected Accounts',
+          accountDetailsHint: 'Accounts that triggered this alert; credentials and raw upstream responses are never stored',
+          accountDetailsCount: '{count} accounts',
+          accountDetailsLoading: 'Loading affected accounts...',
+          accountDetailsLoadFailed: 'Failed to load affected accounts',
+          accountDetailsLegacyEmpty: 'This event predates precise account tracking and has no account details',
+          accountName: 'Account Name',
+          accountId: 'Account ID',
+          accountPlatform: 'Platform',
+          accountGroup: 'Group',
+          accountPhase: 'Failure Phase',
+          accountStatus: 'Status Code',
+          accountOccurredAt: 'Occurred At',
           historyTitle: 'History',
           historyHint: 'Recent events with same rule + dimensions',
           historyLoading: 'Loading history...',
@@ -497,6 +521,7 @@ export default {
           accountErrorCount: 'Error Accounts (excluding temporarily unschedulable)',
           accountErrorRatio: 'Error Account Ratio (%)',
           accountTempUnscheduledCount: 'Temporarily Unschedulable Accounts',
+          accountRequestFailure: 'Account Request Connectivity Failure',
           overloadAccountCount: 'Overloaded Accounts'
         },
         metricDescriptions: {
@@ -515,6 +540,7 @@ export default {
           accountErrorCount: 'Number of error accounts within the window (excluding temporarily unschedulable).',
           accountErrorRatio: 'Error account ratio within the window (0-100).',
           accountTempUnscheduledCount: 'Number of accounts currently temporarily unschedulable (e.g. proxy/credential failure auto-eviction).',
+          accountRequestFailure: 'Fires immediately on upstream account connectivity, credential, retry exhaustion, or no-available-account failures and diagnoses the likely cause.',
           overloadAccountCount: 'Number of overloaded accounts within the window.'
         },
         hints: {
@@ -672,6 +698,11 @@ export default {
         emailPlaceholder: 'Enter email address',
         recipientsHint: 'If empty, the system will use the first admin email as default recipient',
         minSeverity: 'Minimum Severity',
+        quietHours: 'Quiet Hours',
+        quietHoursHint: 'Uses Beijing time; alerts are logged during quiet hours and sent as one digest when the window ends',
+        quietHoursStart: 'Quiet Start',
+        quietHoursEnd: 'Quiet End',
+        quietDigest: 'Send digest when quiet hours end',
         reportConfig: 'Report Configuration',
         enableReport: 'Enable Reports',
         reportRecipients: 'Report Recipient Emails',
@@ -734,6 +765,39 @@ export default {
           requestErrorRateMaxRange: 'Request error rate maximum must be between 0 and 100',
           upstreamErrorRateMaxRange: 'Upstream error rate maximum must be between 0 and 100',
           openaiQuotaAutoPauseRange: 'OpenAI quota auto-pause threshold must be between 0 and 100'
+        }
+      },
+      alertEmailDeliveries: {
+        title: 'Alert Email Deliveries',
+        masterSwitch: 'Send Emails',
+        quietHours: 'Quiet hours {start}-{end} Beijing time; overnight alerts are sent as a digest afterward',
+        enabled: 'Alert emails enabled',
+        disabled: 'Alert emails disabled',
+        switchFailed: 'Failed to update alert email setting',
+        loadFailed: 'Failed to load alert email deliveries',
+        empty: 'No alert email deliveries',
+        detailTitle: 'Alert Email Detail',
+        mailDetail: 'Sanitized incident detail included in the email',
+        failureReason: 'Skip or failure reason',
+        openError: 'Error log #{id}',
+        status: {
+          all: 'All statuses',
+          sent: 'Sent',
+          failed: 'Failed',
+          quietHours: 'Quiet hours',
+          disabled: 'Disabled',
+          rateLimited: 'Rate limited',
+          silenced: 'Silenced'
+        },
+        columns: {
+          time: 'Time',
+          status: 'Status',
+          recipient: 'Recipient',
+          rule: 'Rule',
+          severity: 'Severity',
+          targetSite: 'Target Site',
+          account: 'Account',
+          action: 'Action'
         }
       },
       concurrency: {

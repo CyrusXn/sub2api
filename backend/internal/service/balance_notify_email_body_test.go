@@ -91,7 +91,7 @@ func TestBuildQuotaAlertEmailBody_AllFieldsPresent(t *testing.T) {
 	require.NotContains(t, body, "EXTRA")
 }
 
-func TestBuildQuotaAlertEmailBody_UnlimitedDisplay(t *testing.T) {
+func TestBuildQuotaAlertEmailBody_UnlimitedDisplayIsChineseOnly(t *testing.T) {
 	s := &BalanceNotifyService{}
 	body := s.buildQuotaAlertEmailBody(
 		1, "n", "p", "dim",
@@ -99,7 +99,7 @@ func TestBuildQuotaAlertEmailBody_UnlimitedDisplay(t *testing.T) {
 		0.0, "30%", "Site",
 	)
 	require.Contains(t, body, "无限制")
-	require.Contains(t, body, "Unlimited")
+	require.NotContains(t, body, "Unlimited")
 }
 
 func TestBuildQuotaAlertEmailBody_PercentageThresholdDisplay(t *testing.T) {

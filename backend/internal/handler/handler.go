@@ -69,4 +69,5 @@ type Handlers struct {
 type BuildInfo struct {
 	Version   string
 	BuildType string // "source" for manual builds, "release" for CI builds
+	Edition   string // 定制版独立标识，不参与官方语义版本比较
 }

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"strings"
+
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -151,7 +153,11 @@ func ProvideSystemHandler(updateService *service.UpdateService, lockService *ser
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
 func ProvideSettingHandler(settingService *service.SettingService, buildInfo BuildInfo, notificationEmailService *service.NotificationEmailService) *SettingHandler {
-	h := NewSettingHandler(settingService, buildInfo.Version)
+	displayVersion := strings.TrimSpace(buildInfo.Version)
+	if edition := strings.TrimSpace(buildInfo.Edition); edition != "" {
+		displayVersion += "-" + edition
+	}
+	h := NewSettingHandler(settingService, displayVersion)
 	h.SetNotificationEmailService(notificationEmailService)
 	return h
 }

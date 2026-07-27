@@ -687,6 +687,7 @@ export type MetricType =
   | 'account_error_count'
   | 'account_error_ratio'
   | 'account_temp_unscheduled_count'
+  | 'account_request_failure'
   | 'overload_account_count'
 export type Operator = '>' | '>=' | '<' | '<=' | '==' | '!='
 
@@ -722,7 +723,22 @@ export interface AlertEvent {
   fired_at: string
   resolved_at?: string | null
   email_sent: boolean
-  created_at: string
+	created_at: string
+}
+
+export interface AlertAccountDetail {
+	id: number
+	alert_event_id: number
+	account_id: number
+	account_name: string
+	platform: string
+	group_id?: number | null
+	group_name: string
+	diagnosis: string
+	error_phase: string
+	status_code: number
+	occurred_at: string
+	created_at: string
 }
 
 export interface EmailNotificationConfig {
@@ -733,6 +749,10 @@ export interface EmailNotificationConfig {
     rate_limit_per_hour: number
     batching_window_seconds: number
     include_resolved_alerts: boolean
+    quiet_hours_enabled: boolean
+    quiet_hours_start: string
+    quiet_hours_end: string
+    quiet_digest_enabled: boolean
   }
   report: {
     enabled: boolean
@@ -748,6 +768,34 @@ export interface EmailNotificationConfig {
     account_health_schedule: string
     account_health_error_rate_threshold: number
   }
+}
+
+export type AlertEmailDeliveryStatus = 'sent' | 'failed' | 'quiet_hours' | 'disabled' | 'rate_limited' | 'silenced'
+
+export interface AlertEmailDelivery {
+  id: number
+  alert_event_id?: number | null
+  recipient_email: string
+  status: AlertEmailDeliveryStatus
+  subject: string
+  rule_name: string
+  severity: string
+  target_site: string
+  account_summary: string
+  failure_reason: string
+  detail_html: string
+  error_ids: number[]
+  is_digest: boolean
+  digested_at?: string | null
+  sent_at?: string | null
+  created_at: string
+}
+
+export interface AlertEmailDeliveryList {
+  items: AlertEmailDelivery[]
+  total: number
+  page: number
+  page_size: number
 }
 
 export interface OpsMetricThresholds {
@@ -1216,6 +1264,11 @@ export async function getAlertEvent(id: number): Promise<AlertEvent> {
   return data
 }
 
+export async function listAlertAccountDetails(id: number): Promise<AlertAccountDetail[]> {
+	const { data } = await apiClient.get<AlertAccountDetail[]>(`/admin/ops/alert-events/${id}/account-details`)
+	return data
+}
+
 export async function updateAlertEventStatus(id: number, status: 'resolved' | 'manual_resolved'): Promise<void> {
   await apiClient.put(`/admin/ops/alert-events/${id}/status`, { status })
 }
@@ -1239,6 +1292,15 @@ export async function getEmailNotificationConfig(): Promise<EmailNotificationCon
 
 export async function updateEmailNotificationConfig(config: EmailNotificationConfig): Promise<EmailNotificationConfig> {
   const { data } = await apiClient.put<EmailNotificationConfig>('/admin/ops/email-notification/config', config)
+  return data
+}
+
+export async function listAlertEmailDeliveries(params: {
+  status?: AlertEmailDeliveryStatus | ''
+  page?: number
+  page_size?: number
+} = {}): Promise<AlertEmailDeliveryList> {
+  const { data } = await apiClient.get<AlertEmailDeliveryList>('/admin/ops/email-notification/deliveries', { params })
   return data
 }
 
@@ -1339,11 +1401,13 @@ export const opsAPI = {
   updateAlertRule,
   deleteAlertRule,
   listAlertEvents,
-  getAlertEvent,
+	getAlertEvent,
+	listAlertAccountDetails,
   updateAlertEventStatus,
   createAlertSilence,
   getEmailNotificationConfig,
   updateEmailNotificationConfig,
+  listAlertEmailDeliveries,
   getAlertRuntimeSettings,
   updateAlertRuntimeSettings,
   getRuntimeLogConfig,

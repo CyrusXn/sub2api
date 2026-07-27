@@ -296,12 +296,12 @@
     </table>
     <Teleport to="body">
       <div
-        v-if="cellTooltip.visible && cellTooltip.text"
+        v-if="cellTooltipState.visible && cellTooltipState.text"
         class="datatable-cell-tooltip"
         data-test="cell-tooltip"
-        :style="{ left: cellTooltip.x + 'px', top: cellTooltip.y + 'px' }"
+        :style="{ left: cellTooltipState.x + 'px', top: cellTooltipState.y + 'px' }"
       >
-        {{ cellTooltip.text }}
+        {{ cellTooltipState.text }}
       </div>
     </Teleport>
   </div>
@@ -566,7 +566,7 @@ let resizeActiveKey = ''
 let suppressSortUntil = 0
 
 // --- 单元格 tooltip ---
-const cellTooltip = ref({
+const cellTooltipState = ref({
   visible: false,
   text: '',
   x: 0,
@@ -723,11 +723,7 @@ const extractTooltipText = (target: EventTarget | null): string => {
   if (!cell) return ''
   const content = cell.querySelector('.datatable-cell-content') as HTMLElement | null
   const text = (
-    content?.innerText
-    || content?.textContent
-    || cell.innerText
-    || cell.textContent
-    || ''
+    content?.innerText || content?.textContent || cell.innerText || cell.textContent || ''
   ).replace(/\s+/g, ' ').trim()
   return text
 }
@@ -751,7 +747,7 @@ const showCellTooltip = (event: Event, column: Column, _row: any) => {
   if (!rect) return
 
   // 内容未溢出时也显示完整文本，方便复制查看
-  cellTooltip.value = {
+  cellTooltipState.value = {
     visible: true,
     text,
     x: Math.min(window.innerWidth - 24, Math.max(12, rect.left + Math.min(rect.width / 2, 180))),
@@ -762,7 +758,7 @@ const showCellTooltip = (event: Event, column: Column, _row: any) => {
 const hideCellTooltip = () => {
   if (tooltipHideTimer) clearTimeout(tooltipHideTimer)
   tooltipHideTimer = setTimeout(() => {
-    cellTooltip.value = {
+    cellTooltipState.value = {
       visible: false,
       text: '',
       x: 0,

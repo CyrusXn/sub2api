@@ -19,6 +19,7 @@ import (
 type BuildInfo struct {
 	Version   string
 	BuildType string
+	Edition   string
 }
 
 // ProvidePricingService creates and initializes PricingService
@@ -33,7 +34,9 @@ func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient)
 
 // ProvideUpdateService creates UpdateService with BuildInfo
 func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, buildInfo BuildInfo) *UpdateService {
-	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
+	svc := NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
+	svc.edition = buildInfo.Edition
+	return svc
 }
 
 // ProvideEmailQueueService creates EmailQueueService with default worker count
@@ -401,6 +404,9 @@ func ProvideOpsAlertEvaluatorService(
 	proxyRepo ProxyRepository,
 ) *OpsAlertEvaluatorService {
 	svc := NewOpsAlertEvaluatorService(opsService, opsRepo, emailService, redisClient, cfg, proxyRepo)
+	if opsService != nil {
+		opsService.SetAccountRequestAlertSink(svc.NotifyAccountRequestErrors)
+	}
 	svc.Start()
 	return svc
 }
@@ -803,9 +809,23 @@ func ProvidePaymentConfigService(entClient *dbent.Client, settingRepo SettingRep
 }
 
 // ProvideBalanceNotifyService creates BalanceNotifyService
-func ProvideBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository, notificationEmailService *NotificationEmailService) *BalanceNotifyService {
+func ProvideBalanceNotifyService(
+	emailService *EmailService,
+	settingRepo SettingRepository,
+	accountRepo AccountRepository,
+	notificationEmailService *NotificationEmailService,
+	dailyReminderRepo LowBalanceReminderRepository,
+	leaderLockCache LeaderLockCache,
+	db *sql.DB,
+	billingCacheService *BillingCacheService,
+) *BalanceNotifyService {
 	svc := NewBalanceNotifyService(emailService, settingRepo, accountRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
+	svc.SetDailyReminderDependencies(dailyReminderRepo, leaderLockCache, db)
+	if billingCacheService != nil {
+		billingCacheService.SetBalanceNotifyService(svc)
+	}
+	svc.Start()
 	return svc
 }
 

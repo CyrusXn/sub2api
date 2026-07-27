@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -113,6 +114,7 @@ type BillingCacheService struct {
 	cfg                   *config.Config
 	circuitBreaker        *billingCircuitBreaker
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	balanceNotifyService  *BalanceNotifyService
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -126,6 +128,11 @@ type BillingCacheService struct {
 	cacheWriteDropFullLastLog   int64
 	cacheWriteDropClosedCount   uint64
 	cacheWriteDropClosedLastLog int64
+}
+
+// SetBalanceNotifyService 注入用户余额不足通知，避免计费缓存层直接依赖邮件实现。
+func (s *BillingCacheService) SetBalanceNotifyService(balanceNotifyService *BalanceNotifyService) {
+	s.balanceNotifyService = balanceNotifyService
 }
 
 // NewBillingCacheService 创建计费缓存服务
@@ -749,7 +756,11 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 			return err
 		}
 	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
+		balance, err := s.checkBalanceEligibility(ctx, user.ID)
+		if err != nil {
+			if errors.Is(err, ErrInsufficientBalance) && s.balanceNotifyService != nil {
+				s.balanceNotifyService.NotifyUserInsufficientBalance(ctx, user, balance)
+			}
 			return err
 		}
 	}
@@ -876,24 +887,24 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 }
 
 // checkBalanceEligibility 检查余额模式资格
-func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
+func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) (float64, error) {
 	balance, err := s.GetUserBalance(ctx, userID)
 	if err != nil {
 		if s.circuitBreaker != nil {
 			s.circuitBreaker.OnFailure(err)
 		}
 		logger.LegacyPrintf("service.billing_cache", "ALERT: billing balance check failed for user %d: %v", userID, err)
-		return ErrBillingServiceUnavailable.WithCause(err)
+		return 0, ErrBillingServiceUnavailable.WithCause(err)
 	}
 	if s.circuitBreaker != nil {
 		s.circuitBreaker.OnSuccess()
 	}
 
 	if s.balanceBelowEligibilityThreshold(balance) {
-		return ErrInsufficientBalance
+		return balance, ErrInsufficientBalance
 	}
 
-	return nil
+	return balance, nil
 }
 
 // checkSubscriptionEligibility 检查订阅模式资格

@@ -12,7 +12,7 @@
         ]"
         :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
       >
-        <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
+        <span v-if="displayVersion" class="font-medium">v{{ displayVersion }}</span>
         <span
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
@@ -82,9 +82,9 @@
               <div class="mb-4 text-center">
                 <div class="inline-flex items-center gap-2">
                   <span
-                    v-if="currentVersion"
+                    v-if="displayVersion"
                     class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >v{{ currentVersion }}</span
+                    >v{{ displayVersion }}</span
                   >
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
@@ -286,7 +286,7 @@
                     />
                   </svg>
                   <p class="text-xs text-blue-600 dark:text-blue-400">
-                    {{ t('version.sourceModeHint') }}
+                    {{ isCustomBuild ? t('version.customModeHint') : t('version.sourceModeHint') }}
                   </p>
                 </div>
               </div>
@@ -375,7 +375,7 @@
                 </a>
 
                 <!-- Version rollback entry -->
-                <div class="border-t border-gray-100 pt-2 dark:border-dark-700">
+                <div v-if="!isCustomBuild" class="border-t border-gray-100 pt-2 dark:border-dark-700">
                   <button
                     @click="toggleRollbackPanel"
                     class="group flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-600 dark:text-dark-500 dark:hover:bg-dark-700/50 dark:hover:text-dark-300"
@@ -676,6 +676,11 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
+const edition = computed(() => appStore.edition)
+const displayVersion = computed(() => {
+  if (!currentVersion.value) return ''
+  return edition.value ? `${currentVersion.value}-${edition.value}` : currentVersion.value
+})
 
 // Update process states (local to this component)
 const updating = ref(false)
@@ -730,6 +735,7 @@ const activeManualCommand = computed(() =>
 
 // Only show update check for release builds (binary/docker deployment)
 const isReleaseBuild = computed(() => buildType.value === 'release')
+const isCustomBuild = computed(() => buildType.value === 'custom')
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value

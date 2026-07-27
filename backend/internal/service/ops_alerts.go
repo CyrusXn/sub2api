@@ -111,6 +111,20 @@ func (s *OpsService) GetAlertEventByID(ctx context.Context, eventID int64) (*Ops
 	return ev, nil
 }
 
+func (s *OpsService) ListAlertAccountDetails(ctx context.Context, eventID int64) ([]*OpsAlertAccountDetail, error) {
+	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+		return nil, err
+	}
+	if eventID <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_EVENT_ID", "invalid event id")
+	}
+	repo, ok := s.opsRepo.(OpsAlertAccountDetailRepository)
+	if !ok {
+		return []*OpsAlertAccountDetail{}, nil
+	}
+	return repo.ListAlertAccountDetails(ctx, eventID)
+}
+
 func (s *OpsService) GetActiveAlertEvent(ctx context.Context, ruleID int64) (*OpsAlertEvent, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, err

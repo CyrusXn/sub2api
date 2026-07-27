@@ -102,7 +102,8 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 		}
 	}()
 
-	stmt, err := tx.PrepareContext(ctx, insertOpsErrorLogSQL)
+	// 回填每条错误日志 ID，供异步告警精确链接到本次请求详情。
+	stmt, err := tx.PrepareContext(ctx, insertOpsErrorLogSQL+" RETURNING id")
 	if err != nil {
 		return 0, err
 	}
@@ -115,9 +116,11 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 		if input == nil {
 			continue
 		}
-		if _, err = stmt.ExecContext(ctx, opsInsertErrorLogArgs(input)...); err != nil {
+		var errorLogID int64
+		if err = stmt.QueryRowContext(ctx, opsInsertErrorLogArgs(input)...).Scan(&errorLogID); err != nil {
 			return inserted, err
 		}
+		input.ErrorLogID = errorLogID
 		inserted++
 	}
 

@@ -69,6 +69,21 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
 }
 
+func TestUpdateServiceCustomBuildDisablesOnlineReplacement(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{},
+		"0.1.163",
+		"custom",
+	)
+
+	require.ErrorIs(t, svc.PerformUpdate(context.Background()), ErrCustomBuildUpdateDisabled)
+	require.ErrorIs(t, svc.Rollback(), ErrCustomBuildUpdateDisabled)
+	_, err := svc.ListRollbackVersions(context.Background())
+	require.ErrorIs(t, err, ErrCustomBuildUpdateDisabled)
+	require.ErrorIs(t, svc.RollbackToVersion(context.Background(), "0.1.162"), ErrCustomBuildUpdateDisabled)
+}
+
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
 	return NewUpdateService(
 		&updateServiceCacheStub{},

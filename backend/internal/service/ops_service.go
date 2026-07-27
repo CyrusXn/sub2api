@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
 var ErrOpsDisabled = infraerrors.NotFound("OPS_DISABLED", "Ops monitoring is disabled")
@@ -72,6 +73,10 @@ type OpsService struct {
 	// 立即同步到调度热路径读取的内存缓存，避免下次请求才能感知新值。
 	quotaAutoPauseSink func(OpsOpenAIAccountQuotaAutoPauseSettings)
 
+	// accountRequestAlertSink 只接收已落库错误，不在请求链路中执行判因或通知。
+	accountRequestAlertSinkMu sync.RWMutex
+	accountRequestAlertSink   func([]*OpsInsertErrorLogInput)
+
 	// Published snapshots are immutable. Gateway reads are lock-free; the mutex
 	// only serializes startup and administrative updates.
 	runtimeSettings   atomic.Pointer[opsRuntimeSettingsSnapshot]
@@ -108,6 +113,28 @@ func (s *OpsService) SetOpenAIQuotaAutoPauseSettingsSink(sink func(OpsOpenAIAcco
 		return
 	}
 	s.quotaAutoPauseSink = sink
+}
+
+// SetAccountRequestAlertSink 由 wire 在告警评估器构造完成后注入。
+func (s *OpsService) SetAccountRequestAlertSink(sink func([]*OpsInsertErrorLogInput)) {
+	if s == nil {
+		return
+	}
+	s.accountRequestAlertSinkMu.Lock()
+	s.accountRequestAlertSink = sink
+	s.accountRequestAlertSinkMu.Unlock()
+}
+
+func (s *OpsService) notifyAccountRequestAlert(entries []*OpsInsertErrorLogInput) {
+	if s == nil || len(entries) == 0 {
+		return
+	}
+	s.accountRequestAlertSinkMu.RLock()
+	sink := s.accountRequestAlertSink
+	s.accountRequestAlertSinkMu.RUnlock()
+	if sink != nil {
+		sink(entries)
+	}
 }
 
 func NewOpsService(
@@ -404,11 +431,14 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 		return nil
 	}
 
-	if _, err := s.opsRepo.InsertErrorLog(ctx, prepared); err != nil {
+	errorLogID, err := s.opsRepo.InsertErrorLog(ctx, prepared)
+	if err != nil {
 		// Never bubble up to gateway; best-effort logging.
 		log.Printf("[Ops] RecordError failed: %v", err)
 		return err
 	}
+	prepared.ErrorLogID = errorLogID
+	s.notifyAccountRequestAlert([]*OpsInsertErrorLogInput{prepared})
 	return nil
 }
 
@@ -431,9 +461,12 @@ func (s *OpsService) RecordErrorBatch(ctx context.Context, entries []*OpsInsertE
 		return nil
 	}
 	if len(prepared) == 1 {
-		_, err := s.opsRepo.InsertErrorLog(ctx, prepared[0])
+		errorLogID, err := s.opsRepo.InsertErrorLog(ctx, prepared[0])
 		if err != nil {
 			log.Printf("[Ops] RecordErrorBatch single insert failed: %v", err)
+		} else {
+			prepared[0].ErrorLogID = errorLogID
+			s.notifyAccountRequestAlert(prepared)
 		}
 		return err
 	}
@@ -441,16 +474,22 @@ func (s *OpsService) RecordErrorBatch(ctx context.Context, entries []*OpsInsertE
 	if _, err := s.opsRepo.BatchInsertErrorLogs(ctx, prepared); err != nil {
 		log.Printf("[Ops] RecordErrorBatch failed, fallback to single inserts: %v", err)
 		var firstErr error
+		inserted := make([]*OpsInsertErrorLogInput, 0, len(prepared))
 		for _, entry := range prepared {
-			if _, insertErr := s.opsRepo.InsertErrorLog(ctx, entry); insertErr != nil {
+			if errorLogID, insertErr := s.opsRepo.InsertErrorLog(ctx, entry); insertErr != nil {
 				log.Printf("[Ops] RecordErrorBatch fallback insert failed: %v", insertErr)
 				if firstErr == nil {
 					firstErr = insertErr
 				}
+			} else {
+				entry.ErrorLogID = errorLogID
+				inserted = append(inserted, entry)
 			}
 		}
+		s.notifyAccountRequestAlert(inserted)
 		return firstErr
 	}
+	s.notifyAccountRequestAlert(prepared)
 	return nil
 }
 
@@ -1053,9 +1092,10 @@ func sanitizeErrorBodyForStorage(raw string, maxBytes int) (sanitized string, tr
 		return out, trunc
 	}
 
-	// Non-JSON: best-effort truncate.
-	if maxBytes > 0 && len(raw) > maxBytes {
-		return truncateString(raw, maxBytes), true
+	// 非 JSON 文本也必须先脱敏，避免 Authorization、Cookie、Key 等进入告警邮件。
+	redacted := logredact.RedactText(raw)
+	if maxBytes > 0 && len(redacted) > maxBytes {
+		return truncateString(redacted, maxBytes), true
 	}
-	return raw, false
+	return redacted, false
 }

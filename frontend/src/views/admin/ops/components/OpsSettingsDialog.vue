@@ -307,6 +307,32 @@ async function saveAllSettings() {
             <label class="input-label">{{ t('admin.ops.settings.minSeverity') }}</label>
             <Select v-model="emailConfig.alert.min_severity" :options="severityOptions" />
           </div>
+
+          <div v-if="emailConfig.alert.enabled" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="font-medium text-gray-900 dark:text-white">{{ t('admin.ops.settings.quietHours') }}</label>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.ops.settings.quietHoursHint') }}</p>
+              </div>
+              <Toggle v-model="emailConfig.alert.quiet_hours_enabled" />
+            </div>
+            <div v-if="emailConfig.alert.quiet_hours_enabled" class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <label class="input-label">{{ t('admin.ops.settings.quietHoursStart') }}</label>
+                <input v-model="emailConfig.alert.quiet_hours_start" type="time" class="input" />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.ops.settings.quietHoursEnd') }}</label>
+                <input v-model="emailConfig.alert.quiet_hours_end" type="time" class="input" />
+              </div>
+              <div class="flex items-end pb-2">
+                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input v-model="emailConfig.alert.quiet_digest_enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+                  <span>{{ t('admin.ops.settings.quietDigest') }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
