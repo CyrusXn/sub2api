@@ -498,9 +498,10 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 		SELECT
 			ul.user_id,
 			` + usageLogEffectivePlatformExpr + ` as platform,
-			COALESCE(SUM(ul.actual_cost) FILTER (WHERE ul.created_at >= $2 AND ul.created_at < $3), 0) as total_cost,
-			COALESCE(SUM(ul.actual_cost) FILTER (WHERE ul.created_at >= $4), 0) as today_cost
+			COALESCE(SUM(ul.actual_cost * ` + adminUsageMultiplierSQLExpr + `) FILTER (WHERE ul.created_at >= $2 AND ul.created_at < $3), 0) as total_cost,
+			COALESCE(SUM(ul.actual_cost * ` + adminUsageMultiplierSQLExpr + `) FILTER (WHERE ul.created_at >= $4), 0) as today_cost
 		FROM usage_logs ul
+		LEFT JOIN users u ON u.id = ul.user_id
 		LEFT JOIN groups g ON g.id = ul.group_id
 		LEFT JOIN accounts a ON a.id = ul.account_id
 		WHERE ul.user_id = ANY($1)
@@ -552,6 +553,15 @@ type BatchAPIKeyUsageStats = usagestats.BatchAPIKeyUsageStats
 // GetBatchAPIKeyUsageStats gets today and total actual_cost for multiple API keys within a time range.
 // If startTime is zero, defaults to 30 days ago.
 func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
+	return r.getBatchAPIKeyUsageStats(ctx, apiKeyIDs, startTime, endTime, false)
+}
+
+// GetAdminBatchAPIKeyUsageStats 返回仅供管理端展示的动态倍率口径。
+func (r *usageLogRepository) GetAdminBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
+	return r.getBatchAPIKeyUsageStats(ctx, apiKeyIDs, startTime, endTime, true)
+}
+
+func (r *usageLogRepository) getBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time, adminView bool) (map[int64]*BatchAPIKeyUsageStats, error) {
 	result := make(map[int64]*BatchAPIKeyUsageStats)
 	normalizedAPIKeyIDs := normalizePositiveInt64IDs(apiKeyIDs)
 	if len(normalizedAPIKeyIDs) == 0 {
@@ -570,16 +580,26 @@ func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKe
 		result[id] = &BatchAPIKeyUsageStats{APIKeyID: id}
 	}
 
-	query := `
+	fromClause := "usage_logs"
+	apiKeyColumn := "api_key_id"
+	createdAtColumn := "created_at"
+	costExpr := "actual_cost"
+	if adminView {
+		fromClause = "usage_logs ul LEFT JOIN users u ON u.id = ul.user_id LEFT JOIN groups g ON g.id = ul.group_id"
+		apiKeyColumn = "ul.api_key_id"
+		createdAtColumn = "ul.created_at"
+		costExpr = "ul.actual_cost * " + adminUsageMultiplierSQLExpr
+	}
+	query := fmt.Sprintf(`
 		SELECT
-			api_key_id,
-			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $2 AND created_at < $3), 0) as total_cost,
-			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $4), 0) as today_cost
-		FROM usage_logs
-		WHERE api_key_id = ANY($1)
-		  AND created_at >= LEAST($2, $4)
-		GROUP BY api_key_id
-	`
+			%s,
+			COALESCE(SUM(%s) FILTER (WHERE %s >= $2 AND %s < $3), 0) as total_cost,
+			COALESCE(SUM(%s) FILTER (WHERE %s >= $4), 0) as today_cost
+		FROM %s
+		WHERE %s = ANY($1)
+		  AND %s >= LEAST($2, $4)
+		GROUP BY %s
+	`, apiKeyColumn, costExpr, createdAtColumn, createdAtColumn, costExpr, createdAtColumn, fromClause, apiKeyColumn, createdAtColumn, apiKeyColumn)
 	today := timezone.Today()
 	rows, err := r.sql.QueryContext(ctx, query, pq.Array(normalizedAPIKeyIDs), startTime, endTime, today)
 	if err != nil {
@@ -659,54 +679,82 @@ func (r *usageLogRepository) GetGlobalStats(ctx context.Context, startTime, endT
 func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
 	conditions := make([]string, 0, 9)
 	args := make([]any, 0, 9)
+	alias := ""
+	fromClause := "usage_logs"
+	if filters.AdminView {
+		alias = "ul"
+		fromClause = "usage_logs ul LEFT JOIN users u ON u.id = ul.user_id LEFT JOIN groups g ON g.id = ul.group_id"
+	}
+	column := func(name string) string { return usageLogColumn(alias, name) }
 
 	if filters.UserID > 0 {
-		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column("user_id"), len(args)+1))
 		args = append(args, filters.UserID)
 	}
 	if filters.APIKeyID > 0 {
-		conditions = append(conditions, fmt.Sprintf("api_key_id = $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column("api_key_id"), len(args)+1))
 		args = append(args, filters.APIKeyID)
 	}
 	if filters.AccountID > 0 {
-		conditions = append(conditions, fmt.Sprintf("account_id = $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column("account_id"), len(args)+1))
 		args = append(args, filters.AccountID)
 	}
 	if filters.GroupID > 0 {
-		conditions = append(conditions, fmt.Sprintf("group_id = $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column("group_id"), len(args)+1))
 		args = append(args, filters.GroupID)
 	}
-	conditions, args = appendUsageLogModelWhereCondition(conditions, args, filters.Model, filters.ModelFilterSource)
-	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
+	conditions, args = appendUsageLogModelWhereConditionWithAlias(conditions, args, filters.Model, filters.ModelFilterSource, alias)
+	conditions, args = appendRequestTypeOrStreamWhereConditionWithAlias(conditions, args, filters.RequestType, filters.Stream, alias)
 	if filters.BillingType != nil {
-		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column("billing_type"), len(args)+1))
 		args = append(args, int16(*filters.BillingType))
 	}
-	conditions, args = appendUsageLogBillingModeWhereCondition(conditions, args, filters.BillingMode)
+	conditions, args = appendUsageLogBillingModeWhereConditionWithAlias(conditions, args, filters.BillingMode, alias)
 	if filters.StartTime != nil {
-		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s >= $%d", column("created_at"), len(args)+1))
 		args = append(args, *filters.StartTime)
 	}
 	if filters.EndTime != nil {
-		conditions = append(conditions, fmt.Sprintf("created_at < $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s < $%d", column("created_at"), len(args)+1))
 		args = append(args, *filters.EndTime)
+	}
+
+	inputTokensExpr := "COALESCE(SUM(input_tokens), 0)"
+	outputTokensExpr := "COALESCE(SUM(output_tokens), 0)"
+	cacheTokensExpr := "COALESCE(SUM(cache_creation_tokens + cache_read_tokens), 0)"
+	cacheCreationTokensExpr := "COALESCE(SUM(cache_creation_tokens), 0)"
+	cacheReadTokensExpr := "COALESCE(SUM(cache_read_tokens), 0)"
+	totalCostExpr := "COALESCE(SUM(total_cost), 0)"
+	actualCostExpr := "COALESCE(SUM(actual_cost), 0)"
+	accountCostExpr := "COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0)"
+	durationExpr := "COALESCE(AVG(duration_ms), 0)"
+	if filters.AdminView {
+		inputTokensExpr = adminScaledTokenSum("ul.input_tokens")
+		outputTokensExpr = adminScaledTokenSum("ul.output_tokens")
+		cacheTokensExpr = fmt.Sprintf("COALESCE(SUM(ROUND(ul.cache_creation_tokens * %[1]s)::bigint + ROUND(ul.cache_read_tokens * %[1]s)::bigint), 0)", adminUsageMultiplierSQLExpr)
+		cacheCreationTokensExpr = adminScaledTokenSum("ul.cache_creation_tokens")
+		cacheReadTokensExpr = adminScaledTokenSum("ul.cache_read_tokens")
+		totalCostExpr = adminScaledCostSum("ul.total_cost")
+		actualCostExpr = adminScaledCostSum("ul.actual_cost")
+		accountCostExpr = fmt.Sprintf("COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1) * %s), 0)", adminUsageMultiplierSQLExpr)
+		durationExpr = "COALESCE(AVG(ul.duration_ms), 0)"
 	}
 
 	query := fmt.Sprintf(`
 		SELECT
 			COUNT(*) as total_requests,
-			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-			COALESCE(SUM(cache_creation_tokens + cache_read_tokens), 0) as total_cache_tokens,
-			COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
-			COALESCE(SUM(total_cost), 0) as total_cost,
-			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
-			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as total_account_cost,
-			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-		FROM usage_logs
+			%s as total_input_tokens,
+			%s as total_output_tokens,
+			%s as total_cache_tokens,
+			%s as total_cache_creation_tokens,
+			%s as total_cache_read_tokens,
+			%s as total_cost,
+			%s as total_actual_cost,
+			%s as total_account_cost,
+			%s as avg_duration_ms
+		FROM %s
 		%s
-	`, buildWhere(conditions))
+	`, inputTokensExpr, outputTokensExpr, cacheTokensExpr, cacheCreationTokensExpr, cacheReadTokensExpr, totalCostExpr, actualCostExpr, accountCostExpr, durationExpr, fromClause, buildWhere(conditions))
 
 	stats := &UsageStats{}
 	var totalAccountCost float64
@@ -740,7 +788,7 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 	}
 	// endpoint 明细:best-effort(失败 log + 返空),不致命。
 	runEndpoints := func(c context.Context) {
-		res, err := r.getEndpointStatsByColumnWithFilters(c, "inbound_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode)
+		res, err := r.getEndpointStatsByColumnWithFilters(c, "inbound_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.AdminView)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				logger.LegacyPrintf("repository.usage_log", "GetEndpointStatsWithFilters failed in GetStatsWithFilters: %v", err)
@@ -750,7 +798,7 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 		endpoints = res
 	}
 	runUpstream := func(c context.Context) {
-		res, err := r.getEndpointStatsByColumnWithFilters(c, "upstream_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode)
+		res, err := r.getEndpointStatsByColumnWithFilters(c, "upstream_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.AdminView)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				logger.LegacyPrintf("repository.usage_log", "GetUpstreamEndpointStatsWithFilters failed in GetStatsWithFilters: %v", err)
@@ -760,7 +808,7 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 		upstreamEndpoints = res
 	}
 	runPaths := func(c context.Context) {
-		res, err := r.getEndpointPathStatsWithFilters(c, start, end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode)
+		res, err := r.getEndpointPathStatsWithFilters(c, start, end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.AdminView)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				logger.LegacyPrintf("repository.usage_log", "getEndpointPathStatsWithFilters failed in GetStatsWithFilters: %v", err)
@@ -811,47 +859,63 @@ type AccountUsageStatsResponse = usagestats.AccountUsageStatsResponse
 // EndpointStat represents endpoint usage statistics row.
 type EndpointStat = usagestats.EndpointStat
 
-func (r *usageLogRepository) getEndpointStatsByColumnWithFilters(ctx context.Context, endpointColumn string, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string) (results []EndpointStat, err error) {
+func (r *usageLogRepository) getEndpointStatsByColumnWithFilters(ctx context.Context, endpointColumn string, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, adminView bool) (results []EndpointStat, err error) {
+	alias := ""
+	fromClause := "usage_logs"
+	endpointExpr := endpointColumn
+	totalTokensExpr := "COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)"
+	costExpr := "COALESCE(SUM(total_cost), 0)"
 	actualCostExpr := "COALESCE(SUM(actual_cost), 0) as actual_cost"
 	if accountID > 0 && userID == 0 && apiKeyID == 0 {
 		actualCostExpr = "COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as actual_cost"
+	}
+	if adminView {
+		alias = "ul"
+		fromClause = "usage_logs ul LEFT JOIN users u ON u.id = ul.user_id LEFT JOIN groups g ON g.id = ul.group_id"
+		endpointExpr = "ul." + endpointColumn
+		totalTokensExpr = adminScaledTotalTokensSum("ul")
+		costExpr = adminScaledCostSum("ul.total_cost")
+		actualCostExpr = adminScaledCostSum("ul.actual_cost") + " as actual_cost"
+		if accountID > 0 && userID == 0 && apiKeyID == 0 {
+			actualCostExpr = fmt.Sprintf("COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1) * %s), 0) as actual_cost", adminUsageMultiplierSQLExpr)
+		}
 	}
 
 	query := fmt.Sprintf(`
 		SELECT
 			COALESCE(NULLIF(TRIM(%s), ''), 'unknown') AS endpoint,
 			COUNT(*) AS requests,
-			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS total_tokens,
-			COALESCE(SUM(total_cost), 0) as cost,
+			%s AS total_tokens,
+			%s as cost,
 			%s
-		FROM usage_logs
-		WHERE created_at >= $1 AND created_at < $2
-	`, endpointColumn, actualCostExpr)
+		FROM %s
+		WHERE %s >= $1 AND %s < $2
+	`, endpointExpr, totalTokensExpr, costExpr, actualCostExpr, fromClause, usageLogColumn(alias, "created_at"), usageLogColumn(alias, "created_at"))
 
 	args := []any{startTime, endTime}
 	if userID > 0 {
-		query += fmt.Sprintf(" AND user_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "user_id"), len(args)+1)
 		args = append(args, userID)
 	}
 	if apiKeyID > 0 {
-		query += fmt.Sprintf(" AND api_key_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "api_key_id"), len(args)+1)
 		args = append(args, apiKeyID)
 	}
 	if accountID > 0 {
-		query += fmt.Sprintf(" AND account_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "account_id"), len(args)+1)
 		args = append(args, accountID)
 	}
 	if groupID > 0 {
-		query += fmt.Sprintf(" AND group_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "group_id"), len(args)+1)
 		args = append(args, groupID)
 	}
-	query, args = appendUsageLogModelQueryFilter(query, args, model, modelSource)
-	query, args = appendRequestTypeOrStreamQueryFilter(query, args, requestType, stream)
+	query, args = appendUsageLogModelQueryFilterWithAlias(query, args, model, modelSource, alias)
+	query, args = appendRequestTypeOrStreamQueryFilterWithAlias(query, args, requestType, stream, alias)
 	if billingType != nil {
-		query += fmt.Sprintf(" AND billing_type = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "billing_type"), len(args)+1)
 		args = append(args, int16(*billingType))
 	}
-	query, args = appendUsageLogBillingModeQueryFilter(query, args, billingMode, "")
+	query, args = appendUsageLogBillingModeQueryFilter(query, args, billingMode, alias)
 	query += " GROUP BY endpoint ORDER BY requests DESC"
 
 	rows, err := r.sql.QueryContext(ctx, query, args...)
@@ -879,51 +943,69 @@ func (r *usageLogRepository) getEndpointStatsByColumnWithFilters(ctx context.Con
 	return results, nil
 }
 
-func (r *usageLogRepository) getEndpointPathStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string) (results []EndpointStat, err error) {
+func (r *usageLogRepository) getEndpointPathStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, adminView bool) (results []EndpointStat, err error) {
+	alias := ""
+	fromClause := "usage_logs"
+	inboundEndpoint := "inbound_endpoint"
+	upstreamEndpoint := "upstream_endpoint"
+	totalTokensExpr := "COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)"
+	costExpr := "COALESCE(SUM(total_cost), 0)"
 	actualCostExpr := "COALESCE(SUM(actual_cost), 0) as actual_cost"
 	if accountID > 0 && userID == 0 && apiKeyID == 0 {
 		actualCostExpr = "COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as actual_cost"
+	}
+	if adminView {
+		alias = "ul"
+		fromClause = "usage_logs ul LEFT JOIN users u ON u.id = ul.user_id LEFT JOIN groups g ON g.id = ul.group_id"
+		inboundEndpoint = "ul.inbound_endpoint"
+		upstreamEndpoint = "ul.upstream_endpoint"
+		totalTokensExpr = adminScaledTotalTokensSum("ul")
+		costExpr = adminScaledCostSum("ul.total_cost")
+		actualCostExpr = adminScaledCostSum("ul.actual_cost") + " as actual_cost"
+		if accountID > 0 && userID == 0 && apiKeyID == 0 {
+			actualCostExpr = fmt.Sprintf("COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1) * %s), 0) as actual_cost", adminUsageMultiplierSQLExpr)
+		}
 	}
 
 	query := fmt.Sprintf(`
 		SELECT
 			CONCAT(
-				COALESCE(NULLIF(TRIM(inbound_endpoint), ''), 'unknown'),
+			COALESCE(NULLIF(TRIM(%s), ''), 'unknown'),
 				' -> ',
-				COALESCE(NULLIF(TRIM(upstream_endpoint), ''), 'unknown')
+				COALESCE(NULLIF(TRIM(%s), ''), 'unknown')
 			) AS endpoint,
 			COUNT(*) AS requests,
-			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS total_tokens,
-			COALESCE(SUM(total_cost), 0) as cost,
+			%s AS total_tokens,
+			%s as cost,
 			%s
-		FROM usage_logs
-		WHERE created_at >= $1 AND created_at < $2
-	`, actualCostExpr)
+		FROM %s
+		WHERE %s >= $1 AND %s < $2
+	`, inboundEndpoint, upstreamEndpoint, totalTokensExpr, costExpr, actualCostExpr, fromClause, usageLogColumn(alias, "created_at"), usageLogColumn(alias, "created_at"))
 
 	args := []any{startTime, endTime}
 	if userID > 0 {
-		query += fmt.Sprintf(" AND user_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "user_id"), len(args)+1)
 		args = append(args, userID)
 	}
 	if apiKeyID > 0 {
-		query += fmt.Sprintf(" AND api_key_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "api_key_id"), len(args)+1)
 		args = append(args, apiKeyID)
 	}
 	if accountID > 0 {
-		query += fmt.Sprintf(" AND account_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "account_id"), len(args)+1)
 		args = append(args, accountID)
 	}
 	if groupID > 0 {
-		query += fmt.Sprintf(" AND group_id = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "group_id"), len(args)+1)
 		args = append(args, groupID)
 	}
-	query, args = appendUsageLogModelQueryFilter(query, args, model, modelSource)
-	query, args = appendRequestTypeOrStreamQueryFilter(query, args, requestType, stream)
+	query, args = appendUsageLogModelQueryFilterWithAlias(query, args, model, modelSource, alias)
+	query, args = appendRequestTypeOrStreamQueryFilterWithAlias(query, args, requestType, stream, alias)
 	if billingType != nil {
-		query += fmt.Sprintf(" AND billing_type = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "billing_type"), len(args)+1)
 		args = append(args, int16(*billingType))
 	}
-	query, args = appendUsageLogBillingModeQueryFilter(query, args, billingMode, "")
+	query, args = appendUsageLogBillingModeQueryFilter(query, args, billingMode, alias)
 	query += " GROUP BY endpoint ORDER BY requests DESC"
 
 	rows, err := r.sql.QueryContext(ctx, query, args...)
@@ -953,12 +1035,12 @@ func (r *usageLogRepository) getEndpointPathStatsWithFilters(ctx context.Context
 
 // GetEndpointStatsWithFilters returns inbound endpoint statistics with optional filters.
 func (r *usageLogRepository) GetEndpointStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]EndpointStat, error) {
-	return r.getEndpointStatsByColumnWithFilters(ctx, "inbound_endpoint", startTime, endTime, userID, apiKeyID, accountID, groupID, model, "", requestType, stream, billingType, "")
+	return r.getEndpointStatsByColumnWithFilters(ctx, "inbound_endpoint", startTime, endTime, userID, apiKeyID, accountID, groupID, model, "", requestType, stream, billingType, "", false)
 }
 
 // GetUpstreamEndpointStatsWithFilters returns upstream endpoint statistics with optional filters.
 func (r *usageLogRepository) GetUpstreamEndpointStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]EndpointStat, error) {
-	return r.getEndpointStatsByColumnWithFilters(ctx, "upstream_endpoint", startTime, endTime, userID, apiKeyID, accountID, groupID, model, "", requestType, stream, billingType, "")
+	return r.getEndpointStatsByColumnWithFilters(ctx, "upstream_endpoint", startTime, endTime, userID, apiKeyID, accountID, groupID, model, "", requestType, stream, billingType, "", false)
 }
 
 // GetAccountUsageStats returns comprehensive usage statistics for an account over a time range

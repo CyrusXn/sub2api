@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -12,17 +13,27 @@ import (
 )
 
 // getPerformanceStats 获取 RPM 和 TPM（近5分钟平均值，可选按用户过滤）
-func (r *usageLogRepository) getPerformanceStats(ctx context.Context, userID int64) (rpm, tpm int64, err error) {
+func (r *usageLogRepository) getPerformanceStats(ctx context.Context, userID int64, adminViews ...bool) (rpm, tpm int64, err error) {
 	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)
-	query := `
+	fromClause := "usage_logs"
+	tokenExpr := "COALESCE(SUM(input_tokens + output_tokens), 0)"
+	createdAtColumn := "created_at"
+	userIDColumn := "user_id"
+	if len(adminViews) > 0 && adminViews[0] {
+		fromClause = "usage_logs ul LEFT JOIN users u ON u.id = ul.user_id LEFT JOIN groups g ON g.id = ul.group_id"
+		tokenExpr = adminScaledTokenSum("ul.input_tokens") + " + " + adminScaledTokenSum("ul.output_tokens")
+		createdAtColumn = "ul.created_at"
+		userIDColumn = "ul.user_id"
+	}
+	query := fmt.Sprintf(`
 		SELECT
 			COUNT(*) as request_count,
-			COALESCE(SUM(input_tokens + output_tokens), 0) as token_count
-		FROM usage_logs
-		WHERE created_at >= $1`
+			%s as token_count
+		FROM %s
+		WHERE %s >= $1`, tokenExpr, fromClause, createdAtColumn)
 	args := []any{fiveMinutesAgo}
 	if userID > 0 {
-		query += " AND user_id = $2"
+		query += " AND " + userIDColumn + " = $2"
 		args = append(args, userID)
 	}
 
@@ -86,11 +97,11 @@ func (r *usageLogRepository) GetDashboardStats(ctx context.Context) (*DashboardS
 	if err := r.fillDashboardEntityStats(ctx, stats, todayStart, now); err != nil {
 		return nil, err
 	}
-	if err := r.fillDashboardUsageStatsAggregated(ctx, stats, todayStart, now); err != nil {
+	if err := r.fillDashboardUsageStatsFromUsageLogs(ctx, stats, time.Unix(0, 0).UTC(), now.UTC(), todayStart, now); err != nil {
 		return nil, err
 	}
 
-	rpm, tpm, err := r.getPerformanceStats(ctx, 0)
+	rpm, tpm, err := r.getPerformanceStats(ctx, 0, true)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +129,7 @@ func (r *usageLogRepository) GetDashboardStatsWithRange(ctx context.Context, sta
 		return nil, err
 	}
 
-	rpm, tpm, err := r.getPerformanceStats(ctx, 0)
+	rpm, tpm, err := r.getPerformanceStats(ctx, 0, true)
 	if err != nil {
 		return nil, err
 	}
@@ -284,18 +295,20 @@ func (r *usageLogRepository) fillDashboardUsageStatsFromUsageLogs(ctx context.Co
 	combinedStatsQuery := `
 		WITH scoped AS (
 			SELECT
-				created_at,
-				input_tokens,
-				output_tokens,
-				cache_creation_tokens,
-				cache_read_tokens,
-				total_cost,
-				actual_cost,
-				COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1) AS account_cost,
-				COALESCE(duration_ms, 0) AS duration_ms
-			FROM usage_logs
-			WHERE created_at >= LEAST($1::timestamptz, $3::timestamptz)
-				AND created_at < GREATEST($2::timestamptz, $4::timestamptz)
+				ul.created_at,
+				ROUND(ul.input_tokens * ` + adminUsageMultiplierSQLExpr + `)::bigint AS input_tokens,
+				ROUND(ul.output_tokens * ` + adminUsageMultiplierSQLExpr + `)::bigint AS output_tokens,
+				ROUND(ul.cache_creation_tokens * ` + adminUsageMultiplierSQLExpr + `)::bigint AS cache_creation_tokens,
+				ROUND(ul.cache_read_tokens * ` + adminUsageMultiplierSQLExpr + `)::bigint AS cache_read_tokens,
+				ul.total_cost * ` + adminUsageMultiplierSQLExpr + ` AS total_cost,
+				ul.actual_cost * ` + adminUsageMultiplierSQLExpr + ` AS actual_cost,
+				COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1) * ` + adminUsageMultiplierSQLExpr + ` AS account_cost,
+				COALESCE(ul.duration_ms, 0) AS duration_ms
+			FROM usage_logs ul
+			LEFT JOIN users u ON u.id = ul.user_id
+			LEFT JOIN groups g ON g.id = ul.group_id
+			WHERE ul.created_at >= LEAST($1::timestamptz, $3::timestamptz)
+				AND ul.created_at < GREATEST($2::timestamptz, $4::timestamptz)
 		)
 		SELECT
 			COUNT(*) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz) AS total_requests,
@@ -465,7 +478,7 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
 
 	// 性能指标：RPM 和 TPM（最近1分钟，仅统计该用户的请求）
-	rpm, tpm, err := r.getPerformanceStats(ctx, userID)
+	rpm, tpm, err := r.getPerformanceStats(ctx, userID, false)
 	if err != nil {
 		return nil, err
 	}

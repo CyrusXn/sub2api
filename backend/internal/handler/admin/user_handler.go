@@ -34,6 +34,7 @@ type UserHandler struct {
 	totpService           *service.TotpService                // 角色提升为管理员的 step-up 门控
 	userService           *service.UserService
 	settingService        *service.SettingService // step-up 功能开关
+	dashboardService      *service.DashboardService
 }
 
 // NewUserHandler creates a new admin user handler
@@ -45,6 +46,7 @@ func NewUserHandler(
 	totpService *service.TotpService,
 	userService *service.UserService,
 	settingService *service.SettingService,
+	dashboardService *service.DashboardService,
 ) *UserHandler {
 	return &UserHandler{
 		adminService:          adminService,
@@ -54,35 +56,42 @@ func NewUserHandler(
 		totpService:           totpService,
 		userService:           userService,
 		settingService:        settingService,
+		dashboardService:      dashboardService,
 	}
 }
 
 // CreateUserRequest represents admin create user request
 type CreateUserRequest struct {
-	Email         string   `json:"email" binding:"required,email"`
-	Password      string   `json:"password" binding:"required,min=6"`
-	Username      string   `json:"username"`
-	Notes         string   `json:"notes"`
-	Role          string   `json:"role" binding:"omitempty,oneof=admin user"`
-	Balance       *float64 `json:"balance"`
-	Concurrency   int      `json:"concurrency"`
-	RPMLimit      int      `json:"rpm_limit"`
-	AllowedGroups []int64  `json:"allowed_groups"`
+	Email       string   `json:"email" binding:"required,email"`
+	Password    string   `json:"password" binding:"required,min=6"`
+	Username    string   `json:"username"`
+	Notes       string   `json:"notes"`
+	Role        string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Balance     *float64 `json:"balance"`
+	Concurrency int      `json:"concurrency"`
+	RPMLimit    int      `json:"rpm_limit"`
+	// AdminUsageMultiplier 管理端统计附加倍率；nil 表示继承分组附加倍率。
+	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier"`
+	AllowedGroups        []int64  `json:"allowed_groups"`
 }
 
 // UpdateUserRequest represents admin update user request
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateUserRequest struct {
-	Email         string   `json:"email" binding:"omitempty,email"`
-	Password      string   `json:"password" binding:"omitempty,min=6"`
-	Username      *string  `json:"username"`
-	Notes         *string  `json:"notes"`
-	Role          string   `json:"role" binding:"omitempty,oneof=admin user"`
-	Balance       *float64 `json:"balance"`
-	Concurrency   *int     `json:"concurrency"`
-	RPMLimit      *int     `json:"rpm_limit"`
-	Status        string   `json:"status" binding:"omitempty,oneof=active disabled"`
-	AllowedGroups *[]int64 `json:"allowed_groups"`
+	Email       string   `json:"email" binding:"omitempty,email"`
+	Password    string   `json:"password" binding:"omitempty,min=6"`
+	Username    *string  `json:"username"`
+	Notes       *string  `json:"notes"`
+	Role        string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Balance     *float64 `json:"balance"`
+	Concurrency *int     `json:"concurrency"`
+	RPMLimit    *int     `json:"rpm_limit"`
+	// AdminUsageMultiplier 管理端统计附加倍率；nil 表示本次不修改。
+	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier"`
+	// ClearAdminUsageMultiplier 为 true 时清空用户附加倍率，恢复继承分组。
+	ClearAdminUsageMultiplier bool     `json:"clear_admin_usage_multiplier"`
+	Status                    string   `json:"status" binding:"omitempty,oneof=active disabled"`
+	AllowedGroups             *[]int64 `json:"allowed_groups"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64 `json:"group_rates"`
@@ -224,7 +233,6 @@ func (h *UserHandler) GetByID(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-
 	response.Success(c, dto.UserFromServiceAdmin(user))
 }
 
@@ -284,22 +292,22 @@ func (h *UserHandler) Create(c *gin.Context) {
 	}
 
 	user, err := h.adminService.CreateUser(c.Request.Context(), &service.CreateUserInput{
-		Email:         req.Email,
-		Password:      req.Password,
-		Username:      req.Username,
-		Notes:         req.Notes,
-		Role:          req.Role,
-		Balance:       req.Balance,
-		Concurrency:   req.Concurrency,
-		RPMLimit:      req.RPMLimit,
-		AllowedGroups: req.AllowedGroups,
-		ActorAdminID:  getAdminIDFromContext(c),
+		Email:                req.Email,
+		Password:             req.Password,
+		Username:             req.Username,
+		Notes:                req.Notes,
+		Role:                 req.Role,
+		Balance:              req.Balance,
+		Concurrency:          req.Concurrency,
+		RPMLimit:             req.RPMLimit,
+		AdminUsageMultiplier: req.AdminUsageMultiplier,
+		AllowedGroups:        req.AllowedGroups,
+		ActorAdminID:         getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-
 	response.Success(c, dto.UserFromServiceAdmin(user))
 }
 
@@ -342,22 +350,30 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 	// 使用指针类型直接传递，nil 表示未提供该字段
 	user, err := h.adminService.UpdateUser(c.Request.Context(), userID, &service.UpdateUserInput{
-		Email:         req.Email,
-		Password:      req.Password,
-		Username:      req.Username,
-		Notes:         req.Notes,
-		Role:          req.Role,
-		Balance:       req.Balance,
-		Concurrency:   req.Concurrency,
-		RPMLimit:      req.RPMLimit,
-		Status:        req.Status,
-		AllowedGroups: req.AllowedGroups,
-		GroupRates:    req.GroupRates,
-		ActorAdminID:  getAdminIDFromContext(c),
+		Email:                     req.Email,
+		Password:                  req.Password,
+		Username:                  req.Username,
+		Notes:                     req.Notes,
+		Role:                      req.Role,
+		Balance:                   req.Balance,
+		Concurrency:               req.Concurrency,
+		RPMLimit:                  req.RPMLimit,
+		AdminUsageMultiplier:      req.AdminUsageMultiplier,
+		ClearAdminUsageMultiplier: req.ClearAdminUsageMultiplier,
+		Status:                    req.Status,
+		AllowedGroups:             req.AllowedGroups,
+		GroupRates:                req.GroupRates,
+		ActorAdminID:              getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if req.AdminUsageMultiplier != nil || req.ClearAdminUsageMultiplier {
+		clearAdminUsageMultiplierCaches()
+		if h.dashboardService != nil {
+			h.dashboardService.InvalidateStatsCache()
+		}
 	}
 
 	response.Success(c, dto.UserFromServiceAdmin(user))

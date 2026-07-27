@@ -411,6 +411,33 @@ func (_u *UserUpdate) AddTotalRecharged(v float64) *UserUpdate {
 	return _u
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (_u *UserUpdate) SetAdminUsageMultiplier(v float64) *UserUpdate {
+	_u.mutation.ResetAdminUsageMultiplier()
+	_u.mutation.SetAdminUsageMultiplier(v)
+	return _u
+}
+
+// SetNillableAdminUsageMultiplier sets the "admin_usage_multiplier" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableAdminUsageMultiplier(v *float64) *UserUpdate {
+	if v != nil {
+		_u.SetAdminUsageMultiplier(*v)
+	}
+	return _u
+}
+
+// AddAdminUsageMultiplier adds value to the "admin_usage_multiplier" field.
+func (_u *UserUpdate) AddAdminUsageMultiplier(v float64) *UserUpdate {
+	_u.mutation.AddAdminUsageMultiplier(v)
+	return _u
+}
+
+// ClearAdminUsageMultiplier clears the value of the "admin_usage_multiplier" field.
+func (_u *UserUpdate) ClearAdminUsageMultiplier() *UserUpdate {
+	_u.mutation.ClearAdminUsageMultiplier()
+	return _u
+}
+
 // SetRpmLimit sets the "rpm_limit" field.
 func (_u *UserUpdate) SetRpmLimit(v int) *UserUpdate {
 	_u.mutation.ResetRpmLimit()
@@ -1092,6 +1119,15 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedTotalRecharged(); ok {
 		_spec.AddField(user.FieldTotalRecharged, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AdminUsageMultiplier(); ok {
+		_spec.SetField(user.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAdminUsageMultiplier(); ok {
+		_spec.AddField(user.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.AdminUsageMultiplierCleared() {
+		_spec.ClearField(user.FieldAdminUsageMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.RpmLimit(); ok {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
@@ -2087,6 +2123,33 @@ func (_u *UserUpdateOne) AddTotalRecharged(v float64) *UserUpdateOne {
 	return _u
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (_u *UserUpdateOne) SetAdminUsageMultiplier(v float64) *UserUpdateOne {
+	_u.mutation.ResetAdminUsageMultiplier()
+	_u.mutation.SetAdminUsageMultiplier(v)
+	return _u
+}
+
+// SetNillableAdminUsageMultiplier sets the "admin_usage_multiplier" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableAdminUsageMultiplier(v *float64) *UserUpdateOne {
+	if v != nil {
+		_u.SetAdminUsageMultiplier(*v)
+	}
+	return _u
+}
+
+// AddAdminUsageMultiplier adds value to the "admin_usage_multiplier" field.
+func (_u *UserUpdateOne) AddAdminUsageMultiplier(v float64) *UserUpdateOne {
+	_u.mutation.AddAdminUsageMultiplier(v)
+	return _u
+}
+
+// ClearAdminUsageMultiplier clears the value of the "admin_usage_multiplier" field.
+func (_u *UserUpdateOne) ClearAdminUsageMultiplier() *UserUpdateOne {
+	_u.mutation.ClearAdminUsageMultiplier()
+	return _u
+}
+
 // SetRpmLimit sets the "rpm_limit" field.
 func (_u *UserUpdateOne) SetRpmLimit(v int) *UserUpdateOne {
 	_u.mutation.ResetRpmLimit()
@@ -2798,6 +2861,15 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.AddedTotalRecharged(); ok {
 		_spec.AddField(user.FieldTotalRecharged, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AdminUsageMultiplier(); ok {
+		_spec.SetField(user.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAdminUsageMultiplier(); ok {
+		_spec.AddField(user.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.AdminUsageMultiplierCleared() {
+		_spec.ClearField(user.FieldAdminUsageMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.RpmLimit(); ok {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)

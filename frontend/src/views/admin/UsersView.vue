@@ -396,6 +396,18 @@
             <span v-else class="text-xs text-gray-400 dark:text-dark-500">-</span>
           </template>
 
+          <template #cell-admin_usage_multiplier="{ value }">
+            <span
+              v-if="value === null || value === undefined"
+              class="text-sm text-gray-400 dark:text-gray-500"
+            >
+              {{ t('admin.users.adminUsageMultiplierInherited') }}
+            </span>
+            <span v-else class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ value }}x
+            </span>
+          </template>
+
           <template #cell-subscriptions="{ row }">
             <div
               v-if="row.subscriptions && row.subscriptions.length > 0"
@@ -869,6 +881,7 @@ const allColumns = computed<Column[]>(() => [
   ...attributeColumns.value,
   { key: 'role', label: t('admin.users.columns.role'), sortable: true },
   { key: 'groups', label: t('admin.users.columns.groups'), sortable: false },
+  { key: 'admin_usage_multiplier', label: t('admin.users.columns.adminUsageMultiplier'), sortable: false },
   { key: 'subscriptions', label: t('admin.users.columns.subscriptions'), sortable: false },
   { key: 'balance', label: t('admin.users.columns.balance'), sortable: true },
   { key: 'balance_platform_quota', label: t('admin.users.columns.balancePlatformQuota'), sortable: false },

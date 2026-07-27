@@ -56,6 +56,19 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.users.form.adminUsageMultiplier') }}</label>
+        <input
+          v-model.number="form.admin_usage_multiplier"
+          type="number"
+          min="0"
+          step="0.0001"
+          class="input"
+          data-test="admin-usage-multiplier"
+          :placeholder="t('admin.users.form.adminUsageMultiplierPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.users.form.adminUsageMultiplierHint') }}</p>
+      </div>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
     <template #footer>
@@ -78,7 +91,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
 import { adminAPI } from '@/api/admin'
-import type { AdminUser, UserAttributeValuesMap } from '@/types'
+import type { AdminUser, UpdateUserRequest, UserAttributeValuesMap } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import UserAttributeForm from '@/components/user/UserAttributeForm.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -90,11 +103,13 @@ const emit = defineEmits(['close', 'success'])
 const { t } = useI18n(); const appStore = useAppStore(); const { copyToClipboard } = useClipboard()
 
 const submitting = ref(false); const passwordCopied = ref(false)
-const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user', concurrency: 1, rpm_limit: 0, customAttributes: {} as UserAttributeValuesMap })
+const originalAdminUsageMultiplier = ref<number | null>(null)
+const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user', concurrency: 1, rpm_limit: 0, admin_usage_multiplier: '' as number | '', customAttributes: {} as UserAttributeValuesMap })
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, customAttributes: {} })
+    originalAdminUsageMultiplier.value = u.admin_usage_multiplier ?? null
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, admin_usage_multiplier: u.admin_usage_multiplier ?? '', customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })
@@ -124,8 +139,22 @@ const handleUpdateUser = async () => {
   const userId = props.user.id
   submitting.value = true
   try {
-    const data: any = { email: form.email, username: form.username, notes: form.notes, role: form.role, concurrency: form.concurrency, rpm_limit: form.rpm_limit }
+    const data: UpdateUserRequest = { email: form.email, username: form.username, notes: form.notes, role: form.role as 'admin' | 'user', concurrency: form.concurrency, rpm_limit: form.rpm_limit }
     if (form.password.trim()) data.password = form.password.trim()
+    if (form.admin_usage_multiplier === '') {
+      if (originalAdminUsageMultiplier.value !== null) {
+        data.clear_admin_usage_multiplier = true
+      }
+    } else {
+      const multiplier = Number(form.admin_usage_multiplier)
+      if (!Number.isFinite(multiplier) || multiplier < 0) {
+        appStore.showError(t('admin.users.form.adminUsageMultiplierInvalid'))
+        return
+      }
+      if (multiplier !== originalAdminUsageMultiplier.value) {
+        data.admin_usage_multiplier = multiplier
+      }
+    }
     // 提升为管理员属敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 验证并重试
     await stepUp.run(() => adminAPI.users.update(userId, data))
     if (Object.keys(form.customAttributes).length > 0) await adminAPI.userAttributes.updateUserAttributeValues(userId, form.customAttributes)

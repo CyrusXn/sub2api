@@ -103,13 +103,22 @@ func appendUsageLogBillingModeQueryFilter(query string, args []any, billingMode 
 }
 
 func appendUsageLogModelWhereCondition(conditions []string, args []any, model string, source string) ([]string, []any) {
+	return appendUsageLogModelWhereConditionWithAlias(conditions, args, model, source, "")
+}
+
+func appendUsageLogModelWhereConditionWithAlias(conditions []string, args []any, model string, source string, alias string) ([]string, []any) {
 	if strings.TrimSpace(source) == "" {
-		return appendRawUsageLogModelWhereCondition(conditions, args, model)
+		if strings.TrimSpace(model) == "" {
+			return conditions, args
+		}
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", usageLogColumn(alias, rawUsageLogModelColumn), len(args)+1))
+		args = append(args, model)
+		return conditions, args
 	}
 	if strings.TrimSpace(model) == "" {
 		return conditions, args
 	}
-	conditions = append(conditions, fmt.Sprintf("%s = $%d", resolveModelDimensionExpression(source), len(args)+1))
+	conditions = append(conditions, fmt.Sprintf("%s = $%d", resolveModelDimensionExpressionWithAlias(source, alias), len(args)+1))
 	args = append(args, model)
 	return conditions, args
 }
@@ -127,13 +136,22 @@ func appendRawUsageLogModelQueryFilter(query string, args []any, model string) (
 }
 
 func appendUsageLogModelQueryFilter(query string, args []any, model string, source string) (string, []any) {
+	return appendUsageLogModelQueryFilterWithAlias(query, args, model, source, "")
+}
+
+func appendUsageLogModelQueryFilterWithAlias(query string, args []any, model string, source string, alias string) (string, []any) {
 	if strings.TrimSpace(source) == "" {
-		return appendRawUsageLogModelQueryFilter(query, args, model)
+		if strings.TrimSpace(model) == "" {
+			return query, args
+		}
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, rawUsageLogModelColumn), len(args)+1)
+		args = append(args, model)
+		return query, args
 	}
 	if strings.TrimSpace(model) == "" {
 		return query, args
 	}
-	query += fmt.Sprintf(" AND %s = $%d", resolveModelDimensionExpression(source), len(args)+1)
+	query += fmt.Sprintf(" AND %s = $%d", resolveModelDimensionExpressionWithAlias(source, alias), len(args)+1)
 	args = append(args, model)
 	return query, args
 }
@@ -172,28 +190,36 @@ func buildWhere(conditions []string) string {
 }
 
 func appendRequestTypeOrStreamWhereCondition(conditions []string, args []any, requestType *int16, stream *bool) ([]string, []any) {
+	return appendRequestTypeOrStreamWhereConditionWithAlias(conditions, args, requestType, stream, "")
+}
+
+func appendRequestTypeOrStreamWhereConditionWithAlias(conditions []string, args []any, requestType *int16, stream *bool, alias string) ([]string, []any) {
 	if requestType != nil {
-		condition, conditionArgs := buildRequestTypeFilterCondition(len(args)+1, *requestType)
+		condition, conditionArgs := buildRequestTypeFilterConditionWithAlias(len(args)+1, *requestType, alias)
 		conditions = append(conditions, condition)
 		args = append(args, conditionArgs...)
 		return conditions, args
 	}
 	if stream != nil {
-		conditions = append(conditions, fmt.Sprintf("stream = $%d", len(args)+1))
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", usageLogColumn(alias, "stream"), len(args)+1))
 		args = append(args, *stream)
 	}
 	return conditions, args
 }
 
 func appendRequestTypeOrStreamQueryFilter(query string, args []any, requestType *int16, stream *bool) (string, []any) {
+	return appendRequestTypeOrStreamQueryFilterWithAlias(query, args, requestType, stream, "")
+}
+
+func appendRequestTypeOrStreamQueryFilterWithAlias(query string, args []any, requestType *int16, stream *bool, alias string) (string, []any) {
 	if requestType != nil {
-		condition, conditionArgs := buildRequestTypeFilterCondition(len(args)+1, *requestType)
+		condition, conditionArgs := buildRequestTypeFilterConditionWithAlias(len(args)+1, *requestType, alias)
 		query += " AND " + condition
 		args = append(args, conditionArgs...)
 		return query, args
 	}
 	if stream != nil {
-		query += fmt.Sprintf(" AND stream = $%d", len(args)+1)
+		query += fmt.Sprintf(" AND %s = $%d", usageLogColumn(alias, "stream"), len(args)+1)
 		args = append(args, *stream)
 	}
 	return query, args

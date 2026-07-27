@@ -61,6 +61,8 @@ const (
 	FieldBalanceNotifyExtraEmails = "balance_notify_extra_emails"
 	// FieldTotalRecharged holds the string denoting the total_recharged field in the database.
 	FieldTotalRecharged = "total_recharged"
+	// FieldAdminUsageMultiplier holds the string denoting the admin_usage_multiplier field in the database.
+	FieldAdminUsageMultiplier = "admin_usage_multiplier"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
@@ -217,6 +219,7 @@ var Columns = []string{
 	FieldBalanceNotifyThreshold,
 	FieldBalanceNotifyExtraEmails,
 	FieldTotalRecharged,
+	FieldAdminUsageMultiplier,
 	FieldRpmLimit,
 }
 
@@ -413,6 +416,11 @@ func ByBalanceNotifyExtraEmails(opts ...sql.OrderTermOption) OrderOption {
 // ByTotalRecharged orders the results by the total_recharged field.
 func ByTotalRecharged(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTotalRecharged, opts...).ToFunc()
+}
+
+// ByAdminUsageMultiplier orders the results by the admin_usage_multiplier field.
+func ByAdminUsageMultiplier(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdminUsageMultiplier, opts...).ToFunc()
 }
 
 // ByRpmLimit orders the results by the rpm_limit field.

@@ -255,6 +255,12 @@
             >
           </template>
 
+          <template #cell-admin_usage_multiplier="{ value }">
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ value ?? 1 }}x
+            </span>
+          </template>
+
           <template #cell-is_exclusive="{ value }">
             <span :class="['badge', value ? 'badge-primary' : 'badge-gray']">
               {{
@@ -596,6 +602,23 @@
             data-tour="group-form-multiplier"
           />
           <p class="input-hint">{{ t("admin.groups.rateMultiplierHint") }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{
+            t("admin.groups.form.adminUsageMultiplier")
+          }}</label>
+          <input
+            v-model.number="createForm.admin_usage_multiplier"
+            type="number"
+            step="0.0001"
+            min="0"
+            required
+            class="input"
+            data-test="group-admin-usage-multiplier"
+          />
+          <p class="input-hint">{{
+            t("admin.groups.form.adminUsageMultiplierHint")
+          }}</p>
         </div>
         <div>
           <label class="input-label">{{ t("admin.groups.form.rpmLimit") }}</label>
@@ -2149,6 +2172,23 @@
             class="input"
             data-tour="group-form-multiplier"
           />
+        </div>
+        <div>
+          <label class="input-label">{{
+            t("admin.groups.form.adminUsageMultiplier")
+          }}</label>
+          <input
+            v-model.number="editForm.admin_usage_multiplier"
+            type="number"
+            step="0.0001"
+            min="0"
+            required
+            class="input"
+            data-test="group-admin-usage-multiplier"
+          />
+          <p class="input-hint">{{
+            t("admin.groups.form.adminUsageMultiplierHint")
+          }}</p>
         </div>
         <div>
           <label class="input-label">{{ t("admin.groups.form.rpmLimit") }}</label>
@@ -4143,6 +4183,11 @@ const allColumns = computed<Column[]>(() => [
     sortable: true,
   },
   {
+    key: "admin_usage_multiplier",
+    label: t("admin.groups.columns.adminUsageMultiplier"),
+    sortable: false,
+  },
+  {
     key: "is_exclusive",
     label: t("admin.groups.columns.type"),
     sortable: true,
@@ -4587,6 +4632,7 @@ const createForm = reactive({
   description: "",
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
+  admin_usage_multiplier: 1.0,
   is_exclusive: false,
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
@@ -4936,6 +4982,7 @@ const editForm = reactive({
   description: "",
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
+  admin_usage_multiplier: 1.0,
   is_exclusive: false,
   status: "active" as "active" | "inactive",
   subscription_type: "standard" as SubscriptionType,
@@ -5385,6 +5432,7 @@ const closeCreateModal = () => {
   createForm.description = "";
   createForm.platform = "anthropic";
   createForm.rate_multiplier = 1.0;
+  createForm.admin_usage_multiplier = 1.0;
   createForm.is_exclusive = false;
   createForm.subscription_type = "standard";
   createForm.daily_limit_usd = null;
@@ -5468,11 +5516,17 @@ const handleCreateGroup = async () => {
   ) {
     return;
   }
+  const adminUsageMultiplier = Number(createForm.admin_usage_multiplier);
+  if (!Number.isFinite(adminUsageMultiplier) || adminUsageMultiplier < 0) {
+    appStore.showError(t("admin.groups.form.adminUsageMultiplierInvalid"));
+    return;
+  }
   submitting.value = true;
   try {
     // 构建请求数据，包含模型路由配置
     const requestData = {
       ...createForm,
+      admin_usage_multiplier: adminUsageMultiplier,
       daily_limit_usd: normalizeOptionalLimit(
         createForm.daily_limit_usd as number | string | null,
       ),
@@ -5564,6 +5618,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.description = group.description || "";
   editForm.platform = group.platform;
   editForm.rate_multiplier = group.rate_multiplier;
+  editForm.admin_usage_multiplier = group.admin_usage_multiplier ?? 1.0;
   editForm.is_exclusive = group.is_exclusive;
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
@@ -5676,11 +5731,18 @@ const handleUpdateGroup = async () => {
     return;
   }
 
+  const adminUsageMultiplier = Number(editForm.admin_usage_multiplier);
+  if (!Number.isFinite(adminUsageMultiplier) || adminUsageMultiplier < 0) {
+    appStore.showError(t("admin.groups.form.adminUsageMultiplierInvalid"));
+    return;
+  }
+
   submitting.value = true;
   try {
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
       ...editForm,
+      admin_usage_multiplier: adminUsageMultiplier,
       daily_limit_usd: normalizeOptionalLimit(
         editForm.daily_limit_usd as number | string | null,
       ),

@@ -3,10 +3,42 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+type groupCreateAdminMultiplierRepoStub struct {
+	GroupRepository
+	created *Group
+}
+
+func (s *groupCreateAdminMultiplierRepoStub) ExistsByName(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (s *groupCreateAdminMultiplierRepoStub) Create(_ context.Context, group *Group) error {
+	copy := *group
+	s.created = &copy
+	group.ID = 1
+	return nil
+}
+
+func TestGroupService_CreateDefaultsAdminUsageMultiplierToOne(t *testing.T) {
+	repo := &groupCreateAdminMultiplierRepoStub{}
+	svc := NewGroupService(repo, nil)
+
+	group, err := svc.Create(context.Background(), CreateGroupRequest{
+		Name:           "default-admin-multiplier",
+		RateMultiplier: 1,
+	})
+
+	require.NoError(t, err)
+	require.InDelta(t, 1.0, group.AdminUsageMultiplier, 1e-12)
+	require.NotNil(t, repo.created)
+	require.InDelta(t, 1.0, repo.created.AdminUsageMultiplier, 1e-12)
+}
 
 // TestGroup_GetImagePrice_1K 测试 1K 尺寸返回正确价格
 func TestGroup_GetImagePrice_1K(t *testing.T) {

@@ -148,6 +148,8 @@ type CreateUserInput struct {
 	Concurrency   int
 	RPMLimit      int
 	AllowedGroups []int64
+	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 表示继承分组附加倍率。
+	AdminUsageMultiplier *float64
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
 }
@@ -163,6 +165,10 @@ type UpdateUserInput struct {
 	RPMLimit      *int     // 使用指针区分"未提供"和"设置为0"
 	Status        string
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
+	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 表示本次不修改。
+	AdminUsageMultiplier *float64
+	// ClearAdminUsageMultiplier 为 true 时清空用户附加倍率，恢复继承分组。
+	ClearAdminUsageMultiplier bool
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64
@@ -209,15 +215,17 @@ type AdminBoundAuthIdentityChannel struct {
 }
 
 type CreateGroupInput struct {
-	Name             string
-	Description      string
-	Platform         string
-	RateMultiplier   float64
-	IsExclusive      bool
-	SubscriptionType string   // standard/subscription
-	DailyLimitUSD    *float64 // 日限额 (USD)
-	WeeklyLimitUSD   *float64 // 周限额 (USD)
-	MonthlyLimitUSD  *float64 // 月限额 (USD)
+	Name           string
+	Description    string
+	Platform       string
+	RateMultiplier float64
+	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 时默认 1。
+	AdminUsageMultiplier *float64
+	IsExclusive          bool
+	SubscriptionType     string   // standard/subscription
+	DailyLimitUSD        *float64 // 日限额 (USD)
+	WeeklyLimitUSD       *float64 // 周限额 (USD)
+	MonthlyLimitUSD      *float64 // 月限额 (USD)
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         bool
 	AllowBatchImageGeneration    bool
@@ -269,16 +277,18 @@ type CreateGroupInput struct {
 }
 
 type UpdateGroupInput struct {
-	Name             string
-	Description      *string
-	Platform         string
-	RateMultiplier   *float64 // 使用指针以支持设置为0
-	IsExclusive      *bool
-	Status           string
-	SubscriptionType string   // standard/subscription
-	DailyLimitUSD    *float64 // 日限额 (USD)
-	WeeklyLimitUSD   *float64 // 周限额 (USD)
-	MonthlyLimitUSD  *float64 // 月限额 (USD)
+	Name           string
+	Description    *string
+	Platform       string
+	RateMultiplier *float64 // 使用指针以支持设置为0
+	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 表示不修改。
+	AdminUsageMultiplier *float64
+	IsExclusive          *bool
+	Status               string
+	SubscriptionType     string   // standard/subscription
+	DailyLimitUSD        *float64 // 日限额 (USD)
+	WeeklyLimitUSD       *float64 // 周限额 (USD)
+	MonthlyLimitUSD      *float64 // 月限额 (USD)
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         *bool
 	AllowBatchImageGeneration    *bool

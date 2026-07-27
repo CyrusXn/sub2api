@@ -10,7 +10,9 @@ const {
   getModelsListCandidates,
   getUsageSummary,
   getCapacitySummary,
+  getLiveCapability,
   listAccounts,
+  createGroupRequest,
   showError,
   showSuccess,
   isCurrentStep,
@@ -21,7 +23,9 @@ const {
   getModelsListCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
+  getLiveCapability: vi.fn(),
   listAccounts: vi.fn(),
+  createGroupRequest: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
   isCurrentStep: vi.fn(),
@@ -35,6 +39,7 @@ const messages: Record<string, string> = {
   'admin.groups.columns.platform': 'Platform',
   'admin.groups.columns.billingType': 'Billing Type',
   'admin.groups.columns.rateMultiplier': 'Rate Multiplier',
+  'admin.groups.columns.adminUsageMultiplier': 'Admin Usage Multiplier',
   'admin.groups.columns.type': 'Type',
   'admin.groups.columns.accounts': 'Accounts',
   'admin.groups.columns.capacity': 'Capacity',
@@ -51,7 +56,8 @@ vi.mock('@/api/admin', () => ({
       getModelsListCandidates,
       getUsageSummary,
       getCapacitySummary,
-      create: vi.fn(),
+      getLiveCapability,
+      create: createGroupRequest,
       update: vi.fn(),
       delete: vi.fn(),
       updateSortOrder: vi.fn(),
@@ -92,6 +98,7 @@ const createGroup = (overrides: Partial<AdminGroup> = {}): AdminGroup => ({
   description: null,
   platform: 'anthropic',
   rate_multiplier: 1,
+  admin_usage_multiplier: 1,
   rpm_limit: 0,
   is_exclusive: false,
   status: 'active',
@@ -212,7 +219,7 @@ const openColumnSettings = async (wrapper: ReturnType<typeof mount>) => {
 const clickColumnToggle = async (wrapper: ReturnType<typeof mount>, label: string) => {
   const button = wrapper
     .findAll('button')
-    .find((item) => item.text().includes(label))
+    .find((item) => item.text().trim().startsWith(label))
   expect(button, `column toggle ${label}`).toBeTruthy()
   await button!.trigger('click')
   await flushPromises()
@@ -227,7 +234,9 @@ describe('admin GroupsView column settings', () => {
     getModelsListCandidates.mockReset()
     getUsageSummary.mockReset()
     getCapacitySummary.mockReset()
+    getLiveCapability.mockReset()
     listAccounts.mockReset()
+    createGroupRequest.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
     isCurrentStep.mockReset()
@@ -244,7 +253,9 @@ describe('admin GroupsView column settings', () => {
     getModelsListCandidates.mockResolvedValue([])
     getUsageSummary.mockResolvedValue([])
     getCapacitySummary.mockResolvedValue([])
+    getLiveCapability.mockResolvedValue({ supported: false })
     listAccounts.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
+    createGroupRequest.mockResolvedValue(createGroup())
     isCurrentStep.mockReturnValue(false)
   })
 
@@ -260,6 +271,7 @@ describe('admin GroupsView column settings', () => {
       'platform',
       'billing_type',
       'rate_multiplier',
+      'admin_usage_multiplier',
       'is_exclusive',
       'account_count',
       'capacity',
@@ -286,6 +298,7 @@ describe('admin GroupsView column settings', () => {
       'platform',
       'billing_type',
       'rate_multiplier',
+      'admin_usage_multiplier',
       'is_exclusive',
       'account_count',
       'status',
@@ -304,6 +317,7 @@ describe('admin GroupsView column settings', () => {
       'platform',
       'billing_type',
       'rate_multiplier',
+      'admin_usage_multiplier',
       'is_exclusive',
       'account_count',
       'capacity',
@@ -327,6 +341,7 @@ describe('admin GroupsView column settings', () => {
       'platform',
       'billing_type',
       'rate_multiplier',
+      'admin_usage_multiplier',
       'is_exclusive',
       'account_count',
       'capacity',
@@ -350,6 +365,7 @@ describe('admin GroupsView column settings', () => {
       'platform',
       'billing_type',
       'rate_multiplier',
+      'admin_usage_multiplier',
       'is_exclusive',
       'account_count',
       'capacity',
@@ -379,5 +395,23 @@ describe('admin GroupsView column settings', () => {
     await clickColumnToggle(wrapper, 'Capacity')
     expect(getUsageSummary).toHaveBeenCalledTimes(1)
     expect(getCapacitySummary).toHaveBeenCalledTimes(1)
+  })
+
+  it('submits an explicit zero admin usage multiplier when creating a group', async () => {
+    const wrapper = await mountView()
+    const createButton = wrapper.findAll('button').find((button) =>
+      button.text().includes('admin.groups.createGroup')
+    )
+    expect(createButton).toBeTruthy()
+    await createButton!.trigger('click')
+
+    await wrapper.get('[data-tour="group-form-name"]').setValue('Zero multiplier')
+    await wrapper.get('[data-test="group-admin-usage-multiplier"]').setValue('0')
+    await wrapper.get('#create-group-form').trigger('submit')
+    await flushPromises()
+
+    expect(createGroupRequest).toHaveBeenCalledWith(expect.objectContaining({
+      admin_usage_multiplier: 0
+    }))
   })
 })

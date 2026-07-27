@@ -54,6 +54,19 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.users.form.adminUsageMultiplier') }}</label>
+        <input
+          v-model.number="form.admin_usage_multiplier"
+          type="number"
+          min="0"
+          step="0.0001"
+          class="input"
+          data-test="admin-usage-multiplier"
+          :placeholder="t('admin.users.form.adminUsageMultiplierPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.users.form.adminUsageMultiplierHint') }}</p>
+      </div>
     </form>
     <template #footer>
       <div class="flex justify-end gap-3">
@@ -82,7 +95,7 @@ const props = defineProps<{ show: boolean }>()
 const emit = defineEmits(['close', 'success']); const { t } = useI18n()
 const appStore = useAppStore()
 
-const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user' as 'user' | 'admin', balance: '', concurrency: 1, rpm_limit: 0 })
+const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user' as 'user' | 'admin', balance: '', concurrency: 1, rpm_limit: 0, admin_usage_multiplier: '' as number | '' })
 
 const stepUp = useStepUp()
 const loading = ref(false)
@@ -91,11 +104,19 @@ const submit = async () => {
   if (loading.value) return
   loading.value = true
   try {
-    const { balance: rawBalance, ...rest } = { ...form }
+    const { balance: rawBalance, admin_usage_multiplier: rawAdminUsageMultiplier, ...rest } = { ...form }
     const balance = String(rawBalance).trim()
-    const payload: typeof rest & { balance?: number } = { ...rest }
+    const payload: typeof rest & { balance?: number, admin_usage_multiplier?: number } = { ...rest }
     if (balance !== '') {
       payload.balance = Number(balance)
+    }
+    if (rawAdminUsageMultiplier !== '') {
+      const multiplier = Number(rawAdminUsageMultiplier)
+      if (!Number.isFinite(multiplier) || multiplier < 0) {
+        appStore.showError(t('admin.users.form.adminUsageMultiplierInvalid'))
+        return
+      }
+      payload.admin_usage_multiplier = multiplier
     }
     // 创建管理员属敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 验证并重试
     await stepUp.run(() => adminAPI.users.create(payload))
@@ -116,7 +137,7 @@ const submit = async () => {
   } finally { loading.value = false }
 }
 
-watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', role: 'user', balance: '', concurrency: 1, rpm_limit: 0 }) })
+watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', role: 'user', balance: '', concurrency: 1, rpm_limit: 0, admin_usage_multiplier: '' }) })
 
 const generateRandomPassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*'

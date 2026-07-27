@@ -357,4 +357,63 @@ describe('DataTable', () => {
 
     expect(wrapper.emitted('update:selectedKeys')?.at(-1)?.[0]).toEqual([99, 1, 2])
   })
+
+  it('persists resized column widths and restores them next mount', async () => {
+    const columns = [
+      { key: 'name', label: 'Name' },
+      { key: 'email', label: 'Email' }
+    ]
+    const data = [{ id: 1, name: 'Alice', email: 'alice@example.com' }]
+    const storageKey = 'test-table-column-widths'
+
+    const wrapper = mount(DataTable, {
+      props: {
+        columns,
+        data,
+        columnWidthStorageKey: storageKey
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const handle = wrapper.get('[data-test="column-resize-handle"]')
+    await handle.trigger('mousedown', { clientX: 100 })
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 220 }))
+    window.dispatchEvent(new MouseEvent('mouseup'))
+    await wrapper.vm.$nextTick()
+
+    const saved = JSON.parse(localStorage.getItem(storageKey) || '{}')
+    expect(saved.name).toBeGreaterThan(0)
+
+    wrapper.unmount()
+    const wrapper2 = mount(DataTable, {
+      props: {
+        columns,
+        data,
+        columnWidthStorageKey: storageKey
+      }
+    })
+    await wrapper2.vm.$nextTick()
+    const nameHeader = wrapper2.findAll('th').find((th) => th.text().includes('Name'))
+    expect(nameHeader?.attributes('style') || '').toContain(`${saved.name}px`)
+  })
+
+  it('shows a floating tooltip when hovering a desktop table cell', async () => {
+    const wrapper = mount(DataTable, {
+      attachTo: document.body,
+      props: {
+        columns: [{ key: 'name', label: 'Name' }],
+        data: [{ id: 1, name: 'Very long cell content for tooltip' }]
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const cell = wrapper.get('tbody td.datatable-cell')
+    await cell.trigger('mouseenter')
+    await wrapper.vm.$nextTick()
+
+    const tip = document.querySelector('[data-test="cell-tooltip"]')
+    expect(tip?.textContent).toContain('Very long cell content for tooltip')
+
+    wrapper.unmount()
+  })
 })

@@ -96,15 +96,17 @@ func NewGroupHandler(adminService service.AdminService, dashboardService *servic
 
 // CreateGroupRequest represents create group request
 type CreateGroupRequest struct {
-	Name             string             `json:"name" binding:"required"`
-	Description      string             `json:"description"`
-	Platform         string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
-	RateMultiplier   float64            `json:"rate_multiplier"`
-	IsExclusive      bool               `json:"is_exclusive"`
-	SubscriptionType string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
-	DailyLimitUSD    optionalLimitField `json:"daily_limit_usd"`
-	WeeklyLimitUSD   optionalLimitField `json:"weekly_limit_usd"`
-	MonthlyLimitUSD  optionalLimitField `json:"monthly_limit_usd"`
+	Name           string  `json:"name" binding:"required"`
+	Description    string  `json:"description"`
+	Platform       string  `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
+	RateMultiplier float64 `json:"rate_multiplier"`
+	// AdminUsageMultiplier 管理端统计附加倍率；仅影响管理员侧展示口径。
+	AdminUsageMultiplier *float64           `json:"admin_usage_multiplier"`
+	IsExclusive          bool               `json:"is_exclusive"`
+	SubscriptionType     string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	DailyLimitUSD        optionalLimitField `json:"daily_limit_usd"`
+	WeeklyLimitUSD       optionalLimitField `json:"weekly_limit_usd"`
+	MonthlyLimitUSD      optionalLimitField `json:"monthly_limit_usd"`
 	// 图片生成计费配置（antigravity 和 gemini 平台使用，负数表示清除配置）
 	AllowImageGeneration            bool     `json:"allow_image_generation"`
 	AllowBatchImageGeneration       bool     `json:"allow_batch_image_generation"`
@@ -154,16 +156,18 @@ type CreateGroupRequest struct {
 
 // UpdateGroupRequest represents update group request
 type UpdateGroupRequest struct {
-	Name             string             `json:"name"`
-	Description      *string            `json:"description"`
-	Platform         string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
-	RateMultiplier   *float64           `json:"rate_multiplier"`
-	IsExclusive      *bool              `json:"is_exclusive"`
-	Status           string             `json:"status" binding:"omitempty,oneof=active inactive"`
-	SubscriptionType string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
-	DailyLimitUSD    optionalLimitField `json:"daily_limit_usd"`
-	WeeklyLimitUSD   optionalLimitField `json:"weekly_limit_usd"`
-	MonthlyLimitUSD  optionalLimitField `json:"monthly_limit_usd"`
+	Name           string   `json:"name"`
+	Description    *string  `json:"description"`
+	Platform       string   `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
+	RateMultiplier *float64 `json:"rate_multiplier"`
+	// AdminUsageMultiplier 管理端统计附加倍率；nil 表示本次不修改。
+	AdminUsageMultiplier *float64           `json:"admin_usage_multiplier"`
+	IsExclusive          *bool              `json:"is_exclusive"`
+	Status               string             `json:"status" binding:"omitempty,oneof=active inactive"`
+	SubscriptionType     string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	DailyLimitUSD        optionalLimitField `json:"daily_limit_usd"`
+	WeeklyLimitUSD       optionalLimitField `json:"weekly_limit_usd"`
+	MonthlyLimitUSD      optionalLimitField `json:"monthly_limit_usd"`
 	// 图片生成计费配置（antigravity 和 gemini 平台使用，负数表示清除配置）
 	AllowImageGeneration            *bool    `json:"allow_image_generation"`
 	AllowBatchImageGeneration       *bool    `json:"allow_batch_image_generation"`
@@ -435,7 +439,6 @@ func (h *GroupHandler) GetByID(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-
 	response.Success(c, dto.GroupFromServiceAdmin(group))
 }
 
@@ -480,6 +483,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		Description:                     req.Description,
 		Platform:                        req.Platform,
 		RateMultiplier:                  req.RateMultiplier,
+		AdminUsageMultiplier:            req.AdminUsageMultiplier,
 		IsExclusive:                     req.IsExclusive,
 		SubscriptionType:                req.SubscriptionType,
 		DailyLimitUSD:                   req.DailyLimitUSD.ToServiceInput(),
@@ -527,7 +531,6 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-
 	response.Success(c, dto.GroupFromServiceAdmin(group))
 }
 
@@ -598,6 +601,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		Description:                     req.Description,
 		Platform:                        req.Platform,
 		RateMultiplier:                  req.RateMultiplier,
+		AdminUsageMultiplier:            req.AdminUsageMultiplier,
 		IsExclusive:                     req.IsExclusive,
 		Status:                          req.Status,
 		SubscriptionType:                req.SubscriptionType,
@@ -645,6 +649,12 @@ func (h *GroupHandler) Update(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if req.AdminUsageMultiplier != nil {
+		clearAdminUsageMultiplierCaches()
+		if h.dashboardService != nil {
+			h.dashboardService.InvalidateStatsCache()
+		}
 	}
 
 	response.Success(c, dto.GroupFromServiceAdmin(group))

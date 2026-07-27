@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
+	"regexp"
 	"testing"
 	"time"
 
@@ -689,6 +690,98 @@ func TestUsageLogRepositoryGetStatsWithFiltersAlwaysReturnsAccountCost(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUsageLogRepositoryApplyAdminUsageMultiplierToLogs(t *testing.T) {
+	groupMultiplier := 1.5
+	userMultiplier := 0.5
+	logs := []service.UsageLog{
+		{
+			User:                &service.User{},
+			Group:               &service.Group{AdminUsageMultiplier: groupMultiplier},
+			InputTokens:         10,
+			OutputTokens:        20,
+			CacheCreationTokens: 4,
+			CacheReadTokens:     6,
+			ImageInputTokens:    8,
+			ImageOutputTokens:   2,
+			InputCost:           1,
+			OutputCost:          2,
+			CacheCreationCost:   0.4,
+			CacheReadCost:       0.6,
+			ImageInputCost:      0.8,
+			ImageOutputCost:     0.2,
+			TotalCost:           4,
+			ActualCost:          3,
+			RateMultiplier:      2,
+		},
+		{
+			User:           &service.User{AdminUsageMultiplier: &userMultiplier},
+			Group:          &service.Group{AdminUsageMultiplier: groupMultiplier},
+			InputTokens:    10,
+			OutputTokens:   20,
+			TotalCost:      4,
+			ActualCost:     3,
+			RateMultiplier: 2,
+		},
+	}
+
+	applyAdminUsageMultiplierToUsageLogs(logs)
+
+	require.Equal(t, 15, logs[0].InputTokens)
+	require.Equal(t, 30, logs[0].OutputTokens)
+	require.Equal(t, 6, logs[0].CacheCreationTokens)
+	require.Equal(t, 9, logs[0].CacheReadTokens)
+	require.Equal(t, 12, logs[0].ImageInputTokens)
+	require.Equal(t, 3, logs[0].ImageOutputTokens)
+	require.InDelta(t, 1.5, logs[0].InputCost, 1e-12)
+	require.InDelta(t, 6.0, logs[0].TotalCost, 1e-12)
+	require.InDelta(t, 4.5, logs[0].ActualCost, 1e-12)
+	require.InDelta(t, 3.0, logs[0].RateMultiplier, 1e-12)
+
+	require.Equal(t, 5, logs[1].InputTokens, "用户附加倍率优先于分组附加倍率")
+	require.Equal(t, 10, logs[1].OutputTokens)
+	require.InDelta(t, 2.0, logs[1].TotalCost, 1e-12)
+	require.InDelta(t, 1.5, logs[1].ActualCost, 1e-12)
+	require.InDelta(t, 1.0, logs[1].RateMultiplier, 1e-12)
+}
+
+func TestUsageLogRepositoryGetStatsWithFiltersAdminViewUsesCurrentAdminMultiplier(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+
+	filters := usagestats.UsageLogFilters{AdminView: true}
+	multiplierExprPattern := "COALESCE\\(u\\.admin_usage_multiplier, g\\.admin_usage_multiplier, 1\\)::double precision"
+	mock.ExpectQuery("(?s)SELECT\\s+COUNT\\(\\*\\).*SUM\\(ROUND\\(ul\\.input_tokens \\* " + multiplierExprPattern + "\\)::bigint\\).*FROM usage_logs ul\\s+LEFT JOIN users u ON u\\.id = ul\\.user_id\\s+LEFT JOIN groups g ON g\\.id = ul\\.group_id").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"total_requests",
+			"total_input_tokens",
+			"total_output_tokens",
+			"total_cache_tokens",
+			"total_cache_creation_tokens",
+			"total_cache_read_tokens",
+			"total_cost",
+			"total_actual_cost",
+			"total_account_cost",
+			"avg_duration_ms",
+		}).AddRow(int64(2), int64(15), int64(30), int64(9), int64(4), int64(5), 1.5, 1.2, 1.1, 20.0))
+	endpointRows := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"endpoint", "requests", "total_tokens", "cost", "actual_cost"})
+	}
+	mock.ExpectQuery("(?s)SELECT.*FROM usage_logs ul\\s+LEFT JOIN users u ON u\\.id = ul\\.user_id\\s+LEFT JOIN groups g ON g\\.id = ul\\.group_id").WillReturnRows(endpointRows())
+	mock.ExpectQuery("(?s)SELECT.*FROM usage_logs ul\\s+LEFT JOIN users u ON u\\.id = ul\\.user_id\\s+LEFT JOIN groups g ON g\\.id = ul\\.group_id").WillReturnRows(endpointRows())
+	mock.ExpectQuery("(?s)SELECT.*FROM usage_logs ul\\s+LEFT JOIN users u ON u\\.id = ul\\.user_id\\s+LEFT JOIN groups g ON g\\.id = ul\\.group_id").WillReturnRows(endpointRows())
+
+	stats, err := repo.GetStatsWithFilters(context.Background(), filters)
+	require.NoError(t, err)
+	require.Equal(t, int64(15), stats.TotalInputTokens)
+	require.Equal(t, int64(30), stats.TotalOutputTokens)
+	require.Equal(t, int64(54), stats.TotalTokens)
+	require.InDelta(t, 1.5, stats.TotalCost, 1e-12)
+	require.InDelta(t, 1.2, stats.TotalActualCost, 1e-12)
+	require.NotNil(t, stats.TotalAccountCost)
+	require.InDelta(t, 1.1, *stats.TotalAccountCost, 1e-12)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUsageLogRepositoryGetUserSpendingRanking(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}
@@ -718,6 +811,121 @@ func TestUsageLogRepositoryGetUserSpendingRanking(t *testing.T) {
 		TotalTokens:     2600,
 	}, got)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageLogRepositoryBatchAPIKeyUsageSeparatesAdminAndUserScopes(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	multiplierPattern := regexp.QuoteMeta(adminUsageMultiplierSQLExpr)
+
+	t.Run("user_scope_keeps_original_cost", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+
+		mock.ExpectQuery(`(?s)SELECT\s+api_key_id,.*SUM\(actual_cost\).*FROM usage_logs\s+WHERE api_key_id = ANY\(\$1\).*GROUP BY api_key_id`).
+			WithArgs(sqlmock.AnyArg(), start, end, sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "total_cost", "today_cost"}).AddRow(int64(7), 1.25, 0.5))
+
+		got, err := repo.GetBatchAPIKeyUsageStats(context.Background(), []int64{7}, start, end)
+		require.NoError(t, err)
+		require.Equal(t, 1.25, got[7].TotalActualCost)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("admin_scope_uses_current_multiplier", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+
+		mock.ExpectQuery(`(?s)SUM\(ul\.actual_cost \* `+multiplierPattern+`\).*FROM usage_logs ul\s+LEFT JOIN users u ON u\.id = ul\.user_id\s+LEFT JOIN groups g ON g\.id = ul\.group_id`).
+			WithArgs(sqlmock.AnyArg(), start, end, sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "total_cost", "today_cost"}).AddRow(int64(7), 3.75, 1.5))
+
+		got, err := repo.GetAdminBatchAPIKeyUsageStats(context.Background(), []int64{7}, start, end)
+		require.NoError(t, err)
+		require.Equal(t, 3.75, got[7].TotalActualCost)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestUsageLogRepositoryAdminAggregatesUseCurrentMultiplier(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	multiplierPattern := regexp.QuoteMeta(adminUsageMultiplierSQLExpr)
+
+	t.Run("api_key_trend", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`(?s)WITH top_keys AS \(.*`+multiplierPattern+`.*LEFT JOIN users u ON u\.id = ul\.user_id.*LEFT JOIN groups g ON g\.id = ul\.group_id`).
+			WithArgs(start, end, 10, start, end).
+			WillReturnRows(sqlmock.NewRows([]string{"date", "api_key_id", "key_name", "requests", "tokens"}))
+
+		_, err := repo.GetAPIKeyUsageTrend(context.Background(), start, end, "day", 10)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("user_trend", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`(?s)WITH top_users AS \(.*`+multiplierPattern+`.*SUM\(ul\.actual_cost \* `+multiplierPattern+`\).*LEFT JOIN groups g ON g\.id = ul\.group_id`).
+			WithArgs(start, end, 10, start, end).
+			WillReturnRows(sqlmock.NewRows([]string{"date", "user_id", "email", "username", "requests", "tokens", "cost", "actual_cost"}))
+
+		_, err := repo.GetUserUsageTrend(context.Background(), start, end, "day", 10)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("user_breakdown", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`(?s)SUM\(ROUND\(ul\.input_tokens \* `+multiplierPattern+`\)::bigint\).*SUM\(ul\.actual_cost \* `+multiplierPattern+`\).*LEFT JOIN groups g ON g\.id = ul\.group_id`).
+			WithArgs(start, end).
+			WillReturnRows(sqlmock.NewRows([]string{"user_id", "email", "requests", "input_tokens", "output_tokens", "cache_tokens", "total_tokens", "cost", "actual_cost", "account_cost"}))
+
+		_, err := repo.GetUserBreakdownStats(context.Background(), start, end, usagestats.UserBreakdownDimension{}, 0)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("group_summary", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`(?s)SUM\(ul\.actual_cost \* ` + multiplierPattern + `\).*LEFT JOIN users u ON u\.id = ul\.user_id`).
+			WithArgs(start).
+			WillReturnRows(sqlmock.NewRows([]string{"group_id", "total_cost", "today_cost"}))
+
+		_, err := repo.GetAllGroupUsageSummary(context.Background(), start)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("dashboard_usage_totals", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		today := start
+		mock.ExpectQuery(`(?s)WITH scoped AS \(.*ROUND\(ul\.input_tokens \* `+multiplierPattern+`\)::bigint.*ul\.actual_cost \* `+multiplierPattern+` AS actual_cost.*LEFT JOIN users u ON u\.id = ul\.user_id.*LEFT JOIN groups g ON g\.id = ul\.group_id.*FROM scoped`).
+			WithArgs(start, end, today, today.Add(24*time.Hour)).
+			WillReturnError(sql.ErrConnDone)
+
+		err := repo.fillDashboardUsageStatsFromUsageLogs(context.Background(), &DashboardStats{}, start, end, today, end)
+		require.ErrorIs(t, err, sql.ErrConnDone)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("dashboard_tpm", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`(?s)COUNT\(\*\).*` + multiplierPattern + `.*FROM usage_logs ul LEFT JOIN users u ON u\.id = ul\.user_id LEFT JOIN groups g ON g\.id = ul\.group_id`).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{"request_count", "token_count"}).AddRow(int64(120), int64(300)))
+
+		rpm, tpm, err := repo.getPerformanceStats(context.Background(), 0, true)
+		require.NoError(t, err)
+		require.Equal(t, int64(24), rpm)
+		require.Equal(t, int64(60), tpm)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 func TestBuildRequestTypeFilterConditionLegacyFallback(t *testing.T) {

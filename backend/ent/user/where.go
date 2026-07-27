@@ -170,6 +170,11 @@ func TotalRecharged(v float64) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldTotalRecharged, v))
 }
 
+// AdminUsageMultiplier applies equality check predicate on the "admin_usage_multiplier" field. It's identical to AdminUsageMultiplierEQ.
+func AdminUsageMultiplier(v float64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldAdminUsageMultiplier, v))
+}
+
 // RpmLimit applies equality check predicate on the "rpm_limit" field. It's identical to RpmLimitEQ.
 func RpmLimit(v int) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldRpmLimit, v))
@@ -1343,6 +1348,56 @@ func TotalRechargedLT(v float64) predicate.User {
 // TotalRechargedLTE applies the LTE predicate on the "total_recharged" field.
 func TotalRechargedLTE(v float64) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldTotalRecharged, v))
+}
+
+// AdminUsageMultiplierEQ applies the EQ predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierEQ(v float64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierNEQ applies the NEQ predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierNEQ(v float64) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierIn applies the In predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierIn(vs ...float64) predicate.User {
+	return predicate.User(sql.FieldIn(FieldAdminUsageMultiplier, vs...))
+}
+
+// AdminUsageMultiplierNotIn applies the NotIn predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierNotIn(vs ...float64) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldAdminUsageMultiplier, vs...))
+}
+
+// AdminUsageMultiplierGT applies the GT predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierGT(v float64) predicate.User {
+	return predicate.User(sql.FieldGT(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierGTE applies the GTE predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierGTE(v float64) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierLT applies the LT predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierLT(v float64) predicate.User {
+	return predicate.User(sql.FieldLT(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierLTE applies the LTE predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierLTE(v float64) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierIsNil applies the IsNil predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierIsNil() predicate.User {
+	return predicate.User(sql.FieldIsNull(FieldAdminUsageMultiplier))
+}
+
+// AdminUsageMultiplierNotNil applies the NotNil predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierNotNil() predicate.User {
+	return predicate.User(sql.FieldNotNull(FieldAdminUsageMultiplier))
 }
 
 // RpmLimitEQ applies the EQ predicate on the "rpm_limit" field.

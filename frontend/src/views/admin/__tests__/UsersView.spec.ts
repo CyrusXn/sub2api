@@ -98,6 +98,7 @@ const DataTableStub = {
       </template>
       <div v-for="row in data" :key="row.id">
         <slot name="cell-last_used_at" :value="row.last_used_at" :row="row" />
+        <slot name="cell-admin_usage_multiplier" :value="row.admin_usage_multiplier" :row="row" />
       </div>
     </div>
   `
@@ -197,6 +198,55 @@ describe('admin UsersView', () => {
       }),
       expect.any(Object)
     )
+  })
+
+  it('shows the admin usage multiplier column and distinguishes inherited values', async () => {
+    listUsers.mockResolvedValue({
+      items: [
+        createAdminUser({ id: 1, email: 'inherited@example.com', admin_usage_multiplier: null }),
+        createAdminUser({ id: 2, email: 'explicit@example.com', admin_usage_multiplier: 1.25 })
+      ],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mount(UsersView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          EmptyState: true,
+          GroupBadge: true,
+          Select: true,
+          UserAttributesConfigModal: true,
+          UserConcurrencyCell: true,
+          UserCreateModal: true,
+          UserEditModal: true,
+          BulkEditUserModal: BulkEditUserModalStub,
+          UserPlatformQuotaModal: true,
+          UserApiKeysModal: true,
+          UserAllowedGroupsModal: true,
+          UserBalanceModal: true,
+          UserBalanceHistoryModal: true,
+          GroupReplaceModal: true,
+          Icon: true,
+          Teleport: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="columns"]').text().split(',')).toContain('admin_usage_multiplier')
+    expect(wrapper.text()).toContain('admin.users.adminUsageMultiplierInherited')
+    expect(wrapper.text()).toContain('1.25x')
   })
 
   it('clears usage current-page sort when switching to last_used_at server sort', async () => {

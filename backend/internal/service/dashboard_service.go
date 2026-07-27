@@ -40,17 +40,18 @@ type dashboardStatsCacheEntry struct {
 
 // DashboardService 提供管理员仪表盘统计服务。
 type DashboardService struct {
-	usageRepo      UsageLogRepository
-	aggRepo        DashboardAggregationRepository
-	cache          DashboardStatsCache
-	cacheFreshTTL  time.Duration
-	cacheTTL       time.Duration
-	refreshTimeout time.Duration
-	refreshing     int32
-	aggEnabled     bool
-	aggInterval    time.Duration
-	aggLookback    time.Duration
-	aggUsageDays   int
+	usageRepo       UsageLogRepository
+	aggRepo         DashboardAggregationRepository
+	cache           DashboardStatsCache
+	cacheFreshTTL   time.Duration
+	cacheTTL        time.Duration
+	refreshTimeout  time.Duration
+	refreshing      int32
+	aggEnabled      bool
+	aggInterval     time.Duration
+	aggLookback     time.Duration
+	aggUsageDays    int
+	cacheGeneration uint64
 }
 
 func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregationRepository, cache DashboardStatsCache, cfg *config.Config) *DashboardService {
@@ -125,6 +126,21 @@ func (s *DashboardService) GetDashboardStats(ctx context.Context) (*usagestats.D
 }
 
 func (s *DashboardService) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]usagestats.TrendDataPoint, error) {
+	filters := usagestats.UsageLogFilters{
+		UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+		Model: model, ModelFilterSource: usagestats.ModelSourceRequested,
+		RequestType: requestType, Stream: stream, BillingType: billingType, AdminView: true,
+	}
+	type usageTrendWithFiltersRepo interface {
+		GetUsageTrendWithUsageFilters(context.Context, time.Time, time.Time, string, usagestats.UsageLogFilters) ([]usagestats.TrendDataPoint, error)
+	}
+	if filterRepo, ok := s.usageRepo.(usageTrendWithFiltersRepo); ok {
+		trend, err := filterRepo.GetUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, filters)
+		if err != nil {
+			return nil, fmt.Errorf("get usage trend with filters: %w", err)
+		}
+		return trend, nil
+	}
 	trend, err := s.usageRepo.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
 	if err != nil {
 		return nil, fmt.Errorf("get usage trend with filters: %w", err)
@@ -142,6 +158,20 @@ func (s *DashboardService) GetModelStatsWithFilters(ctx context.Context, startTi
 
 func (s *DashboardService) GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8, modelSource string) ([]usagestats.ModelStat, error) {
 	normalizedSource := usagestats.NormalizeModelSource(modelSource)
+	filters := usagestats.UsageLogFilters{
+		UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+		RequestType: requestType, Stream: stream, BillingType: billingType, AdminView: true,
+	}
+	type modelStatsWithUsageFiltersRepo interface {
+		GetModelStatsWithUsageFiltersBySource(context.Context, time.Time, time.Time, usagestats.UsageLogFilters, string) ([]usagestats.ModelStat, error)
+	}
+	if filterRepo, ok := s.usageRepo.(modelStatsWithUsageFiltersRepo); ok {
+		stats, err := filterRepo.GetModelStatsWithUsageFiltersBySource(ctx, startTime, endTime, filters, normalizedSource)
+		if err != nil {
+			return nil, fmt.Errorf("get model stats with filters by source: %w", err)
+		}
+		return stats, nil
+	}
 	if normalizedSource == usagestats.ModelSourceRequested {
 		return s.GetModelStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType)
 	}
@@ -162,6 +192,20 @@ func (s *DashboardService) GetModelStatsWithFiltersBySource(ctx context.Context,
 }
 
 func (s *DashboardService) GetGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usagestats.GroupStat, error) {
+	filters := usagestats.UsageLogFilters{
+		UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+		RequestType: requestType, Stream: stream, BillingType: billingType, AdminView: true,
+	}
+	type groupStatsWithUsageFiltersRepo interface {
+		GetGroupStatsWithUsageFilters(context.Context, time.Time, time.Time, usagestats.UsageLogFilters) ([]usagestats.GroupStat, error)
+	}
+	if filterRepo, ok := s.usageRepo.(groupStatsWithUsageFiltersRepo); ok {
+		stats, err := filterRepo.GetGroupStatsWithUsageFilters(ctx, startTime, endTime, filters)
+		if err != nil {
+			return nil, fmt.Errorf("get group stats with filters: %w", err)
+		}
+		return stats, nil
+	}
 	stats, err := s.usageRepo.GetGroupStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType)
 	if err != nil {
 		return nil, fmt.Errorf("get group stats with filters: %w", err)
@@ -199,6 +243,7 @@ func (s *DashboardService) getCachedDashboardStats(ctx context.Context) (*usages
 }
 
 func (s *DashboardService) refreshDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error) {
+	generation := atomic.LoadUint64(&s.cacheGeneration)
 	stats, err := s.fetchDashboardStats(ctx)
 	if err != nil {
 		return nil, err
@@ -206,7 +251,7 @@ func (s *DashboardService) refreshDashboardStats(ctx context.Context) (*usagesta
 	s.applyAggregationStatus(ctx, stats)
 	cacheCtx, cancel := s.cacheOperationContext()
 	defer cancel()
-	s.saveDashboardStatsCache(cacheCtx, stats)
+	s.saveDashboardStatsCache(cacheCtx, stats, generation)
 	return stats, nil
 }
 
@@ -217,6 +262,7 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 	if !atomic.CompareAndSwapInt32(&s.refreshing, 0, 1) {
 		return
 	}
+	generation := atomic.LoadUint64(&s.cacheGeneration)
 
 	go func() {
 		defer atomic.StoreInt32(&s.refreshing, 0)
@@ -232,7 +278,7 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 		s.applyAggregationStatus(ctx, stats)
 		cacheCtx, cancel := s.cacheOperationContext()
 		defer cancel()
-		s.saveDashboardStatsCache(cacheCtx, stats)
+		s.saveDashboardStatsCache(cacheCtx, stats, generation)
 	}()
 }
 
@@ -247,8 +293,11 @@ func (s *DashboardService) fetchDashboardStats(ctx context.Context) (*usagestats
 	return s.usageRepo.GetDashboardStats(ctx)
 }
 
-func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *usagestats.DashboardStats) {
+func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *usagestats.DashboardStats, generation uint64) {
 	if s.cache == nil || stats == nil {
+		return
+	}
+	if generation != atomic.LoadUint64(&s.cacheGeneration) {
 		return
 	}
 
@@ -264,6 +313,12 @@ func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *u
 
 	if err := s.cache.SetDashboardStats(ctx, string(data), s.cacheTTL); err != nil {
 		logger.LegacyPrintf("service.dashboard", "[Dashboard] 仪表盘缓存写入失败: %v", err)
+		return
+	}
+	if generation != atomic.LoadUint64(&s.cacheGeneration) {
+		if err := s.cache.DeleteDashboardStats(ctx); err != nil {
+			logger.LegacyPrintf("service.dashboard", "[Dashboard] 清理过期仪表盘缓存失败: %v", err)
+		}
 	}
 }
 
@@ -382,9 +437,25 @@ func (s *DashboardService) GetBatchUserUsageStats(ctx context.Context, userIDs [
 }
 
 func (s *DashboardService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
+	type adminBatchAPIKeyUsageRepo interface {
+		GetAdminBatchAPIKeyUsageStats(context.Context, []int64, time.Time, time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error)
+	}
+	if adminRepo, ok := s.usageRepo.(adminBatchAPIKeyUsageRepo); ok {
+		stats, err := adminRepo.GetAdminBatchAPIKeyUsageStats(ctx, apiKeyIDs, startTime, endTime)
+		if err != nil {
+			return nil, fmt.Errorf("get batch api key usage stats: %w", err)
+		}
+		return stats, nil
+	}
 	stats, err := s.usageRepo.GetBatchAPIKeyUsageStats(ctx, apiKeyIDs, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("get batch api key usage stats: %w", err)
 	}
 	return stats, nil
+}
+
+// InvalidateStatsCache 清理管理员首页的跨进程统计缓存。
+func (s *DashboardService) InvalidateStatsCache() {
+	atomic.AddUint64(&s.cacheGeneration, 1)
+	s.evictDashboardStatsCache(nil)
 }

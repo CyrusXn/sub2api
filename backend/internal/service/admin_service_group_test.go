@@ -282,6 +282,54 @@ func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	require.InDelta(t, 0.30, *repo.created.ImagePrice4K, 0.0001)
 }
 
+func TestAdminService_CreateGroup_AdminUsageMultiplierDefaultsToOne(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:           "admin-multiplier-default",
+		RateMultiplier: 1,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.InDelta(t, 1.0, group.AdminUsageMultiplier, 1e-12)
+	require.NotNil(t, repo.created)
+	require.InDelta(t, 1.0, repo.created.AdminUsageMultiplier, 1e-12)
+}
+
+func TestAdminService_UpdateGroup_AdminUsageMultiplier(t *testing.T) {
+	existing := &Group{ID: 77, Name: "existing", Platform: PlatformAnthropic, RateMultiplier: 1, SubscriptionType: SubscriptionTypeStandard, AdminUsageMultiplier: 1}
+	repo := &groupRepoStubForAdmin{getByID: existing}
+	svc := &adminServiceImpl{groupRepo: repo}
+	multiplier := 1.6
+
+	group, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+		AdminUsageMultiplier: &multiplier,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.InDelta(t, 1.6, group.AdminUsageMultiplier, 1e-12)
+	require.NotNil(t, repo.updated)
+	require.InDelta(t, 1.6, repo.updated.AdminUsageMultiplier, 1e-12)
+}
+
+func TestAdminService_UpdateGroup_RejectsNegativeAdminUsageMultiplier(t *testing.T) {
+	existing := &Group{ID: 78, Name: "existing", Platform: PlatformAnthropic, RateMultiplier: 1, SubscriptionType: SubscriptionTypeStandard, AdminUsageMultiplier: 1}
+	repo := &groupRepoStubForAdmin{getByID: existing}
+	svc := &adminServiceImpl{groupRepo: repo}
+	negative := -0.1
+
+	_, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+		AdminUsageMultiplier: &negative,
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "admin_usage_multiplier must be >= 0")
+	require.Nil(t, repo.updated)
+}
+
 func TestAdminService_CreateGroup_WithVideoPricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	svc := &adminServiceImpl{groupRepo: repo}

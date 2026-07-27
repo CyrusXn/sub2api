@@ -121,6 +121,7 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		SetSignupSource(userSignupSourceOrDefault(userIn.SignupSource)).
 		SetNillableLastLoginAt(userIn.LastLoginAt).
 		SetNillableLastActiveAt(userIn.LastActiveAt).
+		SetNillableAdminUsageMultiplier(userIn.AdminUsageMultiplier).
 		SetRpmLimit(userIn.RPMLimit).
 		Save(txCtx)
 	if err != nil {
@@ -267,6 +268,11 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User) error
 		SetBalanceNotifyExtraEmails(marshalExtraEmails(userIn.BalanceNotifyExtraEmails)).
 		SetTotalRecharged(userIn.TotalRecharged).
 		SetRpmLimit(userIn.RPMLimit)
+	if userIn.AdminUsageMultiplier != nil {
+		updateOp = updateOp.SetAdminUsageMultiplier(*userIn.AdminUsageMultiplier)
+	} else {
+		updateOp = updateOp.ClearAdminUsageMultiplier()
+	}
 	if userIn.SignupSource != "" {
 		updateOp = updateOp.SetSignupSource(userIn.SignupSource)
 	}
@@ -1217,6 +1223,7 @@ func applyUserEntityToService(dst *service.User, src *dbent.User) {
 	dst.SignupSource = src.SignupSource
 	dst.LastLoginAt = src.LastLoginAt
 	dst.LastActiveAt = src.LastActiveAt
+	dst.AdminUsageMultiplier = src.AdminUsageMultiplier
 	dst.CreatedAt = src.CreatedAt
 	dst.UpdatedAt = src.UpdatedAt
 }

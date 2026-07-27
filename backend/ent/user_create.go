@@ -340,6 +340,20 @@ func (_c *UserCreate) SetNillableTotalRecharged(v *float64) *UserCreate {
 	return _c
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (_c *UserCreate) SetAdminUsageMultiplier(v float64) *UserCreate {
+	_c.mutation.SetAdminUsageMultiplier(v)
+	return _c
+}
+
+// SetNillableAdminUsageMultiplier sets the "admin_usage_multiplier" field if the given value is not nil.
+func (_c *UserCreate) SetNillableAdminUsageMultiplier(v *float64) *UserCreate {
+	if v != nil {
+		_c.SetAdminUsageMultiplier(*v)
+	}
+	return _c
+}
+
 // SetRpmLimit sets the "rpm_limit" field.
 func (_c *UserCreate) SetRpmLimit(v int) *UserCreate {
 	_c.mutation.SetRpmLimit(v)
@@ -863,6 +877,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.TotalRecharged(); ok {
 		_spec.SetField(user.FieldTotalRecharged, field.TypeFloat64, value)
 		_node.TotalRecharged = value
+	}
+	if value, ok := _c.mutation.AdminUsageMultiplier(); ok {
+		_spec.SetField(user.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+		_node.AdminUsageMultiplier = &value
 	}
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
@@ -1462,6 +1480,30 @@ func (u *UserUpsert) AddTotalRecharged(v float64) *UserUpsert {
 	return u
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *UserUpsert) SetAdminUsageMultiplier(v float64) *UserUpsert {
+	u.Set(user.FieldAdminUsageMultiplier, v)
+	return u
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *UserUpsert) UpdateAdminUsageMultiplier() *UserUpsert {
+	u.SetExcluded(user.FieldAdminUsageMultiplier)
+	return u
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *UserUpsert) AddAdminUsageMultiplier(v float64) *UserUpsert {
+	u.Add(user.FieldAdminUsageMultiplier, v)
+	return u
+}
+
+// ClearAdminUsageMultiplier clears the value of the "admin_usage_multiplier" field.
+func (u *UserUpsert) ClearAdminUsageMultiplier() *UserUpsert {
+	u.SetNull(user.FieldAdminUsageMultiplier)
+	return u
+}
+
 // SetRpmLimit sets the "rpm_limit" field.
 func (u *UserUpsert) SetRpmLimit(v int) *UserUpsert {
 	u.Set(user.FieldRpmLimit, v)
@@ -1907,6 +1949,34 @@ func (u *UserUpsertOne) AddTotalRecharged(v float64) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateTotalRecharged() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateTotalRecharged()
+	})
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *UserUpsertOne) SetAdminUsageMultiplier(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetAdminUsageMultiplier(v)
+	})
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *UserUpsertOne) AddAdminUsageMultiplier(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddAdminUsageMultiplier(v)
+	})
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateAdminUsageMultiplier() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateAdminUsageMultiplier()
+	})
+}
+
+// ClearAdminUsageMultiplier clears the value of the "admin_usage_multiplier" field.
+func (u *UserUpsertOne) ClearAdminUsageMultiplier() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearAdminUsageMultiplier()
 	})
 }
 
@@ -2524,6 +2594,34 @@ func (u *UserUpsertBulk) AddTotalRecharged(v float64) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateTotalRecharged() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateTotalRecharged()
+	})
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *UserUpsertBulk) SetAdminUsageMultiplier(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetAdminUsageMultiplier(v)
+	})
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *UserUpsertBulk) AddAdminUsageMultiplier(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddAdminUsageMultiplier(v)
+	})
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateAdminUsageMultiplier() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateAdminUsageMultiplier()
+	})
+}
+
+// ClearAdminUsageMultiplier clears the value of the "admin_usage_multiplier" field.
+func (u *UserUpsertBulk) ClearAdminUsageMultiplier() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearAdminUsageMultiplier()
 	})
 }
 

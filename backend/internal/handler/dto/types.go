@@ -45,6 +45,8 @@ type AdminUser struct {
 
 	Notes      string     `json:"notes"`
 	LastUsedAt *time.Time `json:"last_used_at"`
+	// AdminUsageMultiplier 管理端使用统计附加倍率；null 表示继承分组附加倍率。
+	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]rateMultiplier
 	GroupRates map[int64]float64 `json:"group_rates,omitempty"`
@@ -154,6 +156,9 @@ type Group struct {
 // 注意：普通用户接口不得返回 model_routing/account_count/account_groups 等内部信息。
 type AdminGroup struct {
 	Group
+
+	// AdminUsageMultiplier 管理端使用统计附加倍率，仅管理员接口返回。
+	AdminUsageMultiplier float64 `json:"admin_usage_multiplier"`
 
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64 `json:"model_routing"`

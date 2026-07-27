@@ -48,6 +48,26 @@
           <span class="text-sm text-gray-900 dark:text-white">{{ row.api_key?.name || '-' }}</span>
         </template>
 
+        <template #cell-api_key_value="{ row }">
+          <div v-if="row.api_key?.key" class="flex items-center gap-1.5">
+            <code
+              data-testid="usage-api-key-mask"
+              class="rounded bg-gray-100 px-2 py-1 text-xs font-medium text-teal-600 dark:bg-dark-700 dark:text-teal-400"
+            >{{ maskApiKey(row.api_key.key) }}</code>
+            <button
+              type="button"
+              data-testid="usage-api-key-copy"
+              class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-dark-400 dark:hover:bg-dark-700 dark:hover:text-gray-200"
+              :title="t('admin.usage.copyApiKey')"
+              :aria-label="t('admin.usage.copyApiKey')"
+              @click.stop="copyApiKey(row.api_key.key)"
+            >
+              <Icon name="copy" size="sm" />
+            </button>
+          </div>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
         <template #cell-account="{ row }">
           <span class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || '-' }}</span>
         </template>
@@ -468,6 +488,7 @@ import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
+import { useClipboard } from '@/composables/useClipboard'
 import {
   LATENCY_BAR_CLASSES,
   LATENCY_BAR_FROM_CLASSES,
@@ -542,9 +563,20 @@ const emit = defineEmits<{
   ipGeoBatchFailed: []
 }>()
 const { t } = useI18n()
+const { copyToClipboard } = useClipboard()
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
 const ipGeoBatchLoading = ref(false)
+
+// 使用记录默认只暴露首尾片段，完整密钥仅在管理员主动复制时进入剪贴板。
+const maskApiKey = (key: string): string => {
+  if (key.length <= 10) return `${key.slice(0, 2)}****${key.slice(-2)}`
+  return `${key.slice(0, 6)}****${key.slice(-4)}`
+}
+
+const copyApiKey = (key: string): void => {
+  void copyToClipboard(key, t('admin.usage.apiKeyCopied'))
+}
 
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 

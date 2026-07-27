@@ -43,6 +43,58 @@ func TestAdminService_CreateUser_Success(t *testing.T) {
 	require.Equal(t, user, repo.created[0])
 }
 
+func TestAdminService_CreateUser_AdminUsageMultiplierIsOptional(t *testing.T) {
+	repo := &userRepoStub{nextID: 13}
+	svc := &adminServiceImpl{userRepo: repo}
+
+	user, err := svc.CreateUser(context.Background(), &CreateUserInput{
+		Email:    "admin-multiplier-optional@test.com",
+		Password: "strong-pass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	require.Nil(t, user.AdminUsageMultiplier)
+	require.Len(t, repo.created, 1)
+	require.Nil(t, repo.created[0].AdminUsageMultiplier)
+}
+
+func TestAdminService_CreateUser_AdminUsageMultiplier(t *testing.T) {
+	repo := &userRepoStub{nextID: 14}
+	svc := &adminServiceImpl{userRepo: repo}
+	multiplier := 0.75
+
+	user, err := svc.CreateUser(context.Background(), &CreateUserInput{
+		Email:                "admin-multiplier@test.com",
+		Password:             "strong-pass",
+		AdminUsageMultiplier: &multiplier,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	require.NotNil(t, user.AdminUsageMultiplier)
+	require.InDelta(t, 0.75, *user.AdminUsageMultiplier, 1e-12)
+	require.Len(t, repo.created, 1)
+	require.NotNil(t, repo.created[0].AdminUsageMultiplier)
+	require.InDelta(t, 0.75, *repo.created[0].AdminUsageMultiplier, 1e-12)
+}
+
+func TestAdminService_CreateUser_RejectsNegativeAdminUsageMultiplier(t *testing.T) {
+	repo := &userRepoStub{nextID: 15}
+	svc := &adminServiceImpl{userRepo: repo}
+	negative := -0.01
+
+	_, err := svc.CreateUser(context.Background(), &CreateUserInput{
+		Email:                "bad-admin-multiplier@test.com",
+		Password:             "strong-pass",
+		AdminUsageMultiplier: &negative,
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "admin_usage_multiplier must be >= 0")
+	require.Empty(t, repo.created)
+}
+
 func TestAdminService_CreateUser_UsesDefaultBalanceWhenBalanceOmitted(t *testing.T) {
 	repo := &userRepoStub{nextID: 11}
 	cfg := &config.Config{

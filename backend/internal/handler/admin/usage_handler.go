@@ -185,6 +185,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		StartTime:         startTime,
 		EndTime:           endTime,
 		ExactTotal:        exactTotal,
+		AdminView:         true,
 	}
 
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
@@ -325,6 +326,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		BillingMode:       billingMode,
 		StartTime:         &startTime,
 		EndTime:           &endTime,
+		AdminView:         true,
 	}
 
 	var stats *usagestats.UsageStats

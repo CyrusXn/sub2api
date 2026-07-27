@@ -78,7 +78,11 @@ type stubAdminService struct {
 		sortOrder string
 		calls     int
 	}
-	mu sync.Mutex
+	lastCreateUserInput  *service.CreateUserInput
+	lastUpdateUserInput  *service.UpdateUserInput
+	lastCreateGroupInput *service.CreateGroupInput
+	lastUpdateGroupInput *service.UpdateGroupInput
+	mu                   sync.Mutex
 }
 
 func newStubAdminService() *stubAdminService {
@@ -174,12 +178,14 @@ func (s *stubAdminService) GetUserIncludeDeleted(ctx context.Context, id int64) 
 }
 
 func (s *stubAdminService) CreateUser(ctx context.Context, input *service.CreateUserInput) (*service.User, error) {
-	user := service.User{ID: 100, Email: input.Email, Status: service.StatusActive}
+	s.lastCreateUserInput = input
+	user := service.User{ID: 100, Email: input.Email, AdminUsageMultiplier: input.AdminUsageMultiplier, Status: service.StatusActive}
 	return &user, nil
 }
 
 func (s *stubAdminService) UpdateUser(ctx context.Context, id int64, input *service.UpdateUserInput) (*service.User, error) {
-	user := service.User{ID: id, Email: "updated@example.com", Status: service.StatusActive}
+	s.lastUpdateUserInput = input
+	user := service.User{ID: id, Email: "updated@example.com", AdminUsageMultiplier: input.AdminUsageMultiplier, Status: service.StatusActive}
 	return &user, nil
 }
 
@@ -352,7 +358,11 @@ func (s *stubAdminService) PreviewCompositeRoute(ctx context.Context, groupID in
 }
 
 func (s *stubAdminService) CreateGroup(ctx context.Context, input *service.CreateGroupInput) (*service.Group, error) {
+	s.lastCreateGroupInput = input
 	group := service.Group{ID: 200, Name: input.Name, Status: service.StatusActive}
+	if input.AdminUsageMultiplier != nil {
+		group.AdminUsageMultiplier = *input.AdminUsageMultiplier
+	}
 	return &group, nil
 }
 
@@ -366,7 +376,11 @@ func (s *stubAdminService) RecoverDuplicateGroup(ctx context.Context, id int64, 
 }
 
 func (s *stubAdminService) UpdateGroup(ctx context.Context, id int64, input *service.UpdateGroupInput) (*service.Group, error) {
+	s.lastUpdateGroupInput = input
 	group := service.Group{ID: id, Name: input.Name, Status: service.StatusActive}
+	if input.AdminUsageMultiplier != nil {
+		group.AdminUsageMultiplier = *input.AdminUsageMultiplier
+	}
 	return &group, nil
 }
 

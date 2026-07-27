@@ -299,6 +299,13 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if input.RateMultiplier <= 0 {
 		return nil, errors.New("rate_multiplier must be > 0")
 	}
+	adminUsageMultiplier := 1.0
+	if input.AdminUsageMultiplier != nil {
+		if err := validateAdminUsageMultiplier(input.AdminUsageMultiplier); err != nil {
+			return nil, err
+		}
+		adminUsageMultiplier = *input.AdminUsageMultiplier
+	}
 
 	platform := input.Platform
 	if platform == "" {
@@ -438,6 +445,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		Description:                     input.Description,
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
+		AdminUsageMultiplier:            adminUsageMultiplier,
 		IsExclusive:                     input.IsExclusive,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
@@ -626,6 +634,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 			return nil, errors.New("rate_multiplier must be > 0")
 		}
 		group.RateMultiplier = *input.RateMultiplier
+	}
+	if input.AdminUsageMultiplier != nil {
+		if err := validateAdminUsageMultiplier(input.AdminUsageMultiplier); err != nil {
+			return nil, err
+		}
+		group.AdminUsageMultiplier = *input.AdminUsageMultiplier
 	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive

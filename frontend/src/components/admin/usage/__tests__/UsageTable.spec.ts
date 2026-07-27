@@ -4,7 +4,14 @@ const ipGeoMocks = vi.hoisted(() => ({
   fetchBatch: vi.fn(),
 }))
 
+const clipboardMocks = vi.hoisted(() => ({
+  copyToClipboard: vi.fn(),
+}))
+
 vi.mock('@/utils/ipGeoLookup', () => ipGeoMocks)
+vi.mock('@/composables/useClipboard', () => ({
+  useClipboard: () => clipboardMocks,
+}))
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -51,6 +58,9 @@ const messages: Record<string, string> = {
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
+  'admin.usage.apiKeyValue': 'API Key',
+  'admin.usage.copyApiKey': 'Copy API Key',
+  'admin.usage.apiKeyCopied': 'API Key copied',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -69,6 +79,7 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-api_key_value" :row="row" :value="row.api_key?.key" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
@@ -118,6 +129,31 @@ describe('admin UsageTable tooltip', () => {
       height: 20,
       toJSON: () => ({}),
     } as DOMRect)
+  })
+
+  it('masks the request API key and copies the complete value', async () => {
+    clipboardMocks.copyToClipboard.mockResolvedValue(true)
+    const apiKey = 'sk-3ffabcdefghijkl1714'
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, api_key: { key: apiKey } }],
+        loading: false,
+        columns: [{ key: 'api_key_value', label: 'API Key', sortable: false }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="usage-api-key-mask"]').text()).toBe('sk-3ff****1714')
+    await wrapper.get('[data-testid="usage-api-key-copy"]').trigger('click')
+
+    expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith(apiKey, 'API Key copied')
   })
 
   it('marks only usage rows that actually applied long-context billing', () => {

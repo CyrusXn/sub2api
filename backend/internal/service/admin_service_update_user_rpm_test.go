@@ -67,3 +67,59 @@ func TestAdminService_UpdateUser_NoInvalidateWhenRPMLimitUnchanged(t *testing.T)
 	require.NoError(t, err)
 	require.Empty(t, invalidator.userIDs, "只改 username 不应触发认证缓存失效")
 }
+
+func TestAdminService_UpdateUser_AdminUsageMultiplier(t *testing.T) {
+	base := &userRepoStub{user: &User{ID: 42, Email: "u@example.com"}}
+	repo := &rpmUserRepoStub{userRepoStub: base}
+	svc := &adminServiceImpl{
+		userRepo:       repo,
+		redeemCodeRepo: &redeemRepoStub{},
+	}
+	multiplier := 1.4
+
+	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{
+		AdminUsageMultiplier: &multiplier,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, updated.AdminUsageMultiplier)
+	require.InDelta(t, 1.4, *updated.AdminUsageMultiplier, 1e-12)
+	require.NotNil(t, repo.lastUpdated.AdminUsageMultiplier)
+	require.InDelta(t, 1.4, *repo.lastUpdated.AdminUsageMultiplier, 1e-12)
+}
+
+func TestAdminService_UpdateUser_ClearsAdminUsageMultiplier(t *testing.T) {
+	existingMultiplier := 1.4
+	base := &userRepoStub{user: &User{ID: 42, Email: "u@example.com", AdminUsageMultiplier: &existingMultiplier}}
+	repo := &rpmUserRepoStub{userRepoStub: base}
+	svc := &adminServiceImpl{
+		userRepo:       repo,
+		redeemCodeRepo: &redeemRepoStub{},
+	}
+
+	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{
+		ClearAdminUsageMultiplier: true,
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, updated.AdminUsageMultiplier)
+	require.Nil(t, repo.lastUpdated.AdminUsageMultiplier)
+}
+
+func TestAdminService_UpdateUser_RejectsNegativeAdminUsageMultiplier(t *testing.T) {
+	base := &userRepoStub{user: &User{ID: 42, Email: "u@example.com"}}
+	repo := &rpmUserRepoStub{userRepoStub: base}
+	svc := &adminServiceImpl{
+		userRepo:       repo,
+		redeemCodeRepo: &redeemRepoStub{},
+	}
+	negative := -0.01
+
+	_, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{
+		AdminUsageMultiplier: &negative,
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "admin_usage_multiplier must be >= 0")
+	require.Nil(t, repo.lastUpdated)
+}

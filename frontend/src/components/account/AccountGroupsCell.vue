@@ -1,7 +1,7 @@
 <template>
-  <div v-if="groups && groups.length > 0" class="relative max-w-56">
-    <!-- 分组容器：固定最大宽度，最多显示2行 -->
-    <div class="flex flex-wrap gap-1 max-h-14 overflow-hidden">
+  <div v-if="groups && groups.length > 0" class="relative w-full min-w-0">
+    <!-- 分组容器：徽章内部单行；多个分组可换到下一行，但单个名称不折行 -->
+    <div class="flex max-h-28 flex-wrap content-start items-start gap-1 overflow-hidden">
       <GroupBadge
         v-for="group in displayGroups"
         :key="group.id"
@@ -10,14 +10,15 @@
         :subscription-type="group.subscription_type"
         :rate-multiplier="group.rate_multiplier"
         :show-rate="false"
-        class="max-w-24"
+        class="max-w-none shrink-0"
       />
       <!-- 更多数量徽章 -->
       <button
         v-if="hiddenCount > 0"
         ref="moreButtonRef"
         @click.stop="showPopover = !showPopover"
-        class="inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500 transition-colors cursor-pointer whitespace-nowrap"
+        class="inline-flex cursor-pointer items-center gap-0.5 whitespace-nowrap rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
+        :title="t('admin.accounts.groupCountTotal', { count: groups.length })"
       >
         <span>+{{ hiddenCount }}</span>
       </button>
@@ -89,7 +90,8 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  maxDisplay: 4
+  // 默认多展示一些，避免「【GPT】Pro 20x」这类名称被截成「【G」
+  maxDisplay: 8
 })
 
 const { t } = useI18n()

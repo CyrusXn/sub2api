@@ -509,7 +509,11 @@ export default {
         selectStatus: 'Select status',
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
-        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
+        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.',
+        adminUsageMultiplier: 'Admin Usage Multiplier',
+        adminUsageMultiplierPlaceholder: 'Leave empty to inherit the group',
+        adminUsageMultiplierHint: 'Affects admin usage records and statistics only. A user value overrides the group value; leave empty to inherit.',
+        adminUsageMultiplierInvalid: 'Admin usage multiplier must be a number greater than or equal to 0.'
       },
       columns: {
         user: 'User',
@@ -519,6 +523,7 @@ export default {
         notes: 'Notes',
         role: 'Role',
         groups: 'Groups',
+        adminUsageMultiplier: 'Admin Usage Multiplier',
         subscriptions: 'Subscriptions',
         balance: 'Balance',
         balancePlatformQuota: 'Balance (Platform Quota)',
@@ -534,6 +539,7 @@ export default {
         created: 'Created',
         actions: 'Actions'
       },
+      adminUsageMultiplierInherited: 'Inherit group',
       today: 'Today',
       total: 'Last 30d',
       sortBy: 'Sort By',
@@ -796,6 +802,7 @@ export default {
         id: 'ID',
         platform: 'Platform',
         rateMultiplier: 'Rate Multiplier',
+        adminUsageMultiplier: 'Admin Usage Multiplier',
         rpmOverride: 'RPM Override',
         rpmOverrideHint: 'Per-user RPM cap in this group; empty = group default; 0 = unlimited',
         rateDefault: 'default',
@@ -837,6 +844,9 @@ export default {
         description: 'Description',
         platform: 'Platform',
         rateMultiplier: 'Rate Multiplier',
+        adminUsageMultiplier: 'Admin Usage Multiplier',
+        adminUsageMultiplierHint: 'Affects admin usage records and statistics only. Defaults to 1; a user-level value takes priority.',
+        adminUsageMultiplierInvalid: 'Admin usage multiplier must be a number greater than or equal to 0.',
         status: 'Status',
         exclusive: 'Exclusive Group',
         nameLabel: 'Group Name',

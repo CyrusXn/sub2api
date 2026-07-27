@@ -105,6 +105,20 @@ func (_c *GroupCreate) SetNillableRateMultiplier(v *float64) *GroupCreate {
 	return _c
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (_c *GroupCreate) SetAdminUsageMultiplier(v float64) *GroupCreate {
+	_c.mutation.SetAdminUsageMultiplier(v)
+	return _c
+}
+
+// SetNillableAdminUsageMultiplier sets the "admin_usage_multiplier" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableAdminUsageMultiplier(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetAdminUsageMultiplier(*v)
+	}
+	return _c
+}
+
 // SetPeakRateEnabled sets the "peak_rate_enabled" field.
 func (_c *GroupCreate) SetPeakRateEnabled(v bool) *GroupCreate {
 	_c.mutation.SetPeakRateEnabled(v)
@@ -870,6 +884,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultRateMultiplier
 		_c.mutation.SetRateMultiplier(v)
 	}
+	if _, ok := _c.mutation.AdminUsageMultiplier(); !ok {
+		v := group.DefaultAdminUsageMultiplier
+		_c.mutation.SetAdminUsageMultiplier(v)
+	}
 	if _, ok := _c.mutation.PeakRateEnabled(); !ok {
 		v := group.DefaultPeakRateEnabled
 		_c.mutation.SetPeakRateEnabled(v)
@@ -1019,6 +1037,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		return &ValidationError{Name: "rate_multiplier", err: errors.New(`ent: missing required field "Group.rate_multiplier"`)}
+	}
+	if _, ok := _c.mutation.AdminUsageMultiplier(); !ok {
+		return &ValidationError{Name: "admin_usage_multiplier", err: errors.New(`ent: missing required field "Group.admin_usage_multiplier"`)}
 	}
 	if _, ok := _c.mutation.PeakRateEnabled(); !ok {
 		return &ValidationError{Name: "peak_rate_enabled", err: errors.New(`ent: missing required field "Group.peak_rate_enabled"`)}
@@ -1206,6 +1227,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RateMultiplier(); ok {
 		_spec.SetField(group.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
+	}
+	if value, ok := _c.mutation.AdminUsageMultiplier(); ok {
+		_spec.SetField(group.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+		_node.AdminUsageMultiplier = value
 	}
 	if value, ok := _c.mutation.PeakRateEnabled(); ok {
 		_spec.SetField(group.FieldPeakRateEnabled, field.TypeBool, value)
@@ -1622,6 +1647,24 @@ func (u *GroupUpsert) UpdateRateMultiplier() *GroupUpsert {
 // AddRateMultiplier adds v to the "rate_multiplier" field.
 func (u *GroupUpsert) AddRateMultiplier(v float64) *GroupUpsert {
 	u.Add(group.FieldRateMultiplier, v)
+	return u
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *GroupUpsert) SetAdminUsageMultiplier(v float64) *GroupUpsert {
+	u.Set(group.FieldAdminUsageMultiplier, v)
+	return u
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAdminUsageMultiplier() *GroupUpsert {
+	u.SetExcluded(group.FieldAdminUsageMultiplier)
+	return u
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *GroupUpsert) AddAdminUsageMultiplier(v float64) *GroupUpsert {
+	u.Add(group.FieldAdminUsageMultiplier, v)
 	return u
 }
 
@@ -2499,6 +2542,27 @@ func (u *GroupUpsertOne) AddRateMultiplier(v float64) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRateMultiplier() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *GroupUpsertOne) SetAdminUsageMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAdminUsageMultiplier(v)
+	})
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *GroupUpsertOne) AddAdminUsageMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAdminUsageMultiplier(v)
+	})
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAdminUsageMultiplier() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAdminUsageMultiplier()
 	})
 }
 
@@ -3665,6 +3729,27 @@ func (u *GroupUpsertBulk) AddRateMultiplier(v float64) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRateMultiplier() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *GroupUpsertBulk) SetAdminUsageMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAdminUsageMultiplier(v)
+	})
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *GroupUpsertBulk) AddAdminUsageMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAdminUsageMultiplier(v)
+	})
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAdminUsageMultiplier() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAdminUsageMultiplier()
 	})
 }
 

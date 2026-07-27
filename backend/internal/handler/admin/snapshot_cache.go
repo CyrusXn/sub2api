@@ -18,10 +18,11 @@ type snapshotCacheEntry struct {
 }
 
 type snapshotCache struct {
-	mu    sync.RWMutex
-	ttl   time.Duration
-	items map[string]snapshotCacheEntry
-	sf    singleflight.Group
+	mu         sync.RWMutex
+	ttl        time.Duration
+	items      map[string]snapshotCacheEntry
+	generation uint64
+	sf         singleflight.Group
 }
 
 type snapshotCacheLoadResult struct {
@@ -78,6 +79,17 @@ func (c *snapshotCache) Set(key string, payload any) snapshotCacheEntry {
 	return entry
 }
 
+// Clear 清空当前进程内的所有快照缓存项。
+func (c *snapshotCache) Clear() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.items = make(map[string]snapshotCacheEntry)
+	c.generation++
+	c.mu.Unlock()
+}
+
 func (c *snapshotCache) GetOrLoad(key string, load func() (any, error)) (snapshotCacheEntry, bool, error) {
 	if load == nil {
 		return snapshotCacheEntry{}, false, nil
@@ -97,11 +109,24 @@ func (c *snapshotCache) GetOrLoad(key string, load func() (any, error)) (snapsho
 		if entry, ok := c.Get(key); ok {
 			return snapshotCacheLoadResult{Entry: entry, Hit: true}, nil
 		}
+		c.mu.RLock()
+		generation := c.generation
+		c.mu.RUnlock()
 		payload, err := load()
 		if err != nil {
 			return nil, err
 		}
-		return snapshotCacheLoadResult{Entry: c.Set(key, payload), Hit: false}, nil
+		entry := snapshotCacheEntry{
+			ETag:      buildETagFromAny(payload),
+			Payload:   payload,
+			ExpiresAt: time.Now().Add(c.ttl),
+		}
+		c.mu.Lock()
+		if c.generation == generation {
+			c.items[key] = entry
+		}
+		c.mu.Unlock()
+		return snapshotCacheLoadResult{Entry: entry, Hit: false}, nil
 	})
 	if err != nil {
 		return snapshotCacheEntry{}, false, err

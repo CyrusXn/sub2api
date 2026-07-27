@@ -85,6 +85,11 @@ func RateMultiplier(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRateMultiplier, v))
 }
 
+// AdminUsageMultiplier applies equality check predicate on the "admin_usage_multiplier" field. It's identical to AdminUsageMultiplierEQ.
+func AdminUsageMultiplier(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldAdminUsageMultiplier, v))
+}
+
 // PeakRateEnabled applies equality check predicate on the "peak_rate_enabled" field. It's identical to PeakRateEnabledEQ.
 func PeakRateEnabled(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldPeakRateEnabled, v))
@@ -598,6 +603,46 @@ func RateMultiplierLT(v float64) predicate.Group {
 // RateMultiplierLTE applies the LTE predicate on the "rate_multiplier" field.
 func RateMultiplierLTE(v float64) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldRateMultiplier, v))
+}
+
+// AdminUsageMultiplierEQ applies the EQ predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierNEQ applies the NEQ predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierIn applies the In predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldAdminUsageMultiplier, vs...))
+}
+
+// AdminUsageMultiplierNotIn applies the NotIn predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldAdminUsageMultiplier, vs...))
+}
+
+// AdminUsageMultiplierGT applies the GT predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierGTE applies the GTE predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierLT applies the LT predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldAdminUsageMultiplier, v))
+}
+
+// AdminUsageMultiplierLTE applies the LTE predicate on the "admin_usage_multiplier" field.
+func AdminUsageMultiplierLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldAdminUsageMultiplier, v))
 }
 
 // PeakRateEnabledEQ applies the EQ predicate on the "peak_rate_enabled" field.

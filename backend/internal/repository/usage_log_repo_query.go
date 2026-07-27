@@ -150,6 +150,9 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 	if err := r.hydrateUsageLogAssociations(ctx, logs); err != nil {
 		return nil, nil, err
 	}
+	if filters.AdminView {
+		applyAdminUsageMultiplierToUsageLogs(logs)
+	}
 	return logs, page, nil
 }
 

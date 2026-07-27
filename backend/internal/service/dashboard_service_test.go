@@ -16,15 +16,34 @@ import (
 
 type usageRepoStub struct {
 	UsageLogRepository
-	stats      *usagestats.DashboardStats
-	rangeStats *usagestats.DashboardStats
-	err        error
-	rangeErr   error
-	calls      int32
-	rangeCalls int32
-	rangeStart time.Time
-	rangeEnd   time.Time
-	onCall     chan struct{}
+	stats        *usagestats.DashboardStats
+	rangeStats   *usagestats.DashboardStats
+	err          error
+	rangeErr     error
+	calls        int32
+	rangeCalls   int32
+	rangeStart   time.Time
+	rangeEnd     time.Time
+	onCall       chan struct{}
+	waitOnCall   <-chan struct{}
+	trendFilters usagestats.UsageLogFilters
+	modelFilters usagestats.UsageLogFilters
+	groupFilters usagestats.UsageLogFilters
+}
+
+func (s *usageRepoStub) GetUsageTrendWithUsageFilters(_ context.Context, _, _ time.Time, _ string, filters usagestats.UsageLogFilters) ([]usagestats.TrendDataPoint, error) {
+	s.trendFilters = filters
+	return []usagestats.TrendDataPoint{}, nil
+}
+
+func (s *usageRepoStub) GetModelStatsWithUsageFiltersBySource(_ context.Context, _, _ time.Time, filters usagestats.UsageLogFilters, _ string) ([]usagestats.ModelStat, error) {
+	s.modelFilters = filters
+	return []usagestats.ModelStat{}, nil
+}
+
+func (s *usageRepoStub) GetGroupStatsWithUsageFilters(_ context.Context, _, _ time.Time, filters usagestats.UsageLogFilters) ([]usagestats.GroupStat, error) {
+	s.groupFilters = filters
+	return []usagestats.GroupStat{}, nil
 }
 
 func (s *usageRepoStub) GetDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error) {
@@ -34,6 +53,9 @@ func (s *usageRepoStub) GetDashboardStats(ctx context.Context) (*usagestats.Dash
 		case s.onCall <- struct{}{}:
 		default:
 		}
+	}
+	if s.waitOnCall != nil {
+		<-s.waitOnCall
 	}
 	if s.err != nil {
 		return nil, s.err
@@ -51,6 +73,43 @@ func (s *usageRepoStub) GetDashboardStatsWithRange(ctx context.Context, start, e
 	if s.rangeStats != nil {
 		return s.rangeStats, nil
 	}
+	return s.stats, nil
+}
+
+type batchAPIKeyUsageRepoStub struct {
+	UsageLogRepository
+	rawCalls   int32
+	adminCalls int32
+	rawStats   map[int64]*usagestats.BatchAPIKeyUsageStats
+	adminStats map[int64]*usagestats.BatchAPIKeyUsageStats
+	rawErr     error
+	adminErr   error
+}
+
+func (s *batchAPIKeyUsageRepoStub) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
+	atomic.AddInt32(&s.rawCalls, 1)
+	if s.rawErr != nil {
+		return nil, s.rawErr
+	}
+	return s.rawStats, nil
+}
+
+func (s *batchAPIKeyUsageRepoStub) GetAdminBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
+	atomic.AddInt32(&s.adminCalls, 1)
+	if s.adminErr != nil {
+		return nil, s.adminErr
+	}
+	return s.adminStats, nil
+}
+
+type rawBatchAPIKeyUsageRepoStub struct {
+	UsageLogRepository
+	rawCalls int32
+	stats    map[int64]*usagestats.BatchAPIKeyUsageStats
+}
+
+func (s *rawBatchAPIKeyUsageRepoStub) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
+	atomic.AddInt32(&s.rawCalls, 1)
 	return s.stats, nil
 }
 
@@ -142,6 +201,94 @@ func (c *dashboardCacheStub) readLastEntry(t *testing.T) dashboardStatsCacheEntr
 	err := json.Unmarshal([]byte(data), &entry)
 	require.NoError(t, err)
 	return entry
+}
+
+func TestDashboardService_AdminChartsUseAdminViewFilters(t *testing.T) {
+	repo := &usageRepoStub{}
+	svc := NewDashboardService(repo, nil, nil, nil)
+	start := time.Now().Add(-time.Hour)
+	end := time.Now()
+
+	_, err := svc.GetUsageTrendWithFilters(context.Background(), start, end, "hour", 1, 2, 3, 4, "gpt-5", nil, nil, nil)
+	require.NoError(t, err)
+	_, err = svc.GetModelStatsWithFiltersBySource(context.Background(), start, end, 1, 2, 3, 4, nil, nil, nil, usagestats.ModelSourceRequested)
+	require.NoError(t, err)
+	_, err = svc.GetGroupStatsWithFilters(context.Background(), start, end, 1, 2, 3, 4, nil, nil, nil)
+	require.NoError(t, err)
+
+	require.True(t, repo.trendFilters.AdminView)
+	require.True(t, repo.modelFilters.AdminView)
+	require.True(t, repo.groupFilters.AdminView)
+}
+
+func TestDashboardService_BatchAPIKeyUsagePrefersAdminStats(t *testing.T) {
+	repo := &batchAPIKeyUsageRepoStub{
+		rawStats: map[int64]*usagestats.BatchAPIKeyUsageStats{
+			10: {APIKeyID: 10, TotalActualCost: 1},
+		},
+		adminStats: map[int64]*usagestats.BatchAPIKeyUsageStats{
+			10: {APIKeyID: 10, TotalActualCost: 3},
+		},
+	}
+	svc := NewDashboardService(repo, nil, nil, nil)
+
+	got, err := svc.GetBatchAPIKeyUsageStats(context.Background(), []int64{10}, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, 3.0, got[10].TotalActualCost)
+	require.Equal(t, int32(0), atomic.LoadInt32(&repo.rawCalls), "管理端已有专用倍率口径时不应额外读取普通口径")
+	require.Equal(t, int32(1), atomic.LoadInt32(&repo.adminCalls))
+}
+
+func TestDashboardService_BatchAPIKeyUsageFallsBackToRawStats(t *testing.T) {
+	repo := &rawBatchAPIKeyUsageRepoStub{
+		stats: map[int64]*usagestats.BatchAPIKeyUsageStats{
+			10: {APIKeyID: 10, TotalActualCost: 1},
+		},
+	}
+	svc := NewDashboardService(repo, nil, nil, nil)
+
+	got, err := svc.GetBatchAPIKeyUsageStats(context.Background(), []int64{10}, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, 1.0, got[10].TotalActualCost)
+	require.Equal(t, int32(1), atomic.LoadInt32(&repo.rawCalls))
+}
+
+func TestDashboardService_InvalidateStatsCacheDeletesCache(t *testing.T) {
+	cache := &dashboardCacheStub{}
+	svc := NewDashboardService(&usageRepoStub{}, nil, cache, &config.Config{Dashboard: config.DashboardCacheConfig{Enabled: true}})
+
+	svc.InvalidateStatsCache()
+
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.delCalls))
+}
+
+func TestDashboardService_InvalidateStatsCachePreventsStaleRefreshWriteback(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	repo := &usageRepoStub{
+		stats:      &usagestats.DashboardStats{TotalUsers: 7},
+		onCall:     started,
+		waitOnCall: release,
+	}
+	cache := &dashboardCacheStub{}
+	svc := NewDashboardService(repo, &dashboardAggregationRepoStub{}, cache, &config.Config{
+		Dashboard:    config.DashboardCacheConfig{Enabled: true},
+		DashboardAgg: config.DashboardAggregationConfig{Enabled: true},
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.GetDashboardStats(context.Background())
+		done <- err
+	}()
+
+	<-started
+	svc.InvalidateStatsCache()
+	close(release)
+
+	require.NoError(t, <-done)
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.delCalls))
+	require.Equal(t, int32(0), atomic.LoadInt32(&cache.setCalls), "失效前开始的旧统计刷新不应重新写回缓存")
 }
 
 func TestDashboardService_CacheHitFresh(t *testing.T) {

@@ -152,6 +152,43 @@ func TestSnapshotCache_GetOrLoad_ConcurrentSingleflight(t *testing.T) {
 	require.Equal(t, int32(1), loads.Load())
 }
 
+func TestSnapshotCacheClearRemovesAllEntries(t *testing.T) {
+	c := newSnapshotCache(5 * time.Second)
+	c.Set("a", 1)
+	c.Set("b", 2)
+
+	c.Clear()
+
+	_, ok := c.Get("a")
+	require.False(t, ok)
+	_, ok = c.Get("b")
+	require.False(t, ok)
+}
+
+func TestSnapshotCacheClearDuringLoadDoesNotStoreStaleResult(t *testing.T) {
+	c := newSnapshotCache(5 * time.Second)
+	loadStarted := make(chan struct{})
+	allowReturn := make(chan struct{})
+	done := make(chan error, 1)
+
+	go func() {
+		_, _, err := c.GetOrLoad("shared", func() (any, error) {
+			close(loadStarted)
+			<-allowReturn
+			return "stale", nil
+		})
+		done <- err
+	}()
+
+	<-loadStarted
+	c.Clear()
+	close(allowReturn)
+
+	require.NoError(t, <-done)
+	_, ok := c.Get("shared")
+	require.False(t, ok, "Clear 之后完成的旧加载结果不应重新写回缓存")
+}
+
 func TestParseBoolQueryWithDefault(t *testing.T) {
 	tests := []struct {
 		name string

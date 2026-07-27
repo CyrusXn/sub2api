@@ -21854,6 +21854,8 @@ type GroupMutation struct {
 	description                             *string
 	rate_multiplier                         *float64
 	addrate_multiplier                      *float64
+	admin_usage_multiplier                  *float64
+	addadmin_usage_multiplier               *float64
 	peak_rate_enabled                       *bool
 	peak_start                              *string
 	peak_end                                *string
@@ -22304,6 +22306,62 @@ func (m *GroupMutation) AddedRateMultiplier() (r float64, exists bool) {
 func (m *GroupMutation) ResetRateMultiplier() {
 	m.rate_multiplier = nil
 	m.addrate_multiplier = nil
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (m *GroupMutation) SetAdminUsageMultiplier(f float64) {
+	m.admin_usage_multiplier = &f
+	m.addadmin_usage_multiplier = nil
+}
+
+// AdminUsageMultiplier returns the value of the "admin_usage_multiplier" field in the mutation.
+func (m *GroupMutation) AdminUsageMultiplier() (r float64, exists bool) {
+	v := m.admin_usage_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdminUsageMultiplier returns the old "admin_usage_multiplier" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAdminUsageMultiplier(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdminUsageMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdminUsageMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdminUsageMultiplier: %w", err)
+	}
+	return oldValue.AdminUsageMultiplier, nil
+}
+
+// AddAdminUsageMultiplier adds f to the "admin_usage_multiplier" field.
+func (m *GroupMutation) AddAdminUsageMultiplier(f float64) {
+	if m.addadmin_usage_multiplier != nil {
+		*m.addadmin_usage_multiplier += f
+	} else {
+		m.addadmin_usage_multiplier = &f
+	}
+}
+
+// AddedAdminUsageMultiplier returns the value that was added to the "admin_usage_multiplier" field in this mutation.
+func (m *GroupMutation) AddedAdminUsageMultiplier() (r float64, exists bool) {
+	v := m.addadmin_usage_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAdminUsageMultiplier resets all changes to the "admin_usage_multiplier" field.
+func (m *GroupMutation) ResetAdminUsageMultiplier() {
+	m.admin_usage_multiplier = nil
+	m.addadmin_usage_multiplier = nil
 }
 
 // SetPeakRateEnabled sets the "peak_rate_enabled" field.
@@ -24944,7 +25002,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 52)
+	fields := make([]string, 0, 53)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -24962,6 +25020,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.rate_multiplier != nil {
 		fields = append(fields, group.FieldRateMultiplier)
+	}
+	if m.admin_usage_multiplier != nil {
+		fields = append(fields, group.FieldAdminUsageMultiplier)
 	}
 	if m.peak_rate_enabled != nil {
 		fields = append(fields, group.FieldPeakRateEnabled)
@@ -25121,6 +25182,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.Description()
 	case group.FieldRateMultiplier:
 		return m.RateMultiplier()
+	case group.FieldAdminUsageMultiplier:
+		return m.AdminUsageMultiplier()
 	case group.FieldPeakRateEnabled:
 		return m.PeakRateEnabled()
 	case group.FieldPeakStart:
@@ -25234,6 +25297,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldDescription(ctx)
 	case group.FieldRateMultiplier:
 		return m.OldRateMultiplier(ctx)
+	case group.FieldAdminUsageMultiplier:
+		return m.OldAdminUsageMultiplier(ctx)
 	case group.FieldPeakRateEnabled:
 		return m.OldPeakRateEnabled(ctx)
 	case group.FieldPeakStart:
@@ -25376,6 +25441,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRateMultiplier(v)
+		return nil
+	case group.FieldAdminUsageMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdminUsageMultiplier(v)
 		return nil
 	case group.FieldPeakRateEnabled:
 		v, ok := value.(bool)
@@ -25710,6 +25782,9 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addrate_multiplier != nil {
 		fields = append(fields, group.FieldRateMultiplier)
 	}
+	if m.addadmin_usage_multiplier != nil {
+		fields = append(fields, group.FieldAdminUsageMultiplier)
+	}
 	if m.addpeak_rate_multiplier != nil {
 		fields = append(fields, group.FieldPeakRateMultiplier)
 	}
@@ -25780,6 +25855,8 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case group.FieldRateMultiplier:
 		return m.AddedRateMultiplier()
+	case group.FieldAdminUsageMultiplier:
+		return m.AddedAdminUsageMultiplier()
 	case group.FieldPeakRateMultiplier:
 		return m.AddedPeakRateMultiplier()
 	case group.FieldDailyLimitUsd:
@@ -25835,6 +25912,13 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddRateMultiplier(v)
+		return nil
+	case group.FieldAdminUsageMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdminUsageMultiplier(v)
 		return nil
 	case group.FieldPeakRateMultiplier:
 		v, ok := value.(float64)
@@ -26119,6 +26203,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldRateMultiplier:
 		m.ResetRateMultiplier()
+		return nil
+	case group.FieldAdminUsageMultiplier:
+		m.ResetAdminUsageMultiplier()
 		return nil
 	case group.FieldPeakRateEnabled:
 		m.ResetPeakRateEnabled()
@@ -47176,6 +47263,8 @@ type UserMutation struct {
 	balance_notify_extra_emails   *string
 	total_recharged               *float64
 	addtotal_recharged            *float64
+	admin_usage_multiplier        *float64
+	addadmin_usage_multiplier     *float64
 	rpm_limit                     *int
 	addrpm_limit                  *int
 	clearedFields                 map[string]struct{}
@@ -48328,6 +48417,76 @@ func (m *UserMutation) ResetTotalRecharged() {
 	m.addtotal_recharged = nil
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (m *UserMutation) SetAdminUsageMultiplier(f float64) {
+	m.admin_usage_multiplier = &f
+	m.addadmin_usage_multiplier = nil
+}
+
+// AdminUsageMultiplier returns the value of the "admin_usage_multiplier" field in the mutation.
+func (m *UserMutation) AdminUsageMultiplier() (r float64, exists bool) {
+	v := m.admin_usage_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdminUsageMultiplier returns the old "admin_usage_multiplier" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldAdminUsageMultiplier(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdminUsageMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdminUsageMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdminUsageMultiplier: %w", err)
+	}
+	return oldValue.AdminUsageMultiplier, nil
+}
+
+// AddAdminUsageMultiplier adds f to the "admin_usage_multiplier" field.
+func (m *UserMutation) AddAdminUsageMultiplier(f float64) {
+	if m.addadmin_usage_multiplier != nil {
+		*m.addadmin_usage_multiplier += f
+	} else {
+		m.addadmin_usage_multiplier = &f
+	}
+}
+
+// AddedAdminUsageMultiplier returns the value that was added to the "admin_usage_multiplier" field in this mutation.
+func (m *UserMutation) AddedAdminUsageMultiplier() (r float64, exists bool) {
+	v := m.addadmin_usage_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAdminUsageMultiplier clears the value of the "admin_usage_multiplier" field.
+func (m *UserMutation) ClearAdminUsageMultiplier() {
+	m.admin_usage_multiplier = nil
+	m.addadmin_usage_multiplier = nil
+	m.clearedFields[user.FieldAdminUsageMultiplier] = struct{}{}
+}
+
+// AdminUsageMultiplierCleared returns if the "admin_usage_multiplier" field was cleared in this mutation.
+func (m *UserMutation) AdminUsageMultiplierCleared() bool {
+	_, ok := m.clearedFields[user.FieldAdminUsageMultiplier]
+	return ok
+}
+
+// ResetAdminUsageMultiplier resets all changes to the "admin_usage_multiplier" field.
+func (m *UserMutation) ResetAdminUsageMultiplier() {
+	m.admin_usage_multiplier = nil
+	m.addadmin_usage_multiplier = nil
+	delete(m.clearedFields, user.FieldAdminUsageMultiplier)
+}
+
 // SetRpmLimit sets the "rpm_limit" field.
 func (m *UserMutation) SetRpmLimit(i int) {
 	m.rpm_limit = &i
@@ -49120,7 +49279,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 24)
+	fields := make([]string, 0, 25)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -49190,6 +49349,9 @@ func (m *UserMutation) Fields() []string {
 	if m.total_recharged != nil {
 		fields = append(fields, user.FieldTotalRecharged)
 	}
+	if m.admin_usage_multiplier != nil {
+		fields = append(fields, user.FieldAdminUsageMultiplier)
+	}
 	if m.rpm_limit != nil {
 		fields = append(fields, user.FieldRpmLimit)
 	}
@@ -49247,6 +49409,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.BalanceNotifyExtraEmails()
 	case user.FieldTotalRecharged:
 		return m.TotalRecharged()
+	case user.FieldAdminUsageMultiplier:
+		return m.AdminUsageMultiplier()
 	case user.FieldRpmLimit:
 		return m.RpmLimit()
 	}
@@ -49304,6 +49468,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldBalanceNotifyExtraEmails(ctx)
 	case user.FieldTotalRecharged:
 		return m.OldTotalRecharged(ctx)
+	case user.FieldAdminUsageMultiplier:
+		return m.OldAdminUsageMultiplier(ctx)
 	case user.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
 	}
@@ -49476,6 +49642,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetTotalRecharged(v)
 		return nil
+	case user.FieldAdminUsageMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdminUsageMultiplier(v)
+		return nil
 	case user.FieldRpmLimit:
 		v, ok := value.(int)
 		if !ok {
@@ -49506,6 +49679,9 @@ func (m *UserMutation) AddedFields() []string {
 	if m.addtotal_recharged != nil {
 		fields = append(fields, user.FieldTotalRecharged)
 	}
+	if m.addadmin_usage_multiplier != nil {
+		fields = append(fields, user.FieldAdminUsageMultiplier)
+	}
 	if m.addrpm_limit != nil {
 		fields = append(fields, user.FieldRpmLimit)
 	}
@@ -49527,6 +49703,8 @@ func (m *UserMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedBalanceNotifyThreshold()
 	case user.FieldTotalRecharged:
 		return m.AddedTotalRecharged()
+	case user.FieldAdminUsageMultiplier:
+		return m.AddedAdminUsageMultiplier()
 	case user.FieldRpmLimit:
 		return m.AddedRpmLimit()
 	}
@@ -49573,6 +49751,13 @@ func (m *UserMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddTotalRecharged(v)
 		return nil
+	case user.FieldAdminUsageMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdminUsageMultiplier(v)
+		return nil
 	case user.FieldRpmLimit:
 		v, ok := value.(int)
 		if !ok {
@@ -49606,6 +49791,9 @@ func (m *UserMutation) ClearedFields() []string {
 	if m.FieldCleared(user.FieldBalanceNotifyThreshold) {
 		fields = append(fields, user.FieldBalanceNotifyThreshold)
 	}
+	if m.FieldCleared(user.FieldAdminUsageMultiplier) {
+		fields = append(fields, user.FieldAdminUsageMultiplier)
+	}
 	return fields
 }
 
@@ -49637,6 +49825,9 @@ func (m *UserMutation) ClearField(name string) error {
 		return nil
 	case user.FieldBalanceNotifyThreshold:
 		m.ClearBalanceNotifyThreshold()
+		return nil
+	case user.FieldAdminUsageMultiplier:
+		m.ClearAdminUsageMultiplier()
 		return nil
 	}
 	return fmt.Errorf("unknown User nullable field %s", name)
@@ -49714,6 +49905,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldTotalRecharged:
 		m.ResetTotalRecharged()
+		return nil
+	case user.FieldAdminUsageMultiplier:
+		m.ResetAdminUsageMultiplier()
 		return nil
 	case user.FieldRpmLimit:
 		m.ResetRpmLimit()

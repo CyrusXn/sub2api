@@ -629,6 +629,7 @@ const HIDDEN_COLUMNS_KEY = 'usage-hidden-columns'
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
+  { key: 'api_key_value', label: t('admin.usage.apiKeyValue'), sortable: false },
   { key: 'account', label: t('admin.usage.account'), sortable: false },
   { key: 'model', label: t('usage.model'), sortable: true },
   { key: 'reasoning_effort', label: t('usage.reasoningEffort'), sortable: false },
