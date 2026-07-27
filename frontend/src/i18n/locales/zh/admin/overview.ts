@@ -578,7 +578,7 @@ export default {
         rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效',
         adminUsageMultiplier: '管理统计附加倍率',
         adminUsageMultiplierPlaceholder: '留空表示继承分组',
-        adminUsageMultiplierHint: '仅影响管理端使用记录和统计展示；用户倍率优先，留空继承分组倍率。',
+        adminUsageMultiplierHint: '配置仅管理端可见；影响新请求的 Token、费用和真实扣费，历史不追溯。用户倍率优先，留空继承分组倍率。',
         adminUsageMultiplierInvalid: '管理统计附加倍率必须是大于或等于 0 的数字'
       },
       adminUsageMultiplierInherited: '继承分组',
@@ -827,7 +827,7 @@ export default {
         platform: '平台',
         rateMultiplier: '费率倍数',
         adminUsageMultiplier: '管理统计附加倍率',
-        adminUsageMultiplierHint: '仅影响管理端使用记录和统计展示，默认 1；用户单独设置后优先使用用户倍率。',
+        adminUsageMultiplierHint: '配置仅管理端可见；影响新请求的 Token、费用和真实扣费，历史不追溯。默认 1，用户单独设置后优先。',
         adminUsageMultiplierInvalid: '管理统计附加倍率必须是大于或等于 0 的数字',
         status: '状态',
         exclusive: '专属分组',

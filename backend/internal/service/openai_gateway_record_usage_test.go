@@ -419,6 +419,60 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 	require.Equal(t, 1, userRepo.deductCalls)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_AdminUsageMultiplierAffectsSettlementButPreservesRate(t *testing.T) {
+	groupID := int64(15)
+	userMultiplier := 10.0
+	usage := OpenAIUsage{
+		InputTokens:              1447,
+		OutputTokens:             130,
+		CacheCreationInputTokens: 20,
+		CacheReadInputTokens:     30,
+	}
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	quotaSvc := &openAIRecordUsageAPIKeyQuotaStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_admin_usage_multiplier",
+			Usage:     usage,
+			Model:     "gpt-5.1",
+			Duration:  time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      1006,
+			GroupID: i64p(groupID),
+			Group: &Group{
+				ID:                   groupID,
+				RateMultiplier:       0.1,
+				AdminUsageMultiplier: 3,
+			},
+			Quota: 100,
+		},
+		User: &User{
+			ID:                   2006,
+			AdminUsageMultiplier: &userMultiplier,
+		},
+		Account:       &Account{ID: 3006},
+		APIKeyService: quotaSvc,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, 13970, usageRepo.lastLog.InputTokens)
+	require.Equal(t, 1300, usageRepo.lastLog.OutputTokens)
+	require.Equal(t, 200, usageRepo.lastLog.CacheCreationTokens)
+	require.Equal(t, 300, usageRepo.lastLog.CacheReadTokens)
+	require.InDelta(t, 0.1, usageRepo.lastLog.RateMultiplier, 1e-12)
+
+	baseCost := expectedOpenAICost(t, svc, "gpt-5.1", usage, 0.1)
+	require.InDelta(t, baseCost.TotalCost*10, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, baseCost.ActualCost*10, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, usageRepo.lastLog.ActualCost, userRepo.lastAmount, 1e-12)
+	require.InDelta(t, usageRepo.lastLog.ActualCost, quotaSvc.lastAmount, 1e-12)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *testing.T) {
 	groupID := int64(14)
 	groupRate := 1.0

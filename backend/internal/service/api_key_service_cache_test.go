@@ -317,6 +317,43 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesReasoningEffortPolicy(t *testi
 	require.Equal(t, apiKey.Group.ReasoningEffortMappings, roundTrip.Group.ReasoningEffortMappings)
 }
 
+func TestAPIKeyService_SnapshotRoundTrip_PreservesAdminUsageSettlementMultipliers(t *testing.T) {
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
+	groupID := int64(10)
+	userMultiplier := 2.5
+	apiKey := &APIKey{
+		ID:      1,
+		UserID:  2,
+		GroupID: &groupID,
+		Key:     "k-admin-usage-settlement",
+		Status:  StatusActive,
+		User: &User{
+			ID:                   2,
+			Status:               StatusActive,
+			Role:                 RoleUser,
+			AdminUsageMultiplier: &userMultiplier,
+		},
+		Group: &Group{
+			ID:                   groupID,
+			Name:                 "openai",
+			Platform:             PlatformOpenAI,
+			Status:               StatusActive,
+			RateMultiplier:       0.1,
+			AdminUsageMultiplier: 3.5,
+		},
+	}
+
+	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	roundTrip := svc.snapshotToAPIKey(apiKey.Key, snapshot)
+
+	require.NotNil(t, roundTrip)
+	require.NotNil(t, roundTrip.User)
+	require.NotNil(t, roundTrip.User.AdminUsageMultiplier)
+	require.InDelta(t, userMultiplier, *roundTrip.User.AdminUsageMultiplier, 1e-12)
+	require.NotNil(t, roundTrip.Group)
+	require.InDelta(t, 3.5, roundTrip.Group.AdminUsageMultiplier, 1e-12)
+}
+
 func TestAPIKeyService_GetByKey_IgnoresLegacyAuthCacheSnapshotWithoutMessagesDispatchConfig(t *testing.T) {
 	cache := &authCacheStub{}
 	var repoCalls int32

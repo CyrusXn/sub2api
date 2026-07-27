@@ -45,7 +45,7 @@ type AdminUser struct {
 
 	Notes      string     `json:"notes"`
 	LastUsedAt *time.Time `json:"last_used_at"`
-	// AdminUsageMultiplier 管理端使用统计附加倍率；null 表示继承分组附加倍率。
+	// AdminUsageMultiplier 仅管理端配置的结算附加倍率；null 表示继承分组附加倍率。
 	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]rateMultiplier
@@ -157,7 +157,7 @@ type Group struct {
 type AdminGroup struct {
 	Group
 
-	// AdminUsageMultiplier 管理端使用统计附加倍率，仅管理员接口返回。
+	// AdminUsageMultiplier 仅管理端配置的结算附加倍率，仅管理员接口返回。
 	AdminUsageMultiplier float64 `json:"admin_usage_multiplier"`
 
 	// 模型路由配置（仅 anthropic 平台使用）

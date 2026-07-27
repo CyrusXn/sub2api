@@ -31,7 +31,7 @@ type Group struct {
 	Description *string `json:"description,omitempty"`
 	// RateMultiplier holds the value of the "rate_multiplier" field.
 	RateMultiplier float64 `json:"rate_multiplier,omitempty"`
-	// 管理端使用统计附加倍率，仅影响管理员统计展示
+	// 仅管理端配置的结算附加倍率，按请求固化到用量和费用
 	AdminUsageMultiplier float64 `json:"admin_usage_multiplier,omitempty"`
 	// 是否启用高峰时段倍率
 	PeakRateEnabled bool `json:"peak_rate_enabled,omitempty"`

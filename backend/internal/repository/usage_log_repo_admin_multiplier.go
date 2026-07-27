@@ -2,12 +2,13 @@ package repository
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-const adminUsageMultiplierSQLExpr = "COALESCE(u.admin_usage_multiplier, g.admin_usage_multiplier, 1)::double precision"
+// 管理端和用户端都直接汇总请求结算时已经固化的用量；保留该恒等表达式，
+// 让现有管理统计查询结构无需分叉，同时禁止按当前配置追溯重算历史记录。
+const adminUsageMultiplierSQLExpr = "1::double precision"
 
 func usageLogColumn(alias, name string) string {
 	if alias == "" {
@@ -32,47 +33,8 @@ func adminScaledTotalTokensSum(alias string) string {
 	)
 }
 
-func adminUsageMultiplierForLog(log *service.UsageLog) float64 {
-	if log == nil {
-		return 1
-	}
-	if log.User != nil && log.User.AdminUsageMultiplier != nil {
-		return *log.User.AdminUsageMultiplier
-	}
-	if log.Group != nil {
-		return log.Group.AdminUsageMultiplier
-	}
-	return 1
-}
-
-func scaleUsageToken(value int, multiplier float64) int {
-	return int(math.Round(float64(value) * multiplier))
-}
-
+// applyAdminUsageMultiplierToUsageLogs 保留为查询兼容入口；倍率已经在请求结算时固化，
+// 此处必须保持恒等，避免管理端对新记录二次乘算或修改历史展示。
 func applyAdminUsageMultiplierToUsageLogs(logs []service.UsageLog) {
-	for i := range logs {
-		multiplier := adminUsageMultiplierForLog(&logs[i])
-		logs[i].InputTokens = scaleUsageToken(logs[i].InputTokens, multiplier)
-		logs[i].OutputTokens = scaleUsageToken(logs[i].OutputTokens, multiplier)
-		logs[i].CacheCreationTokens = scaleUsageToken(logs[i].CacheCreationTokens, multiplier)
-		logs[i].CacheReadTokens = scaleUsageToken(logs[i].CacheReadTokens, multiplier)
-		logs[i].CacheCreation5mTokens = scaleUsageToken(logs[i].CacheCreation5mTokens, multiplier)
-		logs[i].CacheCreation1hTokens = scaleUsageToken(logs[i].CacheCreation1hTokens, multiplier)
-		logs[i].ImageInputTokens = scaleUsageToken(logs[i].ImageInputTokens, multiplier)
-		logs[i].ImageOutputTokens = scaleUsageToken(logs[i].ImageOutputTokens, multiplier)
-
-		logs[i].InputCost *= multiplier
-		logs[i].OutputCost *= multiplier
-		logs[i].CacheCreationCost *= multiplier
-		logs[i].CacheReadCost *= multiplier
-		logs[i].ImageInputCost *= multiplier
-		logs[i].ImageOutputCost *= multiplier
-		logs[i].TotalCost *= multiplier
-		logs[i].ActualCost *= multiplier
-		logs[i].RateMultiplier *= multiplier
-		if logs[i].AccountStatsCost != nil {
-			value := *logs[i].AccountStatsCost * multiplier
-			logs[i].AccountStatsCost = &value
-		}
-	}
+	_ = logs
 }

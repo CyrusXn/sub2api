@@ -48,7 +48,7 @@ func (Group) Fields() []ent.Field {
 		field.Float("admin_usage_multiplier").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0).
-			Comment("管理端使用统计附加倍率，仅影响管理员统计展示"),
+			Comment("仅管理端配置的结算附加倍率，按请求固化到用量和费用"),
 		// 高峰时段倍率（added by migration 158）
 		field.Bool("peak_rate_enabled").
 			Default(false).

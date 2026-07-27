@@ -71,9 +71,11 @@ func TestAdminService_UpdateUser_NoInvalidateWhenRPMLimitUnchanged(t *testing.T)
 func TestAdminService_UpdateUser_AdminUsageMultiplier(t *testing.T) {
 	base := &userRepoStub{user: &User{ID: 42, Email: "u@example.com"}}
 	repo := &rpmUserRepoStub{userRepoStub: base}
+	invalidator := &authCacheInvalidatorStub{}
 	svc := &adminServiceImpl{
-		userRepo:       repo,
-		redeemCodeRepo: &redeemRepoStub{},
+		userRepo:             repo,
+		redeemCodeRepo:       &redeemRepoStub{},
+		authCacheInvalidator: invalidator,
 	}
 	multiplier := 1.4
 
@@ -86,15 +88,18 @@ func TestAdminService_UpdateUser_AdminUsageMultiplier(t *testing.T) {
 	require.InDelta(t, 1.4, *updated.AdminUsageMultiplier, 1e-12)
 	require.NotNil(t, repo.lastUpdated.AdminUsageMultiplier)
 	require.InDelta(t, 1.4, *repo.lastUpdated.AdminUsageMultiplier, 1e-12)
+	require.Equal(t, []int64{42}, invalidator.userIDs)
 }
 
 func TestAdminService_UpdateUser_ClearsAdminUsageMultiplier(t *testing.T) {
 	existingMultiplier := 1.4
 	base := &userRepoStub{user: &User{ID: 42, Email: "u@example.com", AdminUsageMultiplier: &existingMultiplier}}
 	repo := &rpmUserRepoStub{userRepoStub: base}
+	invalidator := &authCacheInvalidatorStub{}
 	svc := &adminServiceImpl{
-		userRepo:       repo,
-		redeemCodeRepo: &redeemRepoStub{},
+		userRepo:             repo,
+		redeemCodeRepo:       &redeemRepoStub{},
+		authCacheInvalidator: invalidator,
 	}
 
 	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{
@@ -104,6 +109,7 @@ func TestAdminService_UpdateUser_ClearsAdminUsageMultiplier(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, updated.AdminUsageMultiplier)
 	require.Nil(t, repo.lastUpdated.AdminUsageMultiplier)
+	require.Equal(t, []int64{42}, invalidator.userIDs)
 }
 
 func TestAdminService_UpdateUser_RejectsNegativeAdminUsageMultiplier(t *testing.T) {

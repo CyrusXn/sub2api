@@ -1,6 +1,6 @@
 package admin
 
-// clearAdminUsageMultiplierCaches 让倍率修改后的管理端统计立即按新口径回源。
+// clearAdminUsageMultiplierCaches 清理管理统计快照，避免配置更新与新请求并发时短暂读到旧缓存。
 func clearAdminUsageMultiplierCaches() {
 	usageStatsCache.Clear()
 	dashboardTrendCache.Clear()

@@ -707,7 +707,7 @@ func TestUsageLogRepositoryGetStatsWithFiltersAlwaysReturnsAccountCost(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestUsageLogRepositoryApplyAdminUsageMultiplierToLogs(t *testing.T) {
+func TestUsageLogRepositoryAdminViewKeepsRequestSettlementSnapshot(t *testing.T) {
 	groupMultiplier := 1.5
 	userMultiplier := 0.5
 	logs := []service.UsageLog{
@@ -743,30 +743,31 @@ func TestUsageLogRepositoryApplyAdminUsageMultiplierToLogs(t *testing.T) {
 
 	applyAdminUsageMultiplierToUsageLogs(logs)
 
-	require.Equal(t, 15, logs[0].InputTokens)
-	require.Equal(t, 30, logs[0].OutputTokens)
-	require.Equal(t, 6, logs[0].CacheCreationTokens)
-	require.Equal(t, 9, logs[0].CacheReadTokens)
-	require.Equal(t, 12, logs[0].ImageInputTokens)
-	require.Equal(t, 3, logs[0].ImageOutputTokens)
-	require.InDelta(t, 1.5, logs[0].InputCost, 1e-12)
-	require.InDelta(t, 6.0, logs[0].TotalCost, 1e-12)
-	require.InDelta(t, 4.5, logs[0].ActualCost, 1e-12)
-	require.InDelta(t, 3.0, logs[0].RateMultiplier, 1e-12)
+	require.NotContains(t, adminUsageMultiplierSQLExpr, "admin_usage_multiplier", "历史查询不能读取当前附加倍率")
+	require.Equal(t, 10, logs[0].InputTokens)
+	require.Equal(t, 20, logs[0].OutputTokens)
+	require.Equal(t, 4, logs[0].CacheCreationTokens)
+	require.Equal(t, 6, logs[0].CacheReadTokens)
+	require.Equal(t, 8, logs[0].ImageInputTokens)
+	require.Equal(t, 2, logs[0].ImageOutputTokens)
+	require.InDelta(t, 1.0, logs[0].InputCost, 1e-12)
+	require.InDelta(t, 4.0, logs[0].TotalCost, 1e-12)
+	require.InDelta(t, 3.0, logs[0].ActualCost, 1e-12)
+	require.InDelta(t, 2.0, logs[0].RateMultiplier, 1e-12)
 
-	require.Equal(t, 5, logs[1].InputTokens, "用户附加倍率优先于分组附加倍率")
-	require.Equal(t, 10, logs[1].OutputTokens)
-	require.InDelta(t, 2.0, logs[1].TotalCost, 1e-12)
-	require.InDelta(t, 1.5, logs[1].ActualCost, 1e-12)
-	require.InDelta(t, 1.0, logs[1].RateMultiplier, 1e-12)
+	require.Equal(t, 10, logs[1].InputTokens)
+	require.Equal(t, 20, logs[1].OutputTokens)
+	require.InDelta(t, 4.0, logs[1].TotalCost, 1e-12)
+	require.InDelta(t, 3.0, logs[1].ActualCost, 1e-12)
+	require.InDelta(t, 2.0, logs[1].RateMultiplier, 1e-12)
 }
 
-func TestUsageLogRepositoryGetStatsWithFiltersAdminViewUsesCurrentAdminMultiplier(t *testing.T) {
+func TestUsageLogRepositoryGetStatsWithFiltersAdminViewUsesSettledValues(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}
 
 	filters := usagestats.UsageLogFilters{AdminView: true}
-	multiplierExprPattern := "COALESCE\\(u\\.admin_usage_multiplier, g\\.admin_usage_multiplier, 1\\)::double precision"
+	multiplierExprPattern := regexp.QuoteMeta(adminUsageMultiplierSQLExpr)
 	mock.ExpectQuery("(?s)SELECT\\s+COUNT\\(\\*\\).*SUM\\(ROUND\\(ul\\.input_tokens \\* " + multiplierExprPattern + "\\)::bigint\\).*FROM usage_logs ul\\s+LEFT JOIN users u ON u\\.id = ul\\.user_id\\s+LEFT JOIN groups g ON g\\.id = ul\\.group_id").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"total_requests",
@@ -849,7 +850,7 @@ func TestUsageLogRepositoryBatchAPIKeyUsageSeparatesAdminAndUserScopes(t *testin
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("admin_scope_uses_current_multiplier", func(t *testing.T) {
+	t.Run("admin_scope_reads_settled_cost", func(t *testing.T) {
 		db, mock := newSQLMock(t)
 		repo := &usageLogRepository{sql: db}
 
@@ -864,7 +865,7 @@ func TestUsageLogRepositoryBatchAPIKeyUsageSeparatesAdminAndUserScopes(t *testin
 	})
 }
 
-func TestUsageLogRepositoryAdminAggregatesUseCurrentMultiplier(t *testing.T) {
+func TestUsageLogRepositoryAdminAggregatesReadSettledValues(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 	multiplierPattern := regexp.QuoteMeta(adminUsageMultiplierSQLExpr)

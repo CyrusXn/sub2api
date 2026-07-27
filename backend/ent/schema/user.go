@@ -115,7 +115,7 @@ func (User) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Optional().
 			Nillable().
-			Comment("管理端使用统计附加倍率，NULL 表示继承分组"),
+			Comment("仅管理端配置的结算附加倍率，NULL 表示继承分组"),
 
 		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
 		field.Int("rpm_limit").

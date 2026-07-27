@@ -280,10 +280,12 @@ func batchImageOwnerFromContext(c *gin.Context) (service.BatchImageOwner, bool) 
 	if !ok || apiKey == nil || apiKey.ID <= 0 || apiKey.UserID <= 0 {
 		return service.BatchImageOwner{}, false
 	}
+	adminUsageMultiplier := service.ResolveAdminUsageSettlementMultiplier(apiKey.User, apiKey.Group)
 	return service.BatchImageOwner{
-		UserID:   apiKey.UserID,
-		APIKeyID: apiKey.ID,
-		GroupID:  apiKey.GroupID,
+		UserID:               apiKey.UserID,
+		APIKeyID:             apiKey.ID,
+		GroupID:              apiKey.GroupID,
+		AdminUsageMultiplier: &adminUsageMultiplier,
 	}, true
 }
 

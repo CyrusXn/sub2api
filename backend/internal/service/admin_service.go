@@ -148,7 +148,7 @@ type CreateUserInput struct {
 	Concurrency   int
 	RPMLimit      int
 	AllowedGroups []int64
-	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 表示继承分组附加倍率。
+	// AdminUsageMultiplier 仅管理端配置的结算附加倍率；nil 表示继承分组附加倍率。
 	AdminUsageMultiplier *float64
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
@@ -165,7 +165,7 @@ type UpdateUserInput struct {
 	RPMLimit      *int     // 使用指针区分"未提供"和"设置为0"
 	Status        string
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
-	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 表示本次不修改。
+	// AdminUsageMultiplier 仅管理端配置的结算附加倍率；nil 表示本次不修改。
 	AdminUsageMultiplier *float64
 	// ClearAdminUsageMultiplier 为 true 时清空用户附加倍率，恢复继承分组。
 	ClearAdminUsageMultiplier bool
@@ -219,7 +219,7 @@ type CreateGroupInput struct {
 	Description    string
 	Platform       string
 	RateMultiplier float64
-	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 时默认 1。
+	// AdminUsageMultiplier 仅管理端配置的结算附加倍率；nil 时默认 1。
 	AdminUsageMultiplier *float64
 	IsExclusive          bool
 	SubscriptionType     string   // standard/subscription
@@ -281,7 +281,7 @@ type UpdateGroupInput struct {
 	Description    *string
 	Platform       string
 	RateMultiplier *float64 // 使用指针以支持设置为0
-	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 表示不修改。
+	// AdminUsageMultiplier 仅管理端配置的结算附加倍率；nil 表示不修改。
 	AdminUsageMultiplier *float64
 	IsExclusive          *bool
 	Status               string

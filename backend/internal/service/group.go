@@ -20,8 +20,11 @@ type Group struct {
 	Description    string
 	Platform       string
 	RateMultiplier float64
-	// AdminUsageMultiplier 管理端使用统计附加倍率；只影响管理员统计展示口径。
+	// AdminUsageMultiplier 管理端配置的结算附加倍率；在请求结算时固化到用量和费用。
 	AdminUsageMultiplier float64
+	// AdminUsageMultiplierConfigured 区分数据库明确加载的 0 倍率与服务对象零值。
+	// 数据库默认值为 1；未加载该字段的旧/测试对象按 1 处理。
+	AdminUsageMultiplierConfigured bool
 	// 高峰时段倍率：peak_rate_enabled 为 true 且当前时刻处于 [PeakStart, PeakEnd) 时，
 	// token 计费倍率额外乘以 PeakRateMultiplier。详见 PeakMultiplierAt。
 	PeakRateEnabled    bool

@@ -104,6 +104,38 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 		require.InDelta(t, 0.25, *job.HoldAmount, 1e-12)
 	})
 
+	t.Run("admin usage multiplier is frozen into batch billing without changing base rate", func(t *testing.T) {
+		svc, repo, _, _, _ := newTestBatchImagePublicService(true)
+		groupID := int64(7)
+		adminMultiplier := 10.0
+		svc.GroupRepo = &publicBatchImageGroupRepo{groups: map[int64]*Group{
+			groupID: {
+				ID:                           groupID,
+				Platform:                     PlatformGemini,
+				RateMultiplier:               1.0,
+				AllowImageGeneration:         true,
+				AllowBatchImageGeneration:    true,
+				BatchImageDiscountMultiplier: 0.5,
+				BatchImageHoldMultiplier:     0.6,
+			},
+		}}
+
+		got, err := svc.Submit(ctx, BatchImageOwner{
+			UserID:               11,
+			APIKeyID:             22,
+			GroupID:              &groupID,
+			AdminUsageMultiplier: &adminMultiplier,
+		}, validBatchImageSubmitRequest(), "")
+		require.NoError(t, err)
+		require.InDelta(t, 2.5, got.EstimatedCost, 1e-12)
+
+		job := repo.jobs[got.ID]
+		require.InDelta(t, 1.0, job.GroupRateMultiplier, 1e-12)
+		require.InDelta(t, 1.25, job.BillableUnitPrice, 1e-12)
+		require.InDelta(t, 1.5, job.HoldUnitPrice, 1e-12)
+		require.InDelta(t, 3.0, *job.HoldAmount, 1e-12)
+	})
+
 	t.Run("uses configured group 1k image price for batch image base price", func(t *testing.T) {
 		svc, repo, _, _, _ := newTestBatchImagePublicService(true)
 		groupID := int64(7)

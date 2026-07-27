@@ -76,9 +76,10 @@ type BatchImageReferenceInput struct {
 }
 
 type BatchImageOwner struct {
-	UserID   int64
-	APIKeyID int64
-	GroupID  *int64
+	UserID               int64
+	APIKeyID             int64
+	GroupID              *int64
+	AdminUsageMultiplier *float64
 }
 
 type BatchImagePublicService struct {
@@ -1071,7 +1072,15 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 	if accountMultiplier < 0 {
 		accountMultiplier = 0
 	}
-	standardUnitPrice := unit * groupMultiplier * accountMultiplier
+	adminUsageMultiplier := 1.0
+	if owner.AdminUsageMultiplier != nil {
+		adminUsageMultiplier = *owner.AdminUsageMultiplier
+	}
+	if adminUsageMultiplier < 0 {
+		adminUsageMultiplier = 0
+	}
+	// 附加倍率在批量任务提交时固化到现有价格快照，确保异步结算不读取未来配置。
+	standardUnitPrice := unit * groupMultiplier * accountMultiplier * adminUsageMultiplier
 	billableUnitPrice := standardUnitPrice * discountMultiplier
 	holdUnitPrice := standardUnitPrice * holdMultiplier
 	return &BatchImagePricingSnapshot{

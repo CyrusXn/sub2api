@@ -346,11 +346,22 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.SubscriptionID = &subscription.ID
 	}
 
+	// 附加倍率在本次请求结算时固化，但不覆盖单价、服务档位和原始有效倍率。
+	settlementMultiplier := resolveAdminUsageSettlementMultiplier(user, apiKey.Group)
+	applyAdminUsageSettlementMultiplier(usageLog, cost, settlementMultiplier)
+
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
-			tokens, cost.TotalCost,
+			UsageTokens{
+				InputTokens:         usageLog.InputTokens,
+				ImageInputTokens:    usageLog.ImageInputTokens,
+				OutputTokens:        usageLog.OutputTokens,
+				CacheCreationTokens: usageLog.CacheCreationTokens,
+				CacheReadTokens:     usageLog.CacheReadTokens,
+				ImageOutputTokens:   usageLog.ImageOutputTokens,
+			}, cost.TotalCost,
 		)
 	}
 

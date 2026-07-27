@@ -512,7 +512,7 @@ export default {
         rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.',
         adminUsageMultiplier: 'Admin Usage Multiplier',
         adminUsageMultiplierPlaceholder: 'Leave empty to inherit the group',
-        adminUsageMultiplierHint: 'Affects admin usage records and statistics only. A user value overrides the group value; leave empty to inherit.',
+        adminUsageMultiplierHint: 'Visible to admins only. Affects tokens, costs, and actual billing for new requests; history is unchanged. A user value overrides the group value; leave empty to inherit.',
         adminUsageMultiplierInvalid: 'Admin usage multiplier must be a number greater than or equal to 0.'
       },
       columns: {
@@ -845,7 +845,7 @@ export default {
         platform: 'Platform',
         rateMultiplier: 'Rate Multiplier',
         adminUsageMultiplier: 'Admin Usage Multiplier',
-        adminUsageMultiplierHint: 'Affects admin usage records and statistics only. Defaults to 1; a user-level value takes priority.',
+        adminUsageMultiplierHint: 'Visible to admins only. Affects tokens, costs, and actual billing for new requests; history is unchanged. Defaults to 1; a user-level value takes priority.',
         adminUsageMultiplierInvalid: 'Admin usage multiplier must be a number greater than or equal to 0.',
         status: 'Status',
         exclusive: 'Exclusive Group',

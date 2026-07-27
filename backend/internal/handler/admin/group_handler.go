@@ -100,7 +100,7 @@ type CreateGroupRequest struct {
 	Description    string  `json:"description"`
 	Platform       string  `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
 	RateMultiplier float64 `json:"rate_multiplier"`
-	// AdminUsageMultiplier 管理端统计附加倍率；仅影响管理员侧展示口径。
+	// AdminUsageMultiplier 仅管理端可配置，并参与配置生效后新请求的真实结算。
 	AdminUsageMultiplier *float64           `json:"admin_usage_multiplier"`
 	IsExclusive          bool               `json:"is_exclusive"`
 	SubscriptionType     string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
@@ -160,7 +160,7 @@ type UpdateGroupRequest struct {
 	Description    *string  `json:"description"`
 	Platform       string   `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
 	RateMultiplier *float64 `json:"rate_multiplier"`
-	// AdminUsageMultiplier 管理端统计附加倍率；nil 表示本次不修改。
+	// AdminUsageMultiplier 仅管理端可配置；nil 表示本次不修改。
 	AdminUsageMultiplier *float64           `json:"admin_usage_multiplier"`
 	IsExclusive          *bool              `json:"is_exclusive"`
 	Status               string             `json:"status" binding:"omitempty,oneof=active inactive"`

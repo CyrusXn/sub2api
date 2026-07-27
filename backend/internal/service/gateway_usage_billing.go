@@ -728,6 +728,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
 		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost, opts)
 
+	// 附加倍率只由管理端配置，但必须在请求结算时固化。放在原始定价之后，
+	// 避免改变单价、基础有效倍率及长上下文判定，并让后续所有扣费共用同一结果。
+	settlementMultiplier := resolveAdminUsageSettlementMultiplier(user, apiKey.Group)
+	applyAdminUsageSettlementMultiplier(usageLog, cost, settlementMultiplier)
+
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
@@ -735,11 +740,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);
 			// OpenAI gateway uses actualInputTokens which also excludes cache_read for the same reason.
 			UsageTokens{
-				InputTokens:         result.Usage.InputTokens,
-				OutputTokens:        result.Usage.OutputTokens,
-				CacheCreationTokens: result.Usage.CacheCreationInputTokens,
-				CacheReadTokens:     result.Usage.CacheReadInputTokens,
-				ImageOutputTokens:   result.Usage.ImageOutputTokens,
+				InputTokens:         usageLog.InputTokens,
+				OutputTokens:        usageLog.OutputTokens,
+				CacheCreationTokens: usageLog.CacheCreationTokens,
+				CacheReadTokens:     usageLog.CacheReadTokens,
+				ImageOutputTokens:   usageLog.ImageOutputTokens,
 			},
 			cost.TotalCost,
 		)

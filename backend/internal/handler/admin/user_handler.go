@@ -70,7 +70,7 @@ type CreateUserRequest struct {
 	Balance     *float64 `json:"balance"`
 	Concurrency int      `json:"concurrency"`
 	RPMLimit    int      `json:"rpm_limit"`
-	// AdminUsageMultiplier 管理端统计附加倍率；nil 表示继承分组附加倍率。
+	// AdminUsageMultiplier 仅管理端可配置；nil 表示继承分组附加倍率。
 	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier"`
 	AllowedGroups        []int64  `json:"allowed_groups"`
 }
@@ -86,7 +86,7 @@ type UpdateUserRequest struct {
 	Balance     *float64 `json:"balance"`
 	Concurrency *int     `json:"concurrency"`
 	RPMLimit    *int     `json:"rpm_limit"`
-	// AdminUsageMultiplier 管理端统计附加倍率；nil 表示本次不修改。
+	// AdminUsageMultiplier 仅管理端可配置；nil 表示本次不修改。
 	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier"`
 	// ClearAdminUsageMultiplier 为 true 时清空用户附加倍率，恢复继承分组。
 	ClearAdminUsageMultiplier bool     `json:"clear_admin_usage_multiplier"`

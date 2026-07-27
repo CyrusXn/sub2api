@@ -39,7 +39,7 @@ type User struct {
 	// map[groupID]rateMultiplier
 	GroupRates map[int64]float64
 
-	// AdminUsageMultiplier 管理端使用统计附加倍率；nil 表示继承分组附加倍率。
+	// AdminUsageMultiplier 管理端配置的结算附加倍率；nil 表示继承分组附加倍率。
 	AdminUsageMultiplier *float64
 
 	// TOTP 双因素认证字段

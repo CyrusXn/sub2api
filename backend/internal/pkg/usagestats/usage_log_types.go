@@ -280,7 +280,7 @@ type UsageLogFilters struct {
 	BillingMode       string
 	StartTime         *time.Time
 	EndTime           *time.Time
-	// AdminView 仅供管理端统计查询使用，按当前用户/分组附加倍率动态换算展示值。
+	// AdminView 标识管理端查询。用量已经在请求结算时固化，不允许据此追溯换算历史值。
 	AdminView bool
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool

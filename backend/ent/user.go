@@ -63,7 +63,7 @@ type User struct {
 	BalanceNotifyExtraEmails string `json:"balance_notify_extra_emails,omitempty"`
 	// TotalRecharged holds the value of the "total_recharged" field.
 	TotalRecharged float64 `json:"total_recharged,omitempty"`
-	// 管理端使用统计附加倍率，NULL 表示继承分组
+	// 仅管理端配置的结算附加倍率，NULL 表示继承分组
 	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier,omitempty"`
 	// RpmLimit holds the value of the "rpm_limit" field.
 	RpmLimit int `json:"rpm_limit,omitempty"`
