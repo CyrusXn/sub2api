@@ -117,11 +117,20 @@
                 <label for="ai-image-count" class="mb-1.5 block text-xs font-semibold text-gray-900 dark:text-white">
                   {{ t('aiImage.composer.count') }}
                 </label>
-                <select id="ai-image-count" v-model.number="imagesPerPrompt" class="input h-10 px-2 text-xs" :disabled="generationBusy">
-                  <option v-for="option in imageCountOptions" :key="option" :value="option">
-                    {{ option }} {{ t('aiImage.composer.imageUnit') }}
-                  </option>
-                </select>
+                <input
+                  id="ai-image-count"
+                  :value="imagesPerPrompt"
+                  type="number"
+                  inputmode="numeric"
+                  min="1"
+                  max="10"
+                  step="1"
+                  class="input h-10 px-2 text-xs"
+                  :disabled="generationBusy"
+                  @keydown="blockNonDigitKey"
+                  @input="handleImagesPerPromptInput"
+                  @blur="clampImagesPerPrompt"
+                />
               </div>
             </div>
 
@@ -514,6 +523,8 @@ const MAX_CUSTOM_PROMPTS = 50
 const MAX_SELECTED_PROMPTS = 10
 const MAX_REFERENCE_IMAGES = 3
 const MAX_REFERENCE_BYTES = 20 * 1024 * 1024
+const MIN_IMAGES_PER_PROMPT = 1
+const MAX_IMAGES_PER_PROMPT = 10
 const GENERATION_CONCURRENCY = 2
 const ACCEPTED_REFERENCE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 
@@ -660,7 +671,6 @@ const ratioOptions = computed(() => [
   { value: '16:10', label: t('aiImage.ratios.wide'), shortLabel: '16:10' }
 ])
 const sizeTierOptions: AIImageSizeTier[] = ['1K', '2K', '4K']
-const imageCountOptions = [1, 2, 3, 4]
 
 const builtInPrompts = computed<AIImagePrompt[]>(() => [
   { id: 'builtin-professional-avatar', name: t('aiImage.builtInPrompts.professionalAvatar'), prompt: '生成一张年轻亚洲创意工作者的专业半身头像，正面看向镜头，神态自信自然，穿深色简洁服装，柔和影棚主光与轻微轮廓光，浅灰纯色背景，真实摄影质感，面部细节清晰，主体居中，无文字，无水印。', builtIn: true },
@@ -740,7 +750,7 @@ function loadSettings(): void {
       }
       if (['1:1', '16:9', '9:16', '16:10'].includes(parsed.aspectRatio || '')) aspectRatio.value = parsed.aspectRatio || '1:1'
       if (['1K', '2K', '4K'].includes(parsed.sizeTier || '')) sizeTier.value = parsed.sizeTier as AIImageSizeTier
-      if ([1, 2, 3, 4].includes(parsed.imagesPerPrompt || 0)) imagesPerPrompt.value = parsed.imagesPerPrompt || 1
+      imagesPerPrompt.value = normalizeImagesPerPrompt(parsed.imagesPerPrompt)
       rememberKey.value = parsed.rememberKey === true
       historyCollapsed.value = parsed.historyCollapsed === true
     }
@@ -909,6 +919,32 @@ function ratioLabel(value = aspectRatio.value): string {
 
 function appendRatioPrompt(prompt: string): string {
   return `${prompt.trim()}\n\n${t('aiImage.ratios.promptSuffix', { ratio: ratioLabel() })}`
+}
+
+// 每个数量都会展开成独立任务和独立请求，先在输入边界统一限制为 1-10。
+function normalizeImagesPerPrompt(value: unknown): number {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  if (!digits) return MIN_IMAGES_PER_PROMPT
+  const parsed = Number.parseInt(digits, 10)
+  if (!Number.isFinite(parsed)) return MIN_IMAGES_PER_PROMPT
+  return Math.min(MAX_IMAGES_PER_PROMPT, Math.max(MIN_IMAGES_PER_PROMPT, parsed))
+}
+
+function blockNonDigitKey(event: KeyboardEvent): void {
+  const controlKeys = new Set(['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', 'Escape'])
+  if (controlKeys.has(event.key) || event.metaKey || event.ctrlKey) return
+  if (!/^\d$/.test(event.key)) event.preventDefault()
+}
+
+function handleImagesPerPromptInput(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const normalized = normalizeImagesPerPrompt(input.value)
+  imagesPerPrompt.value = normalized
+  input.value = String(normalized)
+}
+
+function clampImagesPerPrompt(): void {
+  imagesPerPrompt.value = normalizeImagesPerPrompt(imagesPerPrompt.value)
 }
 
 function buildTaskPrompts(): AIImagePrompt[] {

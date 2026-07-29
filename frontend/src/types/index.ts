@@ -965,6 +965,7 @@ export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed'
 export interface UpstreamBillingProbeSnapshot {
   status: UpstreamBillingProbeStatus
   data?: UpstreamBillingData
+  balance?: UpstreamAccountBalanceSnapshot
   received_at?: string
   fresh_until?: string
   last_attempt_at: string
@@ -972,6 +973,32 @@ export interface UpstreamBillingProbeSnapshot {
   failure_count?: number
   http_status?: number
   last_error?: string
+}
+
+export interface UpstreamAccountBalanceSnapshot {
+  status: UpstreamBillingProbeStatus
+  amount?: number
+  unit?: string
+  received_at?: string
+  last_attempt_at: string
+  http_status?: number
+  last_error?: string
+}
+
+export interface UpstreamSiteCredentialSummary {
+  host: string
+  website_url: string
+  account_ids: number[]
+  account_names: string[]
+  login_username: string
+  has_password: boolean
+  protocol: 'innom' | 'newapi'
+}
+
+export interface UpstreamSiteCredentialInput {
+  base_url: string
+  login_username: string
+  login_password: string
 }
 
 export interface UpstreamBillingProbeSettings {
@@ -1565,6 +1592,7 @@ export interface UsageLog {
   openai_ws_mode?: boolean
   duration_ms: number | null
   first_token_ms: number | null
+  display_first_token_ms?: number | null
 
   // 图片生成字段
   image_count: number

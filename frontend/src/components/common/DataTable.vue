@@ -103,7 +103,7 @@
       <colgroup>
         <col v-if="selectable" class="datatable-select-col" />
         <col
-          v-for="column in columns"
+          v-for="column in orderedColumns"
           :key="`col-${column.key}`"
           :style="getColumnWidthStyle(column)"
         />
@@ -113,7 +113,7 @@
           <th
             v-if="selectable"
             scope="col"
-            class="sticky-header-cell w-11 min-w-11 px-3 py-3 text-center"
+            class="sticky-header-cell w-10 min-w-10 px-2 py-3 text-center"
           >
             <input
               type="checkbox"
@@ -126,21 +126,41 @@
             />
           </th>
           <th
-            v-for="(column, index) in columns"
+            v-for="(column, index) in orderedColumns"
             :key="column.key"
             scope="col"
+            :data-column-key="column.key"
             :aria-sort="column.sortable ? getColumnAriaSort(column.key) : undefined"
             :style="getColumnWidthStyle(column)"
             :class="[
               'sticky-header-cell relative py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
-              getAdaptivePaddingClass(),
+              getColumnPaddingClass(column),
               { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable && !isResizing },
+              { 'is-column-dragging': draggingColumnKey === column.key },
+              { 'is-column-drop-target': dragOverColumnKey === column.key },
               getStickyColumnClass(column, index),
               column.class
             ]"
             @click="column.sortable && !isResizing && handleSort(column.key)"
+            @dragover.prevent.stop="handleColumnDragOver($event, column)"
+            @dragleave.stop="handleColumnDragLeave(column)"
+            @drop.prevent.stop="dropColumn($event, column)"
           >
             <div :class="['flex min-w-0 items-center space-x-1 pr-2', getHeaderContentAlignmentClass(column)]">
+              <span
+                v-if="isColumnDraggable(column)"
+                class="column-drag-handle"
+                data-test="column-drag-handle"
+                :title="t('common.dragToReorder')"
+                :aria-label="t('common.dragToReorder')"
+                draggable="true"
+                @mousedown.stop
+                @click.stop
+                @dragstart.stop="startColumnDrag($event, column)"
+                @dragend.stop="endColumnDrag"
+              >
+                <Icon name="dragHandle" size="sm" />
+              </span>
               <slot
                 :name="`header-${column.key}`"
                 :column="column"
@@ -173,11 +193,14 @@
               </span>
             </div>
             <span
+              v-if="isColumnResizable(column)"
               class="col-resize-handle"
               :class="{ 'is-resizing': resizingColumnKey === column.key }"
               data-test="column-resize-handle"
               :aria-label="`Resize ${column.label || column.key}`"
+              draggable="false"
               @mousedown.prevent.stop="startColumnResize($event, column, index)"
+              @dragstart.prevent.stop
               @click.prevent.stop
               @dblclick.prevent.stop="resetColumnWidth(column.key)"
             ></span>
@@ -187,14 +210,14 @@
       <tbody class="table-body divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
         <!-- Loading skeleton -->
         <tr v-if="loading" v-for="i in 5" :key="i">
-          <td v-if="selectable" class="w-11 min-w-11 px-3 py-4">
+          <td v-if="selectable" class="w-10 min-w-10 px-2 py-4">
             <div class="mx-auto h-4 w-4 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
           </td>
           <td
-            v-for="column in columns"
+            v-for="column in orderedColumns"
             :key="column.key"
             :style="getColumnWidthStyle(column)"
-            :class="['whitespace-nowrap py-4', getAdaptivePaddingClass()]"
+            :class="['whitespace-nowrap py-4', getColumnPaddingClass(column)]"
           >
             <div class="animate-pulse">
               <div class="h-4 w-3/4 rounded bg-gray-200 dark:bg-dark-700"></div>
@@ -243,7 +266,7 @@
             }"
             @click="clickableRows && emit('rowClick', item.row)"
           >
-            <td v-if="selectable" class="w-11 min-w-11 px-3 py-4 text-center">
+            <td v-if="selectable" class="w-10 min-w-10 px-2 py-4 text-center">
               <input
                 type="checkbox"
                 class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
@@ -255,14 +278,14 @@
               />
             </td>
             <td
-              v-for="(column, colIndex) in columns"
+              v-for="(column, colIndex) in orderedColumns"
               :key="column.key"
               :style="getColumnWidthStyle(column)"
               :class="[
                 'datatable-cell py-4 text-sm text-gray-900 dark:text-gray-100',
                 // 操作/分组等复杂单元格允许换行，普通文本列默认不换行
                 column.key === 'actions' || column.key === 'groups' ? 'whitespace-normal' : 'whitespace-nowrap',
-                getAdaptivePaddingClass(),
+                getColumnPaddingClass(column),
                 getStickyColumnClass(column, colIndex),
                 column.class
               ]"
@@ -504,6 +527,10 @@ interface Props {
    * If omitted, widths are still saved using a key derived from column keys.
    */
   columnWidthStorageKey?: string
+  /** Persist user-dragged column order to localStorage using this key. */
+  columnOrderStorageKey?: string
+  /** 是否允许拖拽调整列顺序，默认开启；只有提供 columnOrderStorageKey 时才会生效 */
+  reorderableColumns?: boolean
   /** 是否允许拖拽调整列宽，默认开启 */
   resizableColumns?: boolean
   /** 是否为单元格显示悬停 tooltip，默认开启 */
@@ -539,6 +566,7 @@ const props = withDefaults(defineProps<Props>(), {
   stickyActionsColumn: true,
   expandableActions: true,
   defaultSortOrder: 'asc',
+  reorderableColumns: true,
   resizableColumns: true,
   cellTooltip: true,
   serverSideSort: false,
@@ -552,9 +580,10 @@ const actionsExpanded = ref(false)
 
 // --- 列宽拖拽与持久化 ---
 const MIN_COLUMN_WIDTH = 72
+const SELECT_COLUMN_WIDTH = 40
 const MAX_COLUMN_WIDTH = 960
-const DEFAULT_COLUMN_WIDTH = 160
-const ACTIONS_DEFAULT_WIDTH = 180
+const FALLBACK_RESIZE_START_WIDTH = 160
+const ACTIONS_DEFAULT_WIDTH = 240
 const columnWidths = ref<Record<string, number>>({})
 const resizingColumnKey = ref<string | null>(null)
 const isResizing = ref(false)
@@ -564,6 +593,11 @@ let resizeStartX = 0
 let resizeStartWidth = 0
 let resizeActiveKey = ''
 let suppressSortUntil = 0
+
+// --- 列顺序拖拽与持久化 ---
+const orderedColumnKeys = ref<string[]>([])
+const draggingColumnKey = ref<string | null>(null)
+const dragOverColumnKey = ref<string | null>(null)
 
 // --- 单元格 tooltip ---
 const cellTooltipState = ref({
@@ -585,7 +619,7 @@ const sanitizeColumnWidth = (value: unknown): number | null => {
   const width = Number(value)
   if (!Number.isFinite(width)) return null
   const rounded = Math.round(width)
-  if (rounded < MIN_COLUMN_WIDTH || rounded > MAX_COLUMN_WIDTH) return null
+  if (rounded < SELECT_COLUMN_WIDTH || rounded > MAX_COLUMN_WIDTH) return null
   return rounded
 }
 
@@ -609,7 +643,16 @@ const readPersistedColumnWidths = (): Record<string, number> => {
 
 const writePersistedColumnWidths = (widths: Record<string, number>) => {
   try {
-    localStorage.setItem(resolveColumnWidthStorageKey(), JSON.stringify(widths))
+    const next: Record<string, number> = {}
+    const columnsByKey = new Map(props.columns.map((column) => [column.key, column]))
+    for (const [key, value] of Object.entries(widths)) {
+      const column = columnsByKey.get(key)
+      if (!column) continue
+      const width = sanitizeColumnWidth(value)
+      if (width === null || width === getDefaultColumnWidth(column)) continue
+      next[key] = width
+    }
+    localStorage.setItem(resolveColumnWidthStorageKey(), JSON.stringify(next))
   } catch (e) {
     console.error('[DataTable] Failed to persist column widths:', e)
   }
@@ -621,10 +664,12 @@ const getDefaultColumnWidth = (column: Column) => {
   if (column.key === 'actions') return ACTIONS_DEFAULT_WIDTH
   // 分组列名称较长（如【GPT】Pro 20x），默认更宽，避免单行徽章被挤换行
   if (column.key === 'groups') return 360
-  return DEFAULT_COLUMN_WIDTH
+  // 普通列保持浏览器原生的内容自适应宽度，只有用户拖拽后才固定。
+  return null
 }
 
 const getColumnMinWidth = (column: Column) => {
+  if (column.key === 'select') return SELECT_COLUMN_WIDTH
   if (column.key === 'groups') return 220
   if (column.key === 'actions') return 120
   return MIN_COLUMN_WIDTH
@@ -632,12 +677,14 @@ const getColumnMinWidth = (column: Column) => {
 
 const getColumnWidth = (column: Column) => {
   const width = columnWidths.value[column.key] ?? getDefaultColumnWidth(column)
+  if (width === null) return null
   return Math.max(getColumnMinWidth(column), width)
 }
 
 const getColumnWidthStyle = (column: Column) => {
   if (!props.resizableColumns) return undefined
   const width = getColumnWidth(column)
+  if (width === null) return undefined
   return {
     width: `${width}px`,
     minWidth: `${width}px`,
@@ -649,9 +696,118 @@ const syncColumnWidthsFromProps = () => {
   const persisted = readPersistedColumnWidths()
   const next: Record<string, number> = {}
   for (const column of props.columns) {
-    next[column.key] = persisted[column.key] ?? getDefaultColumnWidth(column)
+    const width = persisted[column.key]
+    if (width !== undefined && width !== getDefaultColumnWidth(column)) {
+      next[column.key] = width
+    }
   }
   columnWidths.value = next
+}
+
+const normalizeColumnOrder = (keys: string[], columns: Column[] = props.columns) => {
+  const currentKeys = columns.map((column) => column.key)
+  const currentKeySet = new Set(currentKeys)
+  const next: string[] = []
+  for (const key of keys) {
+    if (currentKeySet.has(key) && !next.includes(key)) next.push(key)
+  }
+  for (const key of currentKeys) {
+    if (!next.includes(key)) next.push(key)
+  }
+  return next
+}
+
+const readPersistedColumnOrder = (): string[] => {
+  if (!props.columnOrderStorageKey) return []
+  try {
+    const raw = localStorage.getItem(props.columnOrderStorageKey)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string')
+  } catch (e) {
+    console.error('[DataTable] Failed to read persisted column order:', e)
+    return []
+  }
+}
+
+const writePersistedColumnOrder = (keys: string[]) => {
+  if (!props.columnOrderStorageKey) return
+  try {
+    localStorage.setItem(props.columnOrderStorageKey, JSON.stringify(normalizeColumnOrder(keys)))
+  } catch (e) {
+    console.error('[DataTable] Failed to persist column order:', e)
+  }
+}
+
+const syncColumnOrderFromProps = () => {
+  orderedColumnKeys.value = normalizeColumnOrder(readPersistedColumnOrder())
+}
+
+const orderedColumns = computed(() => {
+  const columnsByKey = new Map(props.columns.map((column) => [column.key, column]))
+  const keys = normalizeColumnOrder(orderedColumnKeys.value.length ? orderedColumnKeys.value : props.columns.map((column) => column.key))
+  return keys.map((key) => columnsByKey.get(key)).filter((column): column is Column => Boolean(column))
+})
+
+const isColumnReorderEnabled = computed(() =>
+  Boolean(props.columnOrderStorageKey) && props.reorderableColumns && isDesktopViewport.value
+)
+
+const isFixedOrderColumn = (column: Column) => column.key === 'select' || column.key === 'actions'
+
+const isColumnDraggable = (column: Column) =>
+  isColumnReorderEnabled.value && !isResizing.value && !isFixedOrderColumn(column)
+
+const isColumnResizable = (column: Column) =>
+  props.resizableColumns && isDesktopViewport.value && column.key !== 'select'
+
+const startColumnDrag = (event: DragEvent, column: Column) => {
+  if (!isColumnDraggable(column)) return
+  draggingColumnKey.value = column.key
+  dragOverColumnKey.value = null
+  event.dataTransfer?.setData('text/plain', column.key)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+const handleColumnDragOver = (event: DragEvent, column: Column) => {
+  if (!draggingColumnKey.value || isFixedOrderColumn(column)) return
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dragOverColumnKey.value = column.key
+}
+
+const handleColumnDragLeave = (column: Column) => {
+  if (dragOverColumnKey.value === column.key) dragOverColumnKey.value = null
+}
+
+const endColumnDrag = () => {
+  draggingColumnKey.value = null
+  dragOverColumnKey.value = null
+}
+
+const dropColumn = (event: DragEvent, column: Column) => {
+  const sourceKey = draggingColumnKey.value || event.dataTransfer?.getData('text/plain')
+  if (!sourceKey || sourceKey === column.key || isFixedOrderColumn(column)) {
+    endColumnDrag()
+    return
+  }
+  const next = normalizeColumnOrder(orderedColumns.value.map((item) => item.key))
+  const fromIndex = next.indexOf(sourceKey)
+  const toIndex = next.indexOf(column.key)
+  if (fromIndex === -1 || toIndex === -1) {
+    endColumnDrag()
+    return
+  }
+  const [moved] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, moved)
+  orderedColumnKeys.value = normalizeColumnOrder(next)
+  writePersistedColumnOrder(orderedColumnKeys.value)
+  suppressSortUntil = Date.now() + 120
+  endColumnDrag()
+  nextTick(() => {
+    checkScrollable()
+    checkActionsColumnWidth()
+  })
 }
 
 const cleanupColumnResizeListeners = () => {
@@ -667,11 +823,14 @@ const cleanupColumnResizeListeners = () => {
 }
 
 const startColumnResize = (event: MouseEvent, column: Column, _index: number) => {
-  if (!props.resizableColumns || !isDesktopViewport.value) return
+  if (!isColumnResizable(column)) return
   cleanupColumnResizeListeners()
   resizeActiveKey = column.key
   resizeStartX = event.clientX
+  const header = (event.currentTarget as HTMLElement | null)?.closest('th')
+  const measuredWidth = header?.getBoundingClientRect().width ?? 0
   resizeStartWidth = getColumnWidth(column)
+    ?? (measuredWidth > 0 ? measuredWidth : FALLBACK_RESIZE_START_WIDTH)
   resizingColumnKey.value = column.key
   isResizing.value = true
   document.body.classList.add('datatable-resizing')
@@ -709,10 +868,8 @@ const resetColumnWidth = (columnKey: string) => {
   if (!props.resizableColumns) return
   const column = props.columns.find((item) => item.key === columnKey)
   if (!column) return
-  const next = {
-    ...columnWidths.value,
-    [columnKey]: getDefaultColumnWidth(column)
-  }
+  const next = { ...columnWidths.value }
+  delete next[columnKey]
   columnWidths.value = next
   writePersistedColumnWidths(next)
   nextTick(() => checkScrollable())
@@ -914,7 +1071,7 @@ const resolveStableRowKey = (row: any): string | number | undefined => {
 
 const resolveRowKey = (row: any, index: number) => resolveStableRowKey(row) ?? index
 
-const dataColumns = computed(() => props.columns.filter((column) => column.key !== 'actions'))
+const dataColumns = computed(() => orderedColumns.value.filter((column) => column.key !== 'actions'))
 const columnsSignature = computed(() =>
   props.columns.map((column) => `${column.key}:${column.sortable ? '1' : '0'}`).join('|')
 )
@@ -936,6 +1093,7 @@ watch(
   [() => props.data.length, columnsSignature],
   async () => {
     syncColumnWidthsFromProps()
+    syncColumnOrderFromProps()
     await nextTick()
     checkScrollable()
     checkActionsColumnWidth()
@@ -947,6 +1105,13 @@ watch(
   () => props.columnWidthStorageKey,
   () => {
     syncColumnWidthsFromProps()
+  }
+)
+
+watch(
+  () => props.columnOrderStorageKey,
+  () => {
+    syncColumnOrderFromProps()
   }
 )
 
@@ -993,7 +1158,7 @@ const sortedData = computed(() => {
     .map(item => item.row)
 })
 
-const tableColumnCount = computed(() => props.columns.length + (props.selectable ? 1 : 0))
+const tableColumnCount = computed(() => orderedColumns.value.length + (props.selectable ? 1 : 0))
 const selectedKeySet = computed(() => new Set(props.selectedKeys))
 const visibleRowKeys = computed(() =>
   (sortedData.value ?? []).map((row, index) => resolveRowKey(row, index))
@@ -1134,11 +1299,11 @@ const renderRows = computed<Array<{ index: number; row: any; measure: boolean }>
 })
 
 const hasActionsColumn = computed(() => {
-  return props.columns.some(column => column.key === 'actions')
+  return orderedColumns.value.some(column => column.key === 'actions')
 })
 
 const hasSelectColumn = computed(() => {
-  return props.columns.length > 0 && props.columns[0].key === 'select'
+  return orderedColumns.value.length > 0 && orderedColumns.value[0].key === 'select'
 })
 
 // 生成固定列的 CSS 类
@@ -1171,7 +1336,7 @@ const getStickyColumnClass = (column: Column, index: number) => {
 
 // 根据列数自适应调整内边距
 const getAdaptivePaddingClass = () => {
-  const columnCount = props.columns.length
+  const columnCount = orderedColumns.value.length
 
   // 列数越多，内边距越小
   if (columnCount >= 10) {
@@ -1185,10 +1350,15 @@ const getAdaptivePaddingClass = () => {
   }
 }
 
+const getColumnPaddingClass = (column: Column) =>
+  column.key === 'select' ? 'px-2 text-center' : getAdaptivePaddingClass()
+
 // Init + keep persisted sort state consistent with current columns
 const didInitSort = ref(false)
 
 onMounted(() => {
+  syncColumnWidthsFromProps()
+  syncColumnOrderFromProps()
   const initial = resolveInitialSortState()
   applySortState(initial)
   didInitSort.value = true
@@ -1242,7 +1412,7 @@ defineExpose({
 <style scoped>
 /* 表格横向滚动 */
 .table-wrapper {
-  --select-col-width: 52px; /* 勾选列宽度：px-6 (24px*2) + checkbox (16px) */
+  --select-col-width: 40px;
   position: relative;
   overflow-x: auto;
   overflow-y: auto;
@@ -1311,13 +1481,51 @@ defineExpose({
   background-color: rgb(59 130 246 / 0.9);
 }
 
+/* 可见的列排序手柄，避免整块表头与点击排序、列宽调整互相干扰。 */
+.column-drag-handle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: -4px;
+  color: rgb(156 163 175);
+  border-radius: 4px;
+  cursor: grab;
+  user-select: none;
+}
+
+.column-drag-handle:hover {
+  color: rgb(75 85 99);
+  background-color: rgb(229 231 235 / 0.8);
+}
+
+.dark .column-drag-handle:hover {
+  color: rgb(209 213 219);
+  background-color: rgb(55 65 81 / 0.8);
+}
+
+.column-drag-handle:active {
+  cursor: grabbing;
+}
+
+.is-column-dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.is-column-drop-target {
+  box-shadow: inset 3px 0 0 rgb(59 130 246 / 0.9);
+}
+
 .datatable-cell-content {
   max-width: 100%;
 }
 
 .datatable-select-col {
-  width: 44px;
-  min-width: 44px;
+  width: 40px;
+  min-width: 40px;
 }
 
 /* Sticky 列基础样式 */

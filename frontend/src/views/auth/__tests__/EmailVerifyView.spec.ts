@@ -453,4 +453,34 @@ describe('EmailVerifyView', () => {
     expect(apiClientPostMock).not.toHaveBeenCalled()
     expect(pushMock).toHaveBeenCalledWith('/dashboard')
   })
+
+  it('shows the urgent WeChat support notice while waiting for the email verification code', async () => {
+    sessionStorage.setItem(
+      'register_data',
+      JSON.stringify({
+        email: 'normal@example.com',
+        password: 'secret-456',
+      })
+    )
+
+    const wrapper = mount(EmailVerifyView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: true,
+          TurnstileWidget: true,
+          transition: false,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="email-code-support-issue"]').text()).toBe('auth.verificationCodeSupportIssue')
+    expect(wrapper.get('[data-test="email-code-support-issue"]').classes()).toContain('whitespace-nowrap')
+    expect(wrapper.get('[data-test="email-code-support-wechat"]').text()).toBe('auth.verificationCodeSupportWeChat')
+    expect(wrapper.get('[data-test="email-code-support-wechat"]').classes()).toContain('font-bold')
+    expect(wrapper.get('[data-test="email-code-support-wechat"]').classes()).toContain('text-base')
+    expect(wrapper.get('[data-test="email-code-support-wechat"]').classes()).toContain('text-red-600')
+  })
 })

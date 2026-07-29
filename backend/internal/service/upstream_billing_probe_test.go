@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -182,6 +183,162 @@ func (u *upstreamBillingProbeHTTPStub) DoWithTLS(req *http.Request, proxyURL str
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
+type webAccountRateHTTPStub struct {
+	mu               sync.Mutex
+	requests         []string
+	standardStatus   int
+	standardResponse string
+	keysResponse     string
+	balanceStatus    int
+	balanceResponse  string
+	loginPassword    string
+}
+
+type newAPIWebAccountHTTPStub struct {
+	mu            sync.Mutex
+	requests      []string
+	currentAPIKey string
+	currentGroup  string
+	groupRate     float64
+	rawQuota      float64
+	quotaPerUnit  float64
+}
+
+func (u *newAPIWebAccountHTTPStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	u.requests = append(u.requests, req.Method+" "+req.URL.Path)
+	u.mu.Unlock()
+
+	switch req.URL.Path {
+	case "/v1/sub2api/billing":
+		return jsonResponse(http.StatusNotFound, "{\"message\":\"not supported\"}"), nil
+	case "/api/user/login":
+		resp := jsonResponse(http.StatusOK, "{\"success\":true,\"data\":{\"id\":9}}")
+		resp.Header.Add("Set-Cookie", "session=browser-session; Path=/; HttpOnly")
+		return resp, nil
+	case "/api/user/token":
+		if req.Header.Get("Cookie") == "" || req.Header.Get("New-Api-User") != "9" {
+			return jsonResponse(http.StatusUnauthorized, "{\"success\":false}"), nil
+		}
+		return jsonResponse(http.StatusOK, "{\"success\":true,\"data\":\"system-access\"}"), nil
+	case "/api/token/":
+		if req.Header.Get("Authorization") != "system-access" || req.Header.Get("New-Api-User") != "9" {
+			return jsonResponse(http.StatusUnauthorized, "{\"success\":false}"), nil
+		}
+		return jsonResponse(http.StatusOK, fmt.Sprintf(
+			"{\"success\":true,\"data\":{\"items\":[{\"key\":%q,\"status\":1,\"group\":%q}]}}",
+			u.currentAPIKey,
+			u.currentGroup,
+		)), nil
+	case "/api/user/self/groups":
+		return jsonResponse(http.StatusOK, fmt.Sprintf(
+			"{\"success\":true,\"data\":{%q:{\"ratio\":%v}}}",
+			u.currentGroup,
+			u.groupRate,
+		)), nil
+	case "/api/user/self":
+		return jsonResponse(http.StatusOK, fmt.Sprintf(
+			"{\"success\":true,\"data\":{\"quota\":%v,\"status\":1}}",
+			u.rawQuota,
+		)), nil
+	case "/api/status":
+		return jsonResponse(http.StatusOK, fmt.Sprintf(
+			"{\"success\":true,\"data\":{\"quota_display_type\":\"USD\",\"quota_per_unit\":%v}}",
+			u.quotaPerUnit,
+		)), nil
+	default:
+		return jsonResponse(http.StatusNotFound, "not found"), nil
+	}
+}
+
+func (u *newAPIWebAccountHTTPStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (u *newAPIWebAccountHTTPStub) requestPaths() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.requests...)
+}
+
+func (u *webAccountRateHTTPStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	u.requests = append(u.requests, req.Method+" "+req.URL.Path)
+	u.mu.Unlock()
+
+	switch req.URL.Path {
+	case "/v1/sub2api/billing":
+		status := u.standardStatus
+		if status == 0 {
+			status = http.StatusNotFound
+		}
+		body := u.standardResponse
+		if body == "" {
+			body = "{\"message\":\"not supported\"}"
+		}
+		return jsonResponse(status, body), nil
+	case "/api/v1/auth/login":
+		body, _ := io.ReadAll(req.Body)
+		expectedPassword := u.loginPassword
+		if expectedPassword == "" {
+			expectedPassword = "secret"
+		}
+		var loginPayload map[string]string
+		if json.Unmarshal(body, &loginPayload) != nil ||
+			loginPayload["email"] != "admin@example.com" ||
+			loginPayload["password"] != expectedPassword {
+			return jsonResponse(http.StatusUnauthorized, "{\"code\":401,\"message\":\"invalid login\"}"), nil
+		}
+		return jsonResponse(http.StatusOK, "{\"code\":0,\"data\":{\"access_token\":\"web-token\",\"expires_in\":3600}}"), nil
+	case "/api/v1/keys":
+		if req.Header.Get("Authorization") != "Bearer web-token" || req.URL.Query().Get("page_size") != "100" {
+			return jsonResponse(http.StatusUnauthorized, "{\"code\":401}"), nil
+		}
+		if u.keysResponse != "" {
+			return jsonResponse(http.StatusOK, u.keysResponse), nil
+		}
+		return jsonResponse(http.StatusOK, "{\"code\":0,\"data\":{\"items\":[{\"key\":\"sk-live\",\"status\":\"active\",\"group_id\":7,\"group\":{\"id\":7,\"rate_multiplier\":0.04}}]}}"), nil
+	case "/api/v1/groups/rates":
+		if req.Header.Get("Authorization") != "Bearer web-token" {
+			return jsonResponse(http.StatusUnauthorized, "{\"code\":401}"), nil
+		}
+		return jsonResponse(http.StatusOK, "{\"code\":0,\"data\":{\"7\":0.09}}"), nil
+	case "/api/v1/auth/me":
+		if req.Header.Get("Authorization") != "Bearer web-token" {
+			return jsonResponse(http.StatusUnauthorized, "{\"code\":401}"), nil
+		}
+		status := u.balanceStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		body := u.balanceResponse
+		if body == "" {
+			body = "{\"code\":0,\"data\":{\"balance\":12.34}}"
+		}
+		return jsonResponse(status, body), nil
+	default:
+		return jsonResponse(http.StatusNotFound, "not found"), nil
+	}
+}
+
+func (u *webAccountRateHTTPStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (u *webAccountRateHTTPStub) requestPaths() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.requests...)
+}
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
 func (r *upstreamBillingProbeSettingRepo) GetValue(_ context.Context, key string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -213,6 +370,19 @@ func newUpstreamBillingProbeTestService(
 	}}}
 	accountTestService := &AccountTestService{accountRepo: repo, httpUpstream: upstream, cfg: cfg}
 	return NewUpstreamBillingProbeService(repo, accountTestService, NewSettingService(settingRepo, cfg))
+}
+
+func attachUpstreamSiteCredential(svc *UpstreamBillingProbeService, host string) {
+	svc.SetUpstreamSiteCredentialService(NewUpstreamSiteCredentialService(
+		&upstreamSiteCredentialRepoStub{credentials: map[string]*UpstreamSiteCredential{
+			host: {
+				Host:               host,
+				LoginUsername:      "admin@example.com",
+				PasswordCiphertext: "cipher:secret",
+			},
+		}},
+		upstreamSiteCredentialEncryptorStub{},
+	))
 }
 
 func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
@@ -256,6 +426,404 @@ func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
 	settings, err = settingsService.GetUpstreamBillingProbeSettings(context.Background())
 	require.ErrorContains(t, err, "parse upstream billing probe settings")
 	require.Nil(t, settings)
+}
+
+func TestUpstreamBillingProbeUsesWebAccountRateForKnownHosts(t *testing.T) {
+	account := &Account{
+		ID:          41,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-live",
+			"base_url": "https://vovoapi.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "vovoapi.com")
+	fixedNow := time.Date(2026, time.July, 13, 2, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return fixedNow }
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.04, snapshot.Data["group_rate_multiplier"])
+	require.Equal(t, 0.09, snapshot.Data["user_rate_multiplier"])
+	require.Equal(t, 0.09, snapshot.Data["resolved_rate_multiplier"])
+	require.Equal(t, 0.09, snapshot.Data["effective_rate_multiplier"])
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.NotNil(t, snapshot.Balance.Amount)
+	require.Equal(t, 12.34, *snapshot.Balance.Amount)
+	require.Equal(t, "USD", snapshot.Balance.Unit)
+	require.Equal(t, []string{
+		"GET /v1/sub2api/billing",
+		"POST /api/v1/auth/login",
+		"GET /api/v1/keys",
+		"GET /api/v1/groups/rates",
+		"GET /api/v1/auth/me",
+	}, upstream.requestPaths())
+}
+
+func TestUpstreamBillingProbePreservesWebLoginPasswordWhitespace(t *testing.T) {
+	account := &Account{
+		ID:          51,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-live",
+			"base_url": "https://vovoapi.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{loginPassword: " secret "}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	svc.SetUpstreamSiteCredentialService(NewUpstreamSiteCredentialService(
+		&upstreamSiteCredentialRepoStub{credentials: map[string]*UpstreamSiteCredential{
+			"vovoapi.com": {
+				Host:               "vovoapi.com",
+				LoginUsername:      "admin@example.com",
+				PasswordCiphertext: "cipher: secret ",
+			},
+		}},
+		upstreamSiteCredentialEncryptorStub{},
+	))
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+}
+
+func TestUpstreamBillingProbeKeepsSuccessfulBalanceWhenInnomRateLookupFails(t *testing.T) {
+	account := &Account{
+		ID:          52,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-live",
+			"base_url": "https://vovoapi.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{
+		keysResponse: "{\"code\":0,\"data\":{\"items\":[]}}",
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "vovoapi.com")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
+	require.Equal(t, "key_rate_not_found", snapshot.LastError)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.Equal(t, 12.34, *snapshot.Balance.Amount)
+	require.Contains(t, upstream.requestPaths(), "GET /api/v1/auth/me")
+}
+
+func TestUpstreamBillingProbeUsesStandardEndpointBeforeWebFallback(t *testing.T) {
+	account := &Account{
+		ID:          46,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-standard",
+			"base_url": "https://vovoapi.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &upstreamBillingProbeHTTPStub{}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.8, snapshot.Data["effective_rate_multiplier"])
+	require.EqualValues(t, 1, upstream.calls.Load())
+}
+
+func TestUpstreamBillingProbeUsesStandardRateAndWebAccountBalanceTogether(t *testing.T) {
+	account := &Account{
+		ID:          50,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-standard",
+			"base_url": "https://vovoapi.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{
+		standardStatus: http.StatusOK,
+		standardResponse: `{
+			"object":"sub2api.key_billing",
+			"schema_version":1,
+			"billing_scope":"token",
+			"group_rate_multiplier":0.8,
+			"resolved_rate_multiplier":0.8,
+			"peak_rate_enabled":false,
+			"effective_rate_multiplier":0.8,
+			"observed_at":"2026-07-13T01:00:00Z"
+		}`,
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "vovoapi.com")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.8, snapshot.Data["effective_rate_multiplier"])
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.Equal(t, []string{
+		"GET /v1/sub2api/billing",
+		"POST /api/v1/auth/login",
+		"GET /api/v1/auth/me",
+	}, upstream.requestPaths())
+}
+
+func TestUpstreamBillingProbeBalanceFailureDoesNotOverrideSuccessfulWebRate(t *testing.T) {
+	account := &Account{
+		ID:          47,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-live",
+			"base_url": "https://vovoapi.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{balanceStatus: http.StatusBadGateway}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "vovoapi.com")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.09, snapshot.Data["effective_rate_multiplier"])
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Balance.Status)
+	require.Equal(t, "http_error", snapshot.Balance.LastError)
+}
+
+func TestUpstreamBillingProbeUsesNewAPIWebLoginForAIGC(t *testing.T) {
+	account := &Account{
+		ID:          48,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-aigc-current",
+			"base_url": "https://api.aigclink.xyz/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &newAPIWebAccountHTTPStub{
+		currentAPIKey: "sk-aigc-current",
+		currentGroup:  "plus",
+		groupRate:     0.09,
+		rawQuota:      1750000,
+		quotaPerUnit:  500000,
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "api.aigclink.xyz")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.09, snapshot.Data["effective_rate_multiplier"])
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.InDelta(t, 3.5, *snapshot.Balance.Amount, 0.000001)
+	require.Equal(t, "USD", snapshot.Balance.Unit)
+	require.Equal(t, []string{
+		"GET /v1/sub2api/billing",
+		"POST /api/user/login",
+		"GET /api/user/token",
+		"GET /api/user/self",
+		"GET /api/status",
+		"GET /api/token/",
+		"GET /api/user/self/groups",
+	}, upstream.requestPaths())
+}
+
+func TestUpstreamBillingProbeNewAPIKeepsBalanceWhenCurrentKeyCannotBeMatched(t *testing.T) {
+	account := &Account{
+		ID:          49,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-aigc-current",
+			"base_url": "https://api.aigclink.xyz/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &newAPIWebAccountHTTPStub{
+		currentAPIKey: "sk-another-key",
+		currentGroup:  "plus",
+		groupRate:     0.09,
+		rawQuota:      500000,
+		quotaPerUnit:  500000,
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "api.aigclink.xyz")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
+	require.Equal(t, "key_rate_not_found", snapshot.LastError)
+	require.Empty(t, snapshot.Data)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.InDelta(t, 1.0, *snapshot.Balance.Amount, 0.000001)
+}
+
+func TestUpstreamBillingProbeMatchesMaskedWebAccountKey(t *testing.T) {
+	account := &Account{
+		ID:          44,
+		Name:        "HBY-main-key",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-abcdefgh12345678",
+			"base_url": "https://hubway.cc/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{
+		keysResponse: "{\"code\":0,\"data\":{\"items\":[{\"masked_key\":\"sk-abcd...5678\",\"status\":\"active\",\"group_id\":7,\"group\":{\"id\":7,\"rate_multiplier\":0.04}}]}}",
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "hubway.cc")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.09, snapshot.Data["effective_rate_multiplier"])
+}
+
+func TestUpstreamBillingProbeMatchesUniqueWebAccountKeyName(t *testing.T) {
+	account := &Account{
+		ID:          45,
+		Name:        "HBY-main-key",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-key-not-returned",
+			"base_url": "https://hubway.cc/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{
+		keysResponse: "{\"code\":0,\"data\":{\"items\":[{\"name\":\"hby-main-key\",\"status\":\"active\",\"group_id\":7,\"group\":{\"id\":7,\"rate_multiplier\":0.04}}]}}",
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "hubway.cc")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.09, snapshot.Data["effective_rate_multiplier"])
+}
+
+func TestUpstreamBillingProbeReusesWebLoginTokenButRefreshesKeyRate(t *testing.T) {
+	account := &Account{
+		ID:          43,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-live",
+			"base_url": "https://vovoapi.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "vovoapi.com")
+
+	_, err := svc.ProbeAccount(context.Background(), account.ID)
+	require.NoError(t, err)
+	_, err = svc.ProbeAccount(context.Background(), account.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{
+		"GET /v1/sub2api/billing",
+		"POST /api/v1/auth/login",
+		"GET /api/v1/keys",
+		"GET /api/v1/groups/rates",
+		"GET /api/v1/auth/me",
+		"GET /v1/sub2api/billing",
+		"GET /api/v1/keys",
+		"GET /api/v1/groups/rates",
+		"GET /api/v1/auth/me",
+	}, upstream.requestPaths())
+}
+
+func TestUpstreamBillingProbeWebAccountFailureClearsPreviousRate(t *testing.T) {
+	receivedAt := time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC)
+	account := &Account{
+		ID:          42,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-live",
+			"base_url": "https://hubway.cc/v1",
+		},
+		Extra: map[string]any{
+			UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{
+				Status:     UpstreamBillingProbeStatusOK,
+				Data:       map[string]any{"effective_rate_multiplier": 0.5},
+				ReceivedAt: &receivedAt,
+			},
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
+	require.Equal(t, "missing_web_login_credentials", snapshot.LastError)
+	require.Empty(t, snapshot.Data)
+	require.Nil(t, snapshot.ReceivedAt)
+	require.Nil(t, snapshot.FreshUntil)
+	require.Equal(t, []string{"GET /v1/sub2api/billing"}, upstream.requestPaths())
 }
 
 func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {

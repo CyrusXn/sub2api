@@ -176,6 +176,44 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 			wantEnabled: true,
 		},
 		{
+			name: "web login username",
+			input: &UpdateAccountInput{Credentials: map[string]any{
+				"base_url":           "https://old.example",
+				"login_username":     "new@example.com",
+				"web_login_username": "old-compat@example.com",
+			}},
+			wantEnabled: true,
+		},
+		{
+			name: "web login password",
+			input: &UpdateAccountInput{Credentials: map[string]any{
+				"base_url":           "https://old.example",
+				"login_username":     "old@example.com",
+				"web_login_username": "old-compat@example.com",
+				"login_password":     "new-secret",
+			}},
+			wantEnabled: true,
+		},
+		{
+			name: "compat web login username",
+			input: &UpdateAccountInput{Credentials: map[string]any{
+				"base_url":           "https://old.example",
+				"login_username":     "old@example.com",
+				"web_login_username": "compat@example.com",
+			}},
+			wantEnabled: true,
+		},
+		{
+			name: "compat web login password",
+			input: &UpdateAccountInput{Credentials: map[string]any{
+				"base_url":           "https://old.example",
+				"login_username":     "old@example.com",
+				"web_login_username": "old-compat@example.com",
+				"web_login_password": "compat-secret",
+			}},
+			wantEnabled: true,
+		},
+		{
 			name:        "account type",
 			input:       &UpdateAccountInput{Type: AccountTypeOAuth},
 			wantEnabled: false,
@@ -192,8 +230,12 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 					Type:     AccountTypeAPIKey,
 					Status:   StatusActive,
 					Credentials: map[string]any{
-						"api_key":  "sk-old",
-						"base_url": "https://old.example",
+						"api_key":            "sk-old",
+						"base_url":           "https://old.example",
+						"login_username":     "old@example.com",
+						"login_password":     "old-secret",
+						"web_login_username": "old-compat@example.com",
+						"web_login_password": "old-compat-secret",
 					},
 					Extra: map[string]any{
 						UpstreamBillingProbeEnabledExtraKey: true,
@@ -444,19 +486,29 @@ func TestBulkUpdateAccountsRejectsProbeSettingWhenTargetIsMissing(t *testing.T) 
 }
 
 func TestBulkUpdateAccountsInvalidatesProbeSnapshotForIdentityCredentials(t *testing.T) {
-	repo := &upstreamBillingProbeAccountRepo{}
-	input := &BulkUpdateAccountsInput{
-		AccountIDs:  []int64{1},
-		Credentials: map[string]any{"api_key": "sk-new"},
+	for _, credentialKey := range []string{
+		"api_key",
+		"login_username",
+		"login_password",
+		"web_login_username",
+		"web_login_password",
+	} {
+		t.Run(credentialKey, func(t *testing.T) {
+			repo := &upstreamBillingProbeAccountRepo{}
+			input := &BulkUpdateAccountsInput{
+				AccountIDs:  []int64{1},
+				Credentials: map[string]any{credentialKey: "new-value"},
+			}
+
+			result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), input)
+
+			require.NoError(t, err)
+			require.Equal(t, 1, result.Success)
+			require.Len(t, repo.bulkUpdates, 1)
+			require.Contains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
+			require.Nil(t, repo.bulkUpdates[0].Extra[UpstreamBillingProbeExtraKey])
+		})
 	}
-
-	result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), input)
-
-	require.NoError(t, err)
-	require.Equal(t, 1, result.Success)
-	require.Len(t, repo.bulkUpdates, 1)
-	require.Contains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
-	require.Nil(t, repo.bulkUpdates[0].Extra[UpstreamBillingProbeExtraKey])
 }
 
 func TestBulkUpdateAccountsInvalidatesProbeSnapshotForProxyUpdate(t *testing.T) {

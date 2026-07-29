@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import UpstreamBillingRateCell from '../UpstreamBillingRateCell.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import Icon from '@/components/icons/Icon.vue'
 import type { Account } from '@/types'
 
 vi.mock('vue-i18n', async () => {
@@ -271,6 +272,36 @@ describe('UpstreamBillingRateCell', () => {
     await wrapper.setProps({ account: makeAccount({ type: 'oauth' }) })
     expect(wrapper.findAll('button')).toHaveLength(0)
     expect(wrapper.text()).toBe('-')
+  })
+
+  it('shows a red up arrow for increases and a green down arrow for decreases', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, {
+      props: {
+        account: makeAccount({
+          extra: {
+            upstream_billing_probe: {
+              status: 'ok',
+              data: billingData,
+              received_at: '2026-07-13T00:00:00Z',
+              fresh_until: '2026-07-14T00:00:00Z',
+              last_attempt_at: '2026-07-13T00:00:00Z',
+              next_probe_at: '2026-07-13T00:30:00Z'
+            }
+          }
+        }),
+        now: Date.now(),
+        changeDirection: 'up'
+      }
+    })
+
+    expect(wrapper.get('[data-testid="upstream-billing-change-up"]').classes()).toContain('text-red-600')
+    expect(wrapper.get('[data-testid="upstream-billing-change-up"]').findComponent(Icon).props('name')).toBe('arrowUp')
+
+    await wrapper.setProps({ changeDirection: 'down' })
+
+    expect(wrapper.find('[data-testid="upstream-billing-change-up"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="upstream-billing-change-down"]').classes()).toContain('text-emerald-600')
+    expect(wrapper.get('[data-testid="upstream-billing-change-down"]').findComponent(Icon).props('name')).toBe('arrowDown')
   })
 
   it('fails neutral for malformed data and timestamps', async () => {

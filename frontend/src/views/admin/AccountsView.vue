@@ -199,22 +199,15 @@
           default-sort-key="name"
           default-sort-order="asc"
           :sort-storage-key="ACCOUNT_SORT_STORAGE_KEY"
+          :column-width-storage-key="ACCOUNT_COLUMN_WIDTH_STORAGE_KEY"
+          :column-order-storage-key="ACCOUNT_COLUMN_ORDER_STORAGE_KEY"
           :estimate-row-height="156"
           :overscan="5"
           :virtualize-threshold="50"
+          :selectable="true"
+          :selected-keys="selIds"
+          @selection-change="handleSelectionChange"
         >
-          <template #header-select>
-            <input
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-              :checked="allVisibleSelected"
-              @click.stop
-              @change="toggleSelectAllVisible($event)"
-            />
-          </template>
-          <template #cell-select="{ row }">
-            <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
-          </template>
           <template #cell-id="{ value }">
             <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
           </template>
@@ -356,8 +349,12 @@
               :global-probe-enabled="upstreamBillingProbeGloballyEnabled"
               :now="upstreamBillingNow"
               :probing="probingUpstreamBilling.has(row.id)"
+              :change-direction="upstreamBillingChangeDirections.get(row.id) ?? null"
               @probe="handleProbeUpstreamBilling(row)"
             />
+          </template>
+          <template #cell-upstream_balance="{ row }">
+            <UpstreamAccountBalanceCell :account="row" />
           </template>
           <template #cell-priority="{ value }">
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
@@ -420,6 +417,19 @@
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                 <span class="text-xs">{{ t('common.delete') }}</span>
               </button>
+              <!-- 高频操作直接展示，减少每行重复打开“更多”的步骤。 -->
+              <button data-test="account-action-test" @click="handleTest(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400">
+                <Icon name="play" size="sm" />
+                <span class="text-xs">{{ t('admin.accounts.testConnection') }}</span>
+              </button>
+              <button v-if="canDuplicateAccount(row)" data-test="account-action-duplicate" @click="handleDuplicateAccount(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-sky-50 hover:text-sky-600 dark:hover:bg-sky-900/20 dark:hover:text-sky-400">
+                <Icon name="copy" size="sm" />
+                <span class="text-xs">{{ t('admin.accounts.duplicateAccount') }}</span>
+              </button>
+              <button data-test="account-action-stats" @click="handleViewStats(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400">
+                <Icon name="chart" size="sm" />
+                <span class="text-xs">{{ t('admin.accounts.viewStats') }}</span>
+              </button>
               <button @click="openMenu(row, $event)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
                 <span class="text-xs">{{ t('common.more') }}</span>
@@ -437,7 +447,7 @@
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -501,6 +511,7 @@ import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vu
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
+import UpstreamAccountBalanceCell from '@/components/account/UpstreamAccountBalanceCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
@@ -590,6 +601,8 @@ const togglingSchedulable = ref<number | null>(null)
 const menu = reactive<{show:boolean, acc:Account|null, pos:{top:number, left:number}|null}>({ show: false, acc: null, pos: null })
 const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
+const upstreamBillingRefreshInFlight = ref(false)
+const upstreamBillingChangeDirections = reactive(new Map<number, 'up' | 'down'>())
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
 const upstreamBillingNow = ref(Date.now())
 let lastUpstreamBillingSortRefreshMinute = -1
@@ -621,6 +634,8 @@ const HIDDEN_COLUMNS_CURRENT_VERSION = 'scheduler-score-hidden-by-default'
 
 // Sorting settings
 const ACCOUNT_SORT_STORAGE_KEY = 'account-table-sort'
+const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'account-table-column-widths:v2'
+const ACCOUNT_COLUMN_ORDER_STORAGE_KEY = 'account-table-column-order'
 type AccountSortOrder = 'asc' | 'desc'
 type AccountSortState = {
   sort_by: string
@@ -674,6 +689,7 @@ const todayStatsLoading = ref(false)
 const todayStatsError = ref<string | null>(null)
 const todayStatsReqSeq = ref(0)
 const pendingTodayStatsRefresh = ref(false)
+const pendingUpstreamBillingRefresh = ref(false)
 const usageManualRefreshToken = ref(0)
 
 const buildDefaultTodayStats = (): WindowStats => ({
@@ -914,15 +930,12 @@ const {
 
 const {
   selectedIds: selIds,
-  allVisibleSelected,
   isSelected,
   setSelectedIds,
   select,
   deselect,
-  toggle: toggleSel,
   clear: clearSelection,
   removeMany: removeSelectedAccounts,
-  toggleVisible,
   selectVisible: selectPage,
   batchUpdate
 } = useTableSelection<Account>({
@@ -948,6 +961,45 @@ const resetAutoRefreshCache = () => {
 }
 
 const isFirstLoad = ref(true)
+const isReadOnlyPreview = () => import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
+
+const visibleUpstreamBillingAccountIDs = () => accounts.value
+  .filter(account => account.platform === 'openai' && account.type === 'apikey')
+  .map(account => account.id)
+
+const refreshVisibleUpstreamBillingRates = async () => {
+  // 本地只读预览连接线上 API 时禁止触发探测，避免写线上快照或访问上游站点。
+  if (isReadOnlyPreview()) return false
+  if (upstreamBillingRefreshInFlight.value) return false
+  const accountIDs = visibleUpstreamBillingAccountIDs()
+  if (accountIDs.length === 0) return false
+
+  upstreamBillingRefreshInFlight.value = true
+  let patched = false
+  try {
+    // 后端批量接口单次最多接收 20 个账号；串行分批可避免刷新时同时压满上游站点。
+    for (let index = 0; index < accountIDs.length; index += 20) {
+      const batch = accountIDs.slice(index, index + 20)
+      batch.forEach(id => probingUpstreamBilling.add(id))
+      try {
+        const results = await adminAPI.accounts.probeUpstreamBillingBatch(batch)
+        results.forEach(result => {
+          if (!result.snapshot) return
+          patchUpstreamBillingSnapshot(result.account_id, result.snapshot)
+          patched = true
+        })
+      } finally {
+        batch.forEach(id => probingUpstreamBilling.delete(id))
+      }
+    }
+  } catch (error) {
+    // 自动刷新保持静默，单个账号的失败状态由倍率单元格直接展示。
+    console.error('Failed to refresh visible upstream billing rates:', error)
+  } finally {
+    upstreamBillingRefreshInFlight.value = false
+  }
+  return patched
+}
 
 function markUpstreamBillingSortRefresh() {
   if (sortState.sort_by === 'upstream_billing_rate') {
@@ -955,7 +1007,7 @@ function markUpstreamBillingSortRefresh() {
   }
 }
 
-const load = async () => {
+const load = async (options: { refreshUpstreamBilling?: boolean } = {}) => {
   const requestParams = params as any
   markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
@@ -971,9 +1023,13 @@ const load = async () => {
     delete requestParams.lite
   }
   await refreshTodayStatsBatch()
+  if (options.refreshUpstreamBilling !== false) {
+    const patched = await refreshVisibleUpstreamBillingRates()
+    if (patched) await refreshUpstreamBillingSortedList(true)
+  }
 }
 
-const reload = async () => {
+const reload = async (options: { refreshUpstreamBilling?: boolean } = {}) => {
   markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
   hasPendingListSync.value = false
@@ -981,6 +1037,10 @@ const reload = async () => {
   pendingTodayStatsRefresh.value = false
   await baseReload()
   await refreshTodayStatsBatch()
+  if (options.refreshUpstreamBilling !== false) {
+    const patched = await refreshVisibleUpstreamBillingRates()
+    if (patched) await refreshUpstreamBillingSortedList(true)
+  }
 }
 
 const refreshUpstreamBillingSortedList = async (force = false) => {
@@ -990,7 +1050,7 @@ const refreshUpstreamBillingSortedList = async (force = false) => {
   if (!force && lastUpstreamBillingSortRefreshMinute === minute) return
   lastUpstreamBillingSortRefreshMinute = minute
   try {
-    await reload()
+    await reload({ refreshUpstreamBilling: false })
   } catch (error) {
     console.error('Failed to refresh upstream billing sort:', error)
   }
@@ -1001,6 +1061,7 @@ const debouncedReload = () => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
+  pendingUpstreamBillingRefresh.value = true
   baseDebouncedReload()
 }
 
@@ -1009,6 +1070,7 @@ const handlePageChange = (page: number) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
+  pendingUpstreamBillingRefresh.value = true
   baseHandlePageChange(page)
 }
 
@@ -1017,6 +1079,7 @@ const handlePageSizeChange = (size: number) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
+  pendingUpstreamBillingRefresh.value = true
   baseHandlePageSizeChange(size)
 }
 
@@ -1043,6 +1106,16 @@ watch(loading, (isLoading, wasLoading) => {
     refreshTodayStatsBatch().catch((error) => {
       console.error('Failed to refresh account today stats after table load:', error)
     })
+  }
+  if (wasLoading && !isLoading && pendingUpstreamBillingRefresh.value) {
+    pendingUpstreamBillingRefresh.value = false
+    refreshVisibleUpstreamBillingRates()
+      .then((patched) => {
+        if (patched) return refreshUpstreamBillingSortedList(true)
+      })
+      .catch((error) => {
+        console.error('Failed to refresh upstream billing rates after table load:', error)
+      })
   }
 })
 
@@ -1168,6 +1241,8 @@ const refreshAccountsIncrementally = async () => {
     upstreamBillingNow.value = Date.now()
 
     await refreshTodayStatsBatch()
+    const patched = await refreshVisibleUpstreamBillingRates()
+    if (patched) await refreshUpstreamBillingSortedList(true)
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
@@ -1395,45 +1470,50 @@ function getAntigravityTierClass(row: any): string {
 // All available columns
 const allColumns = computed(() => {
   const c = [
-    { key: 'select', label: '', sortable: false },
-    { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
-    { key: 'id', label: t('admin.accounts.columns.id'), sortable: true },
-    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
-    { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
-    { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
-    { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
-    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
+    { key: 'name', label: t('admin.accounts.columns.name'), sortable: true, width: 300 },
+    { key: 'id', label: t('admin.accounts.columns.id'), sortable: true, width: 86 },
+    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false, width: 120 },
+    { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false, width: 130 },
+    { key: 'status', label: t('admin.accounts.columns.status'), sortable: true, width: 116 },
+    { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true, width: 116 },
+    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false, width: 180 }
   ]
   if (!authStore.isSimpleMode) {
-    c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })
+    c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false, width: 360 })
   }
-  c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
+  c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false, width: 220 })
   c.push(
-    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
-    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
-    { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
-    { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
-    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
-    { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
-    { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
-    { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },
-    { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false },
-    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false }
+    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, width: 160 },
+    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true, width: 96 },
+    { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false, width: 130 },
+    { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true, width: 152 },
+    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, width: 190 },
+    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false, width: 150 },
+    { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true, width: 172 },
+    { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true, width: 154 },
+    { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true, width: 154 },
+    { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false, width: 220 },
+    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false, width: 340 }
   )
   return c
 })
 
-// Columns that can be toggled (exclude select, name, and actions)
+// 名称和操作列始终显示，其余业务列允许用户自行隐藏。
 const toggleableColumns = computed(() =>
-  allColumns.value.filter(col => col.key !== 'select' && col.key !== 'name' && col.key !== 'actions')
+  allColumns.value.filter(col => col.key !== 'name' && col.key !== 'actions')
 )
 
 // Filtered columns based on visibility
 const cols = computed(() =>
   allColumns.value.filter(col =>
-    col.key === 'select' || col.key === 'name' || col.key === 'actions' || !hiddenColumns.has(col.key)
+    col.key === 'name' || col.key === 'actions' || !hiddenColumns.has(col.key)
   )
 )
+
+const DUPLICABLE_ACCOUNT_TYPES = new Set<AccountType>(['apikey', 'upstream', 'bedrock', 'service_account'])
+const canDuplicateAccount = (account: Account) => {
+  return account.parent_account_id == null && DUPLICABLE_ACCOUNT_TYPES.has(account.type)
+}
 
 const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
 const openMenu = (a: Account, e: MouseEvent) => {
@@ -1487,9 +1567,12 @@ const openMenu = (a: Account, e: MouseEvent) => {
 
   menu.show = true
 }
-const toggleSelectAllVisible = (event: Event) => {
-  const target = event.target as HTMLInputElement
-  toggleVisible(target.checked)
+// DataTable 负责当前页全选和单选，这里只把受控键值同步回跨页选择状态。
+const handleSelectionChange = (keys: Array<string | number>) => {
+  const ids = keys
+    .map(key => typeof key === 'number' ? key : Number(key))
+    .filter((id): id is number => Number.isInteger(id))
+  setSelectedIds(ids)
 }
 const handleBulkDelete = async () => { if(!confirm(t('common.confirm'))) return; try { await Promise.all(selIds.value.map(id => adminAPI.accounts.delete(id))); clearSelection(); reload() } catch (error) { console.error('Failed to bulk delete accounts:', error) } }
 const handleBulkResetStatus = async () => {
@@ -1525,6 +1608,10 @@ const handleBulkRefreshToken = async () => {
   }
 }
 const handleBulkProbeUpstreamBilling = async () => {
+  if (isReadOnlyPreview()) {
+    appStore.showInfo(t('admin.accounts.upstreamBilling.readOnlyPreview'))
+    return
+  }
   const accountIDs = [...selIds.value]
   if (accountIDs.length === 0) {
     appStore.showError(t('admin.accounts.upstreamBilling.noEligibleAccounts'))
@@ -1807,9 +1894,20 @@ const patchAccountInList = (updatedAccount: Account) => {
   accounts.value = nextAccounts
   syncAccountRefs(mergedAccount)
 }
+const effectiveUpstreamBillingRate = (snapshot?: UpstreamBillingProbeSnapshot) => {
+  const value = snapshot?.data?.effective_rate_multiplier
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
 const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBillingProbeSnapshot) => {
   const account = accounts.value.find(item => item.id === accountID)
   if (!account) return
+  const previousRate = effectiveUpstreamBillingRate(account.extra?.upstream_billing_probe)
+  const nextRate = effectiveUpstreamBillingRate(snapshot)
+  if (previousRate != null && nextRate != null && previousRate !== nextRate) {
+    upstreamBillingChangeDirections.set(accountID, nextRate > previousRate ? 'up' : 'down')
+  } else {
+    upstreamBillingChangeDirections.delete(accountID)
+  }
   markUpstreamBillingSortRefresh()
   upstreamBillingNow.value = Date.now()
   patchAccountInList({
@@ -1818,6 +1916,10 @@ const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBilli
   })
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
+  if (isReadOnlyPreview()) {
+    appStore.showInfo(t('admin.accounts.upstreamBilling.readOnlyPreview'))
+    return
+  }
   if (probingUpstreamBilling.has(account.id)) return
   probingUpstreamBilling.add(account.id)
   try {

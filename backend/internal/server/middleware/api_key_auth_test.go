@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type recordingInsufficientBalanceNotifier struct {
+	calls   atomic.Int32
+	userID  atomic.Int64
+	balance atomic.Uint64
+}
+
+func (n *recordingInsufficientBalanceNotifier) NotifyUserInsufficientBalance(_ context.Context, user *service.User, balance float64) {
+	n.calls.Add(1)
+	if user != nil {
+		n.userID.Store(user.ID)
+	}
+	n.balance.Store(math.Float64bits(balance))
+}
 
 func TestAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -1416,7 +1431,10 @@ func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
 
 	cfg := &config.Config{RunMode: config.RunModeStandard}
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
-	router := newAuthTestRouter(apiKeyService, nil, cfg)
+	notifier := &recordingInsufficientBalanceNotifier{}
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, cfg, notifier)))
+	router.GET("/t", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/t", nil)
@@ -1425,6 +1443,9 @@ func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
 
 	require.Equal(t, http.StatusForbidden, w.Code)
 	requireAPIKeyAuthError(t, w, "INSUFFICIENT_BALANCE", "Insufficient account balance")
+	require.Equal(t, int32(1), notifier.calls.Load())
+	require.Equal(t, user.ID, notifier.userID.Load())
+	require.Equal(t, user.Balance, math.Float64frombits(notifier.balance.Load()))
 }
 
 func TestAPIKeyAuthOpenAIQuotaErrorFormat(t *testing.T) {

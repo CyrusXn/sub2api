@@ -68,13 +68,21 @@ vi.mock('vue-i18n', async () => {
 })
 
 const DataTableStub = {
-  props: ['columns', 'data'],
+  props: ['columns', 'data', 'columnWidthStorageKey', 'columnOrderStorageKey', 'selectable', 'selectedKeys'],
+  emits: ['selectionChange'],
   template: `
     <div data-test="data-table">
       <span v-for="column in columns" :key="column.key" data-test="column-key">{{ column.key }}</span>
       <div v-for="row in data" :key="row.id">
-        <div data-test="select-row"><slot name="cell-select" :row="row" /></div>
+        <input
+          v-if="selectable"
+          data-test="select-row"
+          type="checkbox"
+          :checked="selectedKeys.includes(row.id)"
+          @change="$emit('selectionChange', selectedKeys.includes(row.id) ? selectedKeys.filter(id => id !== row.id) : [...selectedKeys, row.id])"
+        />
         <slot name="cell-created_at" :value="row.created_at" :row="row" />
+        <slot name="cell-actions" :row="row" />
       </div>
     </div>
   `
@@ -91,6 +99,11 @@ const AccountBulkActionsBarStub = {
   `
 }
 
+const AccountTableActionsRefreshStub = {
+  emits: ['refresh'],
+  template: '<button data-test="manual-refresh" @click="$emit(\'refresh\')">refresh</button>'
+}
+
 const PaginationStub = {
   emits: ['update:page'],
   template: '<button data-test="next-page" @click="$emit(\'update:page\', 2)">next</button>'
@@ -103,6 +116,7 @@ const BulkEditAccountModalStub = {
 
 describe('admin AccountsView bulk edit scope', () => {
   beforeEach(() => {
+	vi.unstubAllEnvs()
     localStorage.clear()
 
     listAccounts.mockReset()
@@ -178,14 +192,14 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
   })
 
-  it('renders the created_at column by default', async () => {
+  it('renders the created_at column with compact selection and persisted table layout', async () => {
     listAccounts.mockResolvedValue({
       items: [
         {
           id: 1,
           name: 'test-account',
           platform: 'anthropic',
-          type: 'oauth',
+          type: 'apikey',
           status: 'active',
           schedulable: true,
           created_at: '2026-03-07T10:00:00Z',
@@ -239,11 +253,21 @@ describe('admin AccountsView bulk edit scope', () => {
 
     const columnKeys = wrapper.findAll('[data-test="column-key"]').map(node => node.text())
     expect(columnKeys).toContain('created_at')
-    const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{ key: string; label: string; sortable: boolean }>
+    const table = wrapper.getComponent(DataTableStub)
+    const columns = table.props('columns') as Array<{ key: string; label: string; sortable: boolean; width?: number }>
     expect(columns.find(column => column.key === 'created_at')).toMatchObject({
       label: 'admin.accounts.columns.createdAt',
       sortable: true
     })
+    expect(columns.some(column => column.key === 'select')).toBe(false)
+    expect(columns.find(column => column.key === 'actions')?.width).toBe(340)
+    expect(table.props('selectable')).toBe(true)
+    expect(table.props('selectedKeys')).toEqual([])
+    expect(wrapper.get('[data-test="account-action-test"]').text()).toBe('admin.accounts.testConnection')
+    expect(wrapper.get('[data-test="account-action-duplicate"]').text()).toBe('admin.accounts.duplicateAccount')
+    expect(wrapper.get('[data-test="account-action-stats"]').text()).toBe('admin.accounts.viewStats')
+    expect(table.props('columnWidthStorageKey')).toBe('account-table-column-widths:v2')
+    expect(table.props('columnOrderStorageKey')).toBe('account-table-column-order')
   })
 
   it('passes the loaded global probe state to every upstream billing cell', async () => {
@@ -315,6 +339,183 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.get('[data-test="upstream-billing-cell"]').attributes('data-global-enabled')).toBe('false')
   })
 
+  it('refreshes visible upstream rates in batches of 20 after the account query', async () => {
+    const accounts = Array.from({ length: 21 }, (_, index) => ({
+      id: index + 1,
+      name: `upstream-${index + 1}`,
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-13T00:00:00Z',
+      updated_at: '2026-07-13T00:00:00Z'
+    }))
+    listAccounts.mockResolvedValue({ items: accounts, total: 21, page: 1, page_size: 21, pages: 1 })
+
+    mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          AccountTableActions: AccountTableActionsRefreshStub,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          Pagination: true,
+          ConfirmDialog: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(probeUpstreamBillingBatch).toHaveBeenNthCalledWith(1, accounts.slice(0, 20).map(account => account.id))
+    expect(probeUpstreamBillingBatch).toHaveBeenNthCalledWith(2, [21])
+  })
+
+  it('does not probe upstream accounts when the local preview is read-only', async () => {
+    vi.stubEnv('VITE_READ_ONLY_PREVIEW', 'true')
+    listAccounts.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'upstream',
+        platform: 'openai',
+        type: 'apikey',
+        status: 'active',
+        schedulable: true,
+        created_at: '2026-07-13T00:00:00Z',
+        updated_at: '2026-07-13T00:00:00Z'
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          Pagination: true,
+          ConfirmDialog: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="select-row"]').trigger('change')
+    await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
+    await flushPromises()
+    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+  })
+
+  it('refreshes upstream rates for the new page after pagination reloads the account query', async () => {
+    const account = (id: number) => ({
+      id,
+      name: `upstream-${id}`,
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-13T00:00:00Z',
+      updated_at: '2026-07-13T00:00:00Z'
+    })
+    listAccounts
+      .mockResolvedValueOnce({ items: [account(1)], total: 2, page: 1, page_size: 1, pages: 2 })
+      .mockResolvedValueOnce({ items: [account(2)], total: 2, page: 2, page_size: 1, pages: 2 })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="table" /><slot name="pagination" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: PaginationStub,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    probeUpstreamBillingBatch.mockClear()
+
+    await wrapper.get('[data-test="next-page"]').trigger('click')
+    await flushPromises()
+
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([2])
+  })
+
   it('submits selected account IDs from every page for backend eligibility checks', async () => {
     const account = (id: number) => ({
       id,
@@ -366,10 +567,10 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"]').trigger('change')
     await wrapper.get('[data-test="next-page"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"]').trigger('change')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
@@ -439,11 +640,12 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"]').trigger('change')
+    const listCallsBeforeProbe = listAccounts.mock.calls.length
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
     expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([7])
-    expect(listAccounts).toHaveBeenCalledTimes(2)
+    expect(listAccounts).toHaveBeenCalledTimes(listCallsBeforeProbe + 1)
   })
 })

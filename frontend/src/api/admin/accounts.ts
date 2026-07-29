@@ -23,9 +23,30 @@ import type {
   CheckMixedChannelResponse,
   UpstreamBillingProbeResult,
   UpstreamBillingProbeSettings,
+  UpstreamSiteCredentialInput,
+  UpstreamSiteCredentialSummary,
   OllamaCloudUsageSettings,
   OllamaCloudUsageState
 } from '@/types'
+
+export async function listUpstreamSites(): Promise<UpstreamSiteCredentialSummary[]> {
+  const { data } = await apiClient.get<{ items: UpstreamSiteCredentialSummary[] }>('/admin/accounts/upstream-sites')
+  return data.items
+}
+
+export async function upsertUpstreamSiteCredential(
+  input: UpstreamSiteCredentialInput
+): Promise<UpstreamSiteCredentialSummary> {
+  const { data } = await apiClient.put<UpstreamSiteCredentialSummary>(
+    '/admin/accounts/upstream-sites/credentials',
+    input
+  )
+  return data
+}
+
+export async function deleteUpstreamSiteCredential(host: string): Promise<void> {
+  await apiClient.delete(`/admin/accounts/upstream-sites/${encodeURIComponent(host)}/credentials`)
+}
 
 /**
  * List all accounts with pagination
@@ -980,6 +1001,9 @@ export const accountsAPI = {
   setUpstreamBillingProbeEnabled,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
+  listUpstreamSites,
+  upsertUpstreamSiteCredential,
+  deleteUpstreamSiteCredential,
   getOllamaCloudUsageSettings,
   updateOllamaCloudUsageSettings,
   getOllamaCloudUsage,

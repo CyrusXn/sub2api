@@ -116,6 +116,7 @@ const usageLog = {
   image_count: 0,
   image_size: null,
   first_token_ms: 12,
+  display_first_token_ms: 999,
   duration_ms: 345,
   created_at: '2026-03-08T00:00:00Z',
   model: 'gpt-5.4',
@@ -137,7 +138,11 @@ function mountUsageView() {
         DateRangePicker: true,
         Icon: true,
         UsageStatsCards: chartStub,
-        UsageTable: chartStub,
+        UsageTable: {
+          name: 'UsageTable',
+          props: ['columns'],
+          template: '<div data-testid="usage-table" />',
+        },
         ModelDistributionChart: chartStub,
         GroupDistributionChart: chartStub,
         EndpointDistributionChart: chartStub,
@@ -205,6 +210,16 @@ describe('user UsageView', () => {
     }))
     expect(list).toHaveBeenCalledWith(1, 100)
     expect(getAvailable).toHaveBeenCalled()
+  })
+
+  it('places the IP column at the end of the usage table', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    const table = wrapper.findComponent({ name: 'UsageTable' })
+    const columns = table.props('columns') as Array<{ key: string }>
+
+    expect(columns.at(-1)?.key).toBe('ip_address')
   })
 
   it('exports csv with current filters and without admin-only fields', async () => {

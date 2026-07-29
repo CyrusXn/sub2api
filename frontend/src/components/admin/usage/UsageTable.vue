@@ -221,14 +221,14 @@
           <div class="flex items-stretch gap-2">
             <span
               class="w-1 shrink-0 rounded-full"
-              :class="row.first_token_ms != null
-                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[firstTokenSeverity(row.first_token_ms)], LATENCY_BAR_TO_CLASSES[durationSeverity(row.duration_ms ?? 0)]]
+              :class="getDisplayFirstTokenMs(row) != null
+                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[getDisplayFirstTokenSeverity(row)], LATENCY_BAR_TO_CLASSES[durationSeverity(row.duration_ms ?? 0)]]
                 : LATENCY_BAR_CLASSES[durationSeverity(row.duration_ms ?? 0)]"
               aria-hidden="true"
             ></span>
             <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
-              <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
+              <span v-if="getDisplayFirstTokenMs(row) != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[getDisplayFirstTokenSeverity(row)]">{{ formatDuration(getDisplayFirstTokenMs(row)) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
@@ -637,6 +637,13 @@ const getRequestTypeBadgeClass = (row: AdminUsageLog): string => {
 const formatUserAgent = (ua: string): string => {
   return ua
 }
+
+// 普通用户列表优先使用后端派生值；管理端未返回该字段时继续展示真实首字。
+const getDisplayFirstTokenMs = (row: AdminUsageLog): number | null =>
+  row.display_first_token_ms ?? row.first_token_ms ?? null
+
+const getDisplayFirstTokenSeverity = (row: AdminUsageLog) =>
+  firstTokenSeverity(getDisplayFirstTokenMs(row) ?? 0)
 
 // 超过 1 分钟简化为 "Xm Ys"，免去人工换算（超过 1 小时再进位为 "Xh Ym"）
 const formatDuration = (ms: number | null | undefined): string => {

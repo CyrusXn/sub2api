@@ -61,6 +61,8 @@ const messages: Record<string, string> = {
   'admin.usage.apiKeyValue': 'API Key',
   'admin.usage.copyApiKey': 'Copy API Key',
   'admin.usage.apiKeyCopied': 'API Key copied',
+  'usage.latencyFirstToken': 'First',
+  'usage.latencyDuration': 'Total',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -83,6 +85,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-latency" :row="row" />
       </div>
     </div>
   `,
@@ -396,6 +399,85 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('Per-image price')
     expect(text).toContain('not recorded')
     expect(text).not.toContain('(2K)')
+  })
+})
+
+describe('admin UsageTable first-token display value', () => {
+  it('uses the derived first-token value for text and health color while keeping real duration', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          {
+            ...baseImageRow,
+            request_id: 'req-user-derived-latency',
+            first_token_ms: 45_000,
+            display_first_token_ms: 999,
+            duration_ms: 12_345,
+          },
+        ],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('First')
+    expect(wrapper.text()).toContain('999ms')
+    expect(wrapper.text()).toContain('12.35s')
+    expect(wrapper.text()).not.toContain('45.00s')
+
+    const firstTokenValue = wrapper.findAll('span').find((node) => node.text() === '999ms')
+    expect(firstTokenValue?.classes()).toContain('text-emerald-600')
+  })
+
+  it('formats derived seconds with exactly two decimal places and falls back to the real value', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          {
+            ...baseImageRow,
+            request_id: 'req-user-derived-one-second',
+            first_token_ms: 45_000,
+            display_first_token_ms: 1_000,
+            duration_ms: 1_500,
+          },
+          {
+            ...baseImageRow,
+            request_id: 'req-user-derived-decimal-seconds',
+            first_token_ms: 45_000,
+            display_first_token_ms: 4_850,
+            duration_ms: 5_000,
+          },
+          {
+            ...baseImageRow,
+            request_id: 'req-admin-real-latency',
+            first_token_ms: 1_250,
+            duration_ms: 2_000,
+          },
+        ],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('1.00s')
+    expect(wrapper.text()).toContain('4.85s')
+    expect(wrapper.text()).toContain('1.25s')
   })
 })
 

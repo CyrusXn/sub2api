@@ -120,6 +120,8 @@
           :server-side-sort="true"
           default-sort-key="sort_order"
           default-sort-order="asc"
+          :column-width-storage-key="GROUP_COLUMN_WIDTH_STORAGE_KEY"
+          :column-order-storage-key="GROUP_COLUMN_ORDER_STORAGE_KEY"
           @sort="handleSort"
         >
           <template #cell-name="{ value }">
@@ -4160,6 +4162,8 @@ const ALWAYS_VISIBLE_COLUMNS = new Set(["name", "actions"]);
 // Default hidden columns (hidden on first load / after schema bumps).
 const DEFAULT_HIDDEN_COLUMNS = ["id"];
 const HIDDEN_COLUMNS_KEY = "group-hidden-columns";
+const GROUP_COLUMN_WIDTH_STORAGE_KEY = "group-table-column-widths:v2";
+const GROUP_COLUMN_ORDER_STORAGE_KEY = "group-table-column-order";
 // Bump when adding new default-hidden columns so existing admins pick them up once.
 const COLUMN_SETTINGS_VERSION_KEY = "group-column-settings-version";
 const COLUMN_SETTINGS_VERSION = 2;
@@ -4207,7 +4211,7 @@ const allColumns = computed<Column[]>(() => [
   },
   { key: "usage", label: t("admin.groups.columns.usage"), sortable: false },
   { key: "status", label: t("admin.groups.columns.status"), sortable: true },
-  { key: "actions", label: t("admin.groups.columns.actions"), sortable: false },
+  { key: "actions", label: t("admin.groups.columns.actions"), sortable: false, width: 300 },
 ]);
 
 const toggleableColumns = computed(() =>

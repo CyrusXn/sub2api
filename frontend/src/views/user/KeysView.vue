@@ -88,6 +88,8 @@
           :server-side-sort="true"
           default-sort-key="created_at"
           default-sort-order="desc"
+          :column-width-storage-key="API_KEY_COLUMN_WIDTH_STORAGE_KEY"
+          :column-order-storage-key="API_KEY_COLUMN_ORDER_STORAGE_KEY"
           @sort="handleSort"
         >
           <template #cell-id="{ value }">
@@ -1188,12 +1190,14 @@ const allColumns = computed<Column[]>(() => [
   { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
   { key: 'last_used_ip', label: t('keys.lastUsedIP'), sortable: false },
   { key: 'created_at', label: t('keys.created'), sortable: true },
-  { key: 'actions', label: t('common.actions'), sortable: false }
+  { key: 'actions', label: t('common.actions'), sortable: false, width: 320 }
 ])
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(['name', 'actions'])
 const DEFAULT_HIDDEN_COLUMNS = ['id', 'rate_limit', 'last_used_at', 'last_used_ip']
 const HIDDEN_COLUMNS_KEY = 'api-key-hidden-columns'
+const API_KEY_COLUMN_WIDTH_STORAGE_KEY = 'api-key-table-column-widths:v2'
+const API_KEY_COLUMN_ORDER_STORAGE_KEY = 'api-key-table-column-order'
 const COLUMN_SETTINGS_VERSION_KEY = 'api-key-column-settings-version'
 const COLUMN_SETTINGS_VERSION = 3
 const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {

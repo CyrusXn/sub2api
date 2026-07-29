@@ -4,7 +4,7 @@
       <template #trigger>
         <span
           class="cursor-help border-b border-dotted border-gray-300 text-sm font-medium dark:border-dark-600"
-          :class="hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
+          :class="hasEffectiveRate ? effectiveRateClass : statusClass || 'text-gray-400 dark:text-gray-500'"
           data-testid="upstream-billing-rate"
         >
           {{ primaryValue }}
@@ -65,6 +65,22 @@
         </p>
       </div>
     </HelpTooltip>
+    <span
+      v-if="hasEffectiveRate && changeDirection === 'up'"
+      data-testid="upstream-billing-change-up"
+      class="inline-flex items-center text-red-600 dark:text-red-400"
+      :title="t('admin.accounts.upstreamBilling.rateIncreased')"
+    >
+      <Icon name="arrowUp" size="xs" />
+    </span>
+    <span
+      v-else-if="hasEffectiveRate && changeDirection === 'down'"
+      data-testid="upstream-billing-change-down"
+      class="inline-flex items-center text-emerald-600 dark:text-emerald-400"
+      :title="t('admin.accounts.upstreamBilling.rateDecreased')"
+    >
+      <Icon name="arrowDown" size="xs" />
+    </span>
     <span v-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-[10px] font-medium">
       {{ statusLabel }}
     </span>
@@ -95,8 +111,10 @@ const props = withDefaults(defineProps<{
   now: number
   probing?: boolean
   globalProbeEnabled?: boolean
+  changeDirection?: 'up' | 'down' | null
 }>(), {
-  globalProbeEnabled: true
+  globalProbeEnabled: true,
+  changeDirection: null
 })
 
 defineEmits<{
@@ -207,6 +225,11 @@ const statusClass = computed(() => {
   return ''
 })
 const hasEffectiveRate = computed(() => effectiveRate.value !== '-')
+const effectiveRateClass = computed(() => {
+  if (props.changeDirection === 'up') return 'font-mono text-red-600 dark:text-red-400'
+  if (props.changeDirection === 'down') return 'font-mono text-emerald-600 dark:text-emerald-400'
+  return 'font-mono text-gray-800 dark:text-gray-200'
+})
 const primaryValue = computed(() => hasEffectiveRate.value ? effectiveRate.value : statusLabel.value || '-')
 const formatDate = (value?: string) => value
   ? new Date(value).toLocaleString(undefined, {

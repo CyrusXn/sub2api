@@ -510,6 +510,8 @@ type UsageLog struct {
 	OpenAIWSMode bool   `json:"openai_ws_mode"`
 	DurationMs   *int   `json:"duration_ms"`
 	FirstTokenMs *int   `json:"first_token_ms"`
+	// DisplayFirstTokenMs 仅用于普通用户用量列表展示，真实首字仍保留在 FirstTokenMs。
+	DisplayFirstTokenMs *int `json:"display_first_token_ms,omitempty"`
 
 	// 图片生成字段
 	ImageCount         int            `json:"image_count"`

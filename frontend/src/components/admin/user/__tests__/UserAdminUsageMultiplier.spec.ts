@@ -106,6 +106,25 @@ describe('admin user usage multiplier fields', () => {
     }))
   })
 
+  it('accepts and submits a four-decimal multiplier when creating a user', async () => {
+    const wrapper = mount(UserCreateModal, {
+      ...mountOptions,
+      props: { show: true }
+    })
+
+    await wrapper.get('input[type="email"]').setValue('decimal@example.com')
+    await wrapper.get('input[required][type="text"]').setValue('secret123')
+    const input = wrapper.get('[data-test="admin-usage-multiplier"]')
+    expect(input.attributes('step')).toBe('0.0001')
+    await input.setValue('1.1111')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(createUser).toHaveBeenCalledWith(expect.objectContaining({
+      admin_usage_multiplier: 1.1111
+    }))
+  })
+
   it('clears an existing user multiplier to restore group inheritance', async () => {
     const wrapper = mount(UserEditModal, {
       ...mountOptions,

@@ -29,10 +29,12 @@ const (
 
 	defaultSiteName = "Sub2API"
 
-	dailyLowBalanceReminderThreshold = 2.0
-	dailyLowBalanceReminderHour      = 9
-	dailyLowBalanceReminderTimeout   = 2 * time.Hour
-	dailyLowBalanceReminderLockKey   = "balance:daily-low-reminder"
+	dailyLowBalanceReminderThreshold    = 2.0
+	dailyLowBalanceReminderHour         = 9
+	dailyLowBalanceReminderTimeout      = 2 * time.Hour
+	dailyLowBalanceReminderLockKey      = "balance:daily-low-reminder"
+	insufficientBalanceNotifyCooldown   = 3 * time.Minute
+	insufficientBalanceNotifyLockPrefix = "balance:insufficient-notify:"
 )
 
 // quotaDimLabels maps dimension names to display labels.
@@ -64,6 +66,9 @@ type BalanceNotifyService struct {
 	instanceID               string
 	dailyStartOnce           sync.Once
 	insufficientNotifyGroup  singleflight.Group
+	insufficientNotifyMu     sync.Mutex
+	insufficientNotifyUntil  map[int64]time.Time
+	now                      func() time.Time
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
@@ -73,6 +78,7 @@ func NewBalanceNotifyService(emailService *EmailService, settingRepo SettingRepo
 		settingRepo:  settingRepo,
 		accountRepo:  accountRepo,
 		instanceID:   uuid.NewString(),
+		now:          time.Now,
 	}
 }
 
@@ -124,22 +130,16 @@ func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, u
 }
 
 // NotifyUserInsufficientBalance 在请求因用户自身余额不足而被拒绝时通知该用户。
-// 同一用户同一天与扣费阈值提醒共用幂等键，避免重复发送。
-func (s *BalanceNotifyService) NotifyUserInsufficientBalance(ctx context.Context, user *User, currentBalance float64) {
-	if !s.canNotifyBalance(user) || strings.TrimSpace(user.Email) == "" {
-		return
-	}
-	effectiveThreshold, rechargeURL, ok := s.resolveUserEffectiveThreshold(ctx, user)
-	if !ok {
+// 同一用户三分钟内的连续重试合并为一封，避免客户端自动重试造成邮件轰炸。
+func (s *BalanceNotifyService) NotifyUserInsufficientBalance(_ context.Context, user *User, currentBalance float64) {
+	if s == nil || s.emailService == nil || user == nil || strings.TrimSpace(user.Email) == "" {
 		return
 	}
 
 	userID := user.ID
 	userName := user.Username
 	userEmail := user.Email
-	siteName := s.getSiteName(ctx)
-	reminderKey := balanceReminderDay(time.Now())
-	singleflightKey := fmt.Sprintf("%d:%s", userID, reminderKey)
+	singleflightKey := strconv.FormatInt(userID, 10)
 	go func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
@@ -147,10 +147,100 @@ func (s *BalanceNotifyService) NotifyUserInsufficientBalance(ctx context.Context
 			}
 		}()
 		_, _, _ = s.insufficientNotifyGroup.Do(singleflightKey, func() (any, error) {
-			s.sendBalanceLowEmails([]string{userEmail}, userID, userName, userEmail, currentBalance, effectiveThreshold, siteName, rechargeURL)
+			release, acquired := s.acquireInsufficientBalanceNotifyCooldown(userID)
+			if !acquired {
+				return nil, nil
+			}
+			backgroundCtx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+			defer cancel()
+			handled := s.sendInsufficientBalanceEmail(
+				backgroundCtx, userID, userName, userEmail, currentBalance,
+				s.getSiteName(backgroundCtx), s.getInsufficientBalanceRechargeURL(backgroundCtx),
+			)
+			if !handled {
+				release()
+			}
 			return nil, nil
 		})
 	}()
+}
+
+func (s *BalanceNotifyService) sendInsufficientBalanceEmail(ctx context.Context, userID int64, userName, userEmail string, balance float64, siteName, rechargeURL string) bool {
+	displayName := userName
+	if strings.TrimSpace(displayName) == "" {
+		displayName = userEmail
+	}
+	subject := fmt.Sprintf("[%s] 余额不足提醒", sanitizeEmailHeader(siteName))
+	body := s.buildInsufficientBalanceEmailBody(html.EscapeString(displayName), balance, html.EscapeString(siteName), rechargeURL)
+	if err := s.emailService.SendEmail(ctx, userEmail, subject, body); err != nil {
+		slog.Error("发送余额不足请求提醒失败", "user_id", userID, "error", err)
+		return false
+	}
+	slog.Info("余额不足请求提醒发送成功", "user_id", userID)
+	return true
+}
+
+// getInsufficientBalanceRechargeURL 只读取充值地址，不使用余额提醒开关或阈值阻断事务邮件。
+func (s *BalanceNotifyService) getInsufficientBalanceRechargeURL(ctx context.Context) string {
+	if s == nil || s.settingRepo == nil {
+		return ""
+	}
+	rechargeURL, err := s.settingRepo.GetValue(ctx, SettingKeyBalanceLowNotifyRechargeURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(rechargeURL)
+}
+
+func (s *BalanceNotifyService) acquireInsufficientBalanceNotifyCooldown(userID int64) (func(), bool) {
+	now := s.currentTime()
+	reservationID := uuid.NewString()
+	lockKey := insufficientBalanceNotifyLockPrefix + strconv.FormatInt(userID, 10)
+	owner := s.instanceID + ":" + reservationID
+
+	if s.leaderLockCache != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		acquired, err := s.leaderLockCache.TryAcquireLeaderLock(ctx, lockKey, owner, insufficientBalanceNotifyCooldown)
+		cancel()
+		if err == nil {
+			if !acquired {
+				return func() {}, false
+			}
+			return func() {
+				releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer releaseCancel()
+				if releaseErr := s.leaderLockCache.ReleaseLeaderLock(releaseCtx, lockKey, owner); releaseErr != nil {
+					slog.Warn("释放余额不足邮件冷却锁失败", "user_id", userID, "error", releaseErr)
+				}
+			}, true
+		}
+		slog.Warn("获取余额不足邮件冷却锁失败，回退进程内冷却", "user_id", userID, "error", err)
+	}
+
+	s.insufficientNotifyMu.Lock()
+	defer s.insufficientNotifyMu.Unlock()
+	if until := s.insufficientNotifyUntil[userID]; now.Before(until) {
+		return func() {}, false
+	}
+	if s.insufficientNotifyUntil == nil {
+		s.insufficientNotifyUntil = make(map[int64]time.Time)
+	}
+	until := now.Add(insufficientBalanceNotifyCooldown)
+	s.insufficientNotifyUntil[userID] = until
+	return func() {
+		s.insufficientNotifyMu.Lock()
+		defer s.insufficientNotifyMu.Unlock()
+		if s.insufficientNotifyUntil[userID].Equal(until) {
+			delete(s.insufficientNotifyUntil, userID)
+		}
+	}, true
+}
+
+func (s *BalanceNotifyService) currentTime() time.Time {
+	if s != nil && s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 func (s *BalanceNotifyService) runDailyLowBalanceReminder() {
@@ -428,6 +518,9 @@ func (s *BalanceNotifyService) getAccountQuotaNotifyEmails(ctx context.Context) 
 
 // getSiteName reads site name from settings with fallback.
 func (s *BalanceNotifyService) getSiteName(ctx context.Context) string {
+	if s == nil || s.settingRepo == nil {
+		return defaultSiteName
+	}
 	name, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
 	if err != nil || name == "" {
 		return defaultSiteName
@@ -499,7 +592,7 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 				UserID:         userID,
 				SourceType:     "balance_low",
 				SourceID:       firstNonEmpty(strconv.FormatInt(userID, 10), userEmail),
-				ReminderKey:    balanceReminderDay(time.Now()),
+				ReminderKey:    balanceReminderDay(s.currentTime()),
 				Variables: map[string]string{
 					"current_balance": fmt.Sprintf("%.2f", balance),
 					"threshold":       fmt.Sprintf("%.2f", threshold),
@@ -627,6 +720,41 @@ const balanceLowEmailTemplate = `<!DOCTYPE html>
 </body>
 </html>`
 
+// insufficientBalanceEmailTemplate 是请求因余额不足失败时使用的事务邮件模板，不包含图片或二维码。
+// 格式化参数依次为站点名、用户名、余额和充值按钮。
+const insufficientBalanceEmailTemplate = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #f59e0b 0%%, #d97706 100%%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .content { padding: 40px 30px; text-align: center; }
+        .balance { font-size: 36px; font-weight: bold; color: #dc2626; margin: 20px 0; }
+        .info { color: #666; font-size: 14px; line-height: 1.6; margin-top: 20px; }
+        .recharge-btn { display: inline-block; margin-top: 24px; padding: 12px 32px; background: linear-gradient(135deg, #f59e0b 0%%, #d97706 100%%); color: #fff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: bold; }
+        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>%s</h1></div>
+        <div class="content">
+            <p style="font-size: 18px; color: #333;">%s，您的账户余额不足</p>
+            <div class="balance">$%.2f</div>
+            <div class="info">
+                <p>本次请求因账户余额不足未能完成。</p>
+                <p>请充值后重新发起请求。</p>
+            </div>
+            %s
+        </div>
+        <div class="footer"><p>此邮件由系统自动发送，请勿回复。</p></div>
+    </div>
+</body>
+</html>`
+
 // quotaAlertEmailTemplate is the HTML template for account quota alert notifications.
 // Format args: siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay.
 const quotaAlertEmailTemplate = `<!DOCTYPE html>
@@ -675,6 +803,14 @@ func (s *BalanceNotifyService) buildBalanceLowEmailBody(userName string, balance
 		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值</a>`, html.EscapeString(rechargeURL))
 	}
 	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, balance, threshold, rechargeBlock)
+}
+
+func (s *BalanceNotifyService) buildInsufficientBalanceEmailBody(userName string, balance float64, siteName, rechargeURL string) string {
+	rechargeBlock := ""
+	if rechargeURL != "" {
+		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值</a>`, html.EscapeString(rechargeURL))
+	}
+	return fmt.Sprintf(insufficientBalanceEmailTemplate, siteName, userName, balance, rechargeBlock)
 }
 
 // buildQuotaAlertEmailBody builds HTML email for account quota alert.

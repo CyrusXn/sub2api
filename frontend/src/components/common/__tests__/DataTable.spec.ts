@@ -397,6 +397,130 @@ describe('DataTable', () => {
     expect(nameHeader?.attributes('style') || '').toContain(`${saved.name}px`)
   })
 
+  it('keeps columns without configured or persisted widths on browser auto layout', async () => {
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [
+          { key: 'name', label: 'Name' },
+          { key: 'email', label: 'Email' }
+        ],
+        data: [{ id: 1, name: 'Alice', email: 'alice@example.com' }]
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    for (const column of wrapper.findAll('col')) {
+      expect(column.attributes('style')).toBeUndefined()
+    }
+    for (const header of wrapper.findAll('th[data-column-key]')) {
+      expect(header.attributes('style')).toBeUndefined()
+    }
+  })
+
+  it('supports a compact 40px checkbox column', async () => {
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [
+          { key: 'select', label: '', width: 40 },
+          { key: 'name', label: 'Name' }
+        ],
+        data: [{ id: 1, select: true, name: 'Alice' }]
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const selectColumn = wrapper.get('th[data-column-key="select"]')
+    expect(selectColumn.attributes('style')).toContain('40px')
+    expect(selectColumn.find('[data-test="column-resize-handle"]').exists()).toBe(false)
+  })
+
+  it('only persists manually resized column widths and resets to configured defaults', async () => {
+    const columns = [
+      { key: 'select', label: '', width: 48 },
+      { key: 'name', label: 'Name', width: 240 },
+      { key: 'actions', label: 'Actions', width: 260 }
+    ]
+    const data = [{ id: 1, select: true, name: 'Alice', actions: 'Edit' }]
+    const storageKey = 'test-table-manual-column-widths'
+
+    const wrapper = mount(DataTable, {
+      props: {
+        columns,
+        data,
+        columnWidthStorageKey: storageKey
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(localStorage.getItem(storageKey)).toBeNull()
+    const initialColStyles = wrapper.findAll('col').map((col) => col.attributes('style') || '')
+    expect(initialColStyles.some((style) => style.includes('48px'))).toBe(true)
+    expect(initialColStyles.some((style) => style.includes('240px'))).toBe(true)
+    expect(initialColStyles.some((style) => style.includes('260px'))).toBe(true)
+
+    const nameHandle = wrapper.get('th[data-column-key="name"] [data-test="column-resize-handle"]')
+    await nameHandle.trigger('mousedown', { clientX: 100 })
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 180 }))
+    window.dispatchEvent(new MouseEvent('mouseup'))
+    await wrapper.vm.$nextTick()
+
+    let saved = JSON.parse(localStorage.getItem(storageKey) || '{}')
+    expect(Object.keys(saved)).toEqual(['name'])
+    expect(saved.name).toBe(320)
+
+    await nameHandle.trigger('dblclick')
+    await wrapper.vm.$nextTick()
+
+    saved = JSON.parse(localStorage.getItem(storageKey) || '{}')
+    expect(saved).toEqual({})
+    const resetColStyles = wrapper.findAll('col').map((col) => col.attributes('style') || '')
+    expect(resetColStyles.some((style) => style.includes('240px'))).toBe(true)
+  })
+
+  it('persists dragged column order and restores it on remount', async () => {
+    const columns = [
+      { key: 'name', label: 'Name' },
+      { key: 'email', label: 'Email' },
+      { key: 'actions', label: 'Actions' }
+    ]
+    const data = [{ id: 1, name: 'Alice', email: 'alice@example.com', actions: 'Edit' }]
+    const storageKey = 'test-table-column-order'
+
+    const wrapper = mount(DataTable, {
+      props: {
+        columns,
+        data,
+        columnOrderStorageKey: storageKey
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const headers = wrapper.findAll('th[data-column-key]')
+    expect(headers.every((header) => header.attributes('draggable') !== 'true')).toBe(true)
+    const dragHandles = wrapper.findAll('[data-test="column-drag-handle"]')
+    expect(dragHandles).toHaveLength(2)
+    await dragHandles[1].trigger('dragstart', {
+      dataTransfer: { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: vi.fn() }
+    })
+    await headers[0].trigger('drop', { preventDefault: vi.fn() })
+    await wrapper.vm.$nextTick()
+
+    expect(JSON.parse(localStorage.getItem(storageKey) || '[]')).toEqual(['email', 'name', 'actions'])
+
+    wrapper.unmount()
+    const wrapper2 = mount(DataTable, {
+      props: {
+        columns,
+        data,
+        columnOrderStorageKey: storageKey
+      }
+    })
+    await wrapper2.vm.$nextTick()
+
+    const restored = wrapper2.findAll('th[data-column-key]').map((th) => th.attributes('data-column-key'))
+    expect(restored).toEqual(['email', 'name', 'actions'])
+  })
+
   it('shows a floating tooltip when hovering a desktop table cell', async () => {
     const wrapper = mount(DataTable, {
       attachTo: document.body,

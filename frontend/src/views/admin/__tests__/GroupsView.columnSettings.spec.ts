@@ -149,11 +149,12 @@ const TablePageLayoutStub = {
 }
 
 const DataTableStub = {
-  props: ['columns', 'data'],
+  props: ['columns', 'data', 'columnWidthStorageKey', 'columnOrderStorageKey'],
   emits: ['sort'],
   template: `
     <div>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
+      <div data-test="columns-meta">{{ JSON.stringify(columns.map((col) => ({ key: col.key, width: col.width }))) }}</div>
       <div data-test="rows">{{ data.map((row) => row.name).join(',') }}</div>
     </div>
   `,
@@ -279,6 +280,12 @@ describe('admin GroupsView column settings', () => {
       'status',
       'actions',
     ])
+    const columnMeta = JSON.parse(wrapper.get('[data-test="columns-meta"]').text()) as Array<{ key: string; width?: number }>
+    expect(columnMeta.find((column) => column.key === 'actions')?.width).toBe(300)
+
+    const table = wrapper.getComponent(DataTableStub)
+    expect(table.props('columnWidthStorageKey')).toBe('group-table-column-widths:v2')
+    expect(table.props('columnOrderStorageKey')).toBe('group-table-column-order')
     expect(localStorage.getItem('group-hidden-columns')).toBe(JSON.stringify(['id']))
     expect(localStorage.getItem('group-column-settings-version')).toBe('2')
   })

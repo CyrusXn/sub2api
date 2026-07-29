@@ -66,6 +66,28 @@
           </div>
         </div>
 
+        <!-- 邮件投递异常时提供人工处理渠道，避免用户在注册流程中无处求助。 -->
+        <div
+          data-test="email-code-support-notice"
+          class="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-700/70 dark:bg-amber-900/25"
+        >
+          <div class="flex items-start gap-3">
+            <Icon name="exclamationCircle" size="md" class="mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+            <div class="min-w-0 space-y-1 text-amber-800 dark:text-amber-200">
+              <p data-test="email-code-support-issue" class="whitespace-nowrap text-sm font-semibold leading-6">
+                {{ t('auth.verificationCodeSupportIssue') }}
+              </p>
+              <p class="text-sm leading-6">
+                {{ t('auth.verificationCodeSupportContactPrefix') }}
+                <strong data-test="email-code-support-wechat" class="text-base font-bold text-red-600 dark:text-red-400">
+                  {{ t('auth.verificationCodeSupportWeChat') }}
+                </strong>
+                {{ t('auth.verificationCodeSupportContactSuffix') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <!-- Turnstile Widget for Resend -->
         <div v-if="turnstileEnabled && turnstileSiteKey && showResendTurnstile">
           <TurnstileWidget

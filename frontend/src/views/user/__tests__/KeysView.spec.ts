@@ -153,12 +153,12 @@ const TablePageLayoutStub = {
 
 const DataTableStub = {
   name: 'DataTable',
-  props: ['columns', 'data'],
+  props: ['columns', 'data', 'columnWidthStorageKey', 'columnOrderStorageKey'],
   emits: ['sort'],
   template: `
     <div>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
-      <div data-test="columns-meta">{{ JSON.stringify(columns.map((col) => ({ key: col.key, sortable: !!col.sortable }))) }}</div>
+      <div data-test="columns-meta">{{ JSON.stringify(columns.map((col) => ({ key: col.key, sortable: !!col.sortable, width: col.width }))) }}</div>
       <button data-test="sort-current-concurrency" @click="$emit('sort', 'current_concurrency', 'asc')">
         Sort Current Concurrency
       </button>
@@ -245,7 +245,7 @@ const mountView = async () => {
 const visibleColumnKeys = (wrapper: VueWrapper) =>
   wrapper.get('[data-test="columns"]').text().split(',').filter(Boolean)
 
-const visibleColumnMeta = (wrapper: VueWrapper): Array<{ key: string; sortable: boolean }> =>
+const visibleColumnMeta = (wrapper: VueWrapper): Array<{ key: string; sortable: boolean; width?: number }> =>
   JSON.parse(wrapper.get('[data-test="columns-meta"]').text())
 
 const getButtonByText = (wrapper: VueWrapper, text: string) => {
@@ -303,6 +303,11 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_at')
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_ip')
     expect(visibleColumnKeys(wrapper)).not.toContain('id')
+    expect(visibleColumnMeta(wrapper).find((column) => column.key === 'actions')?.width).toBe(320)
+
+    const table = wrapper.getComponent(DataTableStub)
+    expect(table.props('columnWidthStorageKey')).toBe('api-key-table-column-widths:v2')
+    expect(table.props('columnOrderStorageKey')).toBe('api-key-table-column-order')
   })
 
   it('shows a hidden column when toggled and persists the preference', async () => {
