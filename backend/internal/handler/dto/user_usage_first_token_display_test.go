@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,37 @@ func TestUsageLogFromServiceForUserList_GroupRulesAndThresholds(t *testing.T) {
 			}
 			require.GreaterOrEqual(t, *got.DisplayFirstTokenMs, tt.wantMin)
 			require.LessOrEqual(t, *got.DisplayFirstTokenMs, tt.wantMax)
+		})
+	}
+}
+
+func TestUsageLogFromServiceForUserList_AppliesDisplayValueOnlyFromCutoff(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		createdAt   time.Time
+		wantDisplay bool
+	}{
+		{name: "before cutoff keeps historical value", createdAt: userUsageFirstTokenDisplayCutoff.Add(-time.Nanosecond)},
+		{name: "at cutoff enables derived value", createdAt: userUsageFirstTokenDisplayCutoff, wantDisplay: true},
+		{name: "after cutoff enables derived value", createdAt: userUsageFirstTokenDisplayCutoff.Add(time.Nanosecond), wantDisplay: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			log := usageLogForFirstTokenDisplay(1, "req-cutoff", "Plus", 30_000)
+			log.CreatedAt = tt.createdAt
+
+			got := UsageLogFromServiceForUserList(log)
+
+			require.Equal(t, 30_000, *got.FirstTokenMs, "真实首字必须始终保留")
+			if tt.wantDisplay {
+				require.NotNil(t, got.DisplayFirstTokenMs)
+				return
+			}
+			require.Nil(t, got.DisplayFirstTokenMs)
 		})
 	}
 }
@@ -124,6 +156,7 @@ func usageLogForFirstTokenDisplay(id int64, requestID, groupName string, firstTo
 		Model:        "gpt-5.4",
 		FirstTokenMs: intPtr(firstTokenMs),
 		Group:        &service.Group{Name: groupName},
+		CreatedAt:    userUsageFirstTokenDisplayCutoff,
 	}
 }
 

@@ -638,9 +638,16 @@ const formatUserAgent = (ua: string): string => {
   return ua
 }
 
-// 普通用户列表优先使用后端派生值；管理端未返回该字段时继续展示真实首字。
-const getDisplayFirstTokenMs = (row: AdminUsageLog): number | null =>
-  row.display_first_token_ms ?? row.first_token_ms ?? null
+// 北京时间 2026-07-30 00:00:00 前的历史记录始终展示真实首字。
+const USER_FIRST_TOKEN_DISPLAY_CUTOFF_MS = Date.parse('2026-07-30T00:00:00+08:00')
+
+const getDisplayFirstTokenMs = (row: AdminUsageLog): number | null => {
+  const createdAtMs = Date.parse(row.created_at)
+  if (!Number.isFinite(createdAtMs) || createdAtMs < USER_FIRST_TOKEN_DISPLAY_CUTOFF_MS) {
+    return row.first_token_ms ?? null
+  }
+  return row.display_first_token_ms ?? row.first_token_ms ?? null
+}
 
 const getDisplayFirstTokenSeverity = (row: AdminUsageLog) =>
   firstTokenSeverity(getDisplayFirstTokenMs(row) ?? 0)

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -17,6 +18,9 @@ const (
 	userUsageLatencyGroupPro
 	userUsageLatencyGroupPlus
 )
+
+// 北京时间 2026-07-30 00:00:00 起才生成用户端首字派生值，历史记录继续显示真实值。
+var userUsageFirstTokenDisplayCutoff = time.Date(2026, time.July, 29, 16, 0, 0, 0, time.UTC)
 
 // UsageLogFromServiceForUserList 为普通用户列表补充稳定的首字展示值。
 // 管理端继续使用 UsageLogFromServiceAdmin，因此不会暴露或使用该派生字段。
@@ -31,7 +35,10 @@ func UsageLogFromServiceForUserList(log *service.UsageLog) *UsageLog {
 }
 
 func resolveUserUsageDisplayFirstTokenMs(log *service.UsageLog) *int {
-	if log == nil || log.FirstTokenMs == nil || log.Group == nil {
+	if log == nil || log.CreatedAt.Before(userUsageFirstTokenDisplayCutoff) {
+		return nil
+	}
+	if log.FirstTokenMs == nil || log.Group == nil {
 		return nil
 	}
 

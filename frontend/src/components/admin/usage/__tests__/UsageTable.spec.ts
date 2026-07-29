@@ -93,6 +93,7 @@ const DataTableStub = {
 
 const baseImageRow = {
   request_id: 'req-admin-image',
+  created_at: '2026-07-30T00:00:00+08:00',
   model: 'gpt-image-2',
   actual_cost: 0.4,
   total_cost: 0.4,
@@ -403,6 +404,37 @@ describe('admin UsageTable tooltip', () => {
 })
 
 describe('admin UsageTable first-token display value', () => {
+  it('keeps the real first-token value for records before the cutoff', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          {
+            ...baseImageRow,
+            request_id: 'req-user-historical-latency',
+            created_at: '2026-07-29T23:59:59.999+08:00',
+            first_token_ms: 45_000,
+            display_first_token_ms: 999,
+            duration_ms: 12_345,
+          },
+        ],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('45.00s')
+    expect(wrapper.text()).toContain('12.35s')
+    expect(wrapper.text()).not.toContain('999ms')
+  })
+
   it('uses the derived first-token value for text and health color while keeping real duration', () => {
     const wrapper = mount(UsageTable, {
       props: {
