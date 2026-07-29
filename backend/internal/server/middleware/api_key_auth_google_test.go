@@ -20,6 +20,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type recordingGoogleInsufficientBalanceNotifier struct {
+	calls  atomic.Int32
+	userID atomic.Int64
+}
+
+func (n *recordingGoogleInsufficientBalanceNotifier) NotifyUserInsufficientBalance(_ context.Context, user *service.User, _ float64) {
+	n.calls.Add(1)
+	if user != nil {
+		n.userID.Store(user.ID)
+	}
+}
+
 func TestGoogleAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var calls atomic.Int32
@@ -106,7 +118,7 @@ func (f fakeAPIKeyRepo) GetByKey(ctx context.Context, key string) (*service.APIK
 func (f fakeAPIKeyRepo) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
 	return f.GetByKey(ctx, key)
 }
-func (f fakeAPIKeyRepo) Update(ctx context.Context, key *service.APIKey) error {
+func (f fakeAPIKeyRepo) Update(ctx context.Context, key *service.APIKey, _ service.APIKeyUpdateFields) error {
 	return errors.New("not implemented")
 }
 func (f fakeAPIKeyRepo) Delete(ctx context.Context, id int64) error {
@@ -598,7 +610,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_InsufficientBalance(t *testing.T) {
 			}, nil
 		},
 	})
-	notifier := &recordingInsufficientBalanceNotifier{}
+	notifier := &recordingGoogleInsufficientBalanceNotifier{}
 	r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, nil, &config.Config{}, notifier))
 	r.GET("/v1beta/test", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
 
