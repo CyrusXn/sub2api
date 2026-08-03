@@ -889,6 +889,11 @@ func (s *UpstreamBillingProbeService) fetchWebAccountBillingData(
 	password := credential.Password
 	host, _, _ := normalizeUpstreamSite(baseURL)
 	if upstreamSiteProtocolForHost(host) == "newapi" {
+		if isPiteUpstreamSite(host) {
+			if token, userID, ok := parsePiteStoredSystemSession(username, password); ok {
+				return s.fetchNewAPIAccountDataWithSession(ctx, account, baseURL, apiKey, token, userID, proxyURL, tlsProfile, now)
+			}
+		}
 		return s.fetchNewAPIAccountData(ctx, account, baseURL, apiKey, username, password, proxyURL, tlsProfile, now)
 	}
 	token, statusCode, reason, retryDelay := s.webAccountAccessToken(ctx, account, baseURL, username, password, proxyURL, tlsProfile, now)
@@ -963,6 +968,11 @@ func (s *UpstreamBillingProbeService) fetchConfiguredWebAccountBalance(
 	password := credential.Password
 	host, _, _ := normalizeUpstreamSite(baseURL)
 	if upstreamSiteProtocolForHost(host) == "newapi" {
+		if isPiteUpstreamSite(host) {
+			if token, userID, ok := parsePiteStoredSystemSession(username, password); ok {
+				return s.fetchNewAPIAccountBalance(ctx, account, baseURL, token, userID, proxyURL, tlsProfile, now)
+			}
+		}
 		token, userID, statusCode, reason, _ := s.newAPIWebAccountAccessToken(
 			ctx, account, baseURL, username, password, proxyURL, tlsProfile, now,
 		)
@@ -997,6 +1007,20 @@ func (s *UpstreamBillingProbeService) fetchNewAPIAccountData(
 	if reason != "" {
 		return nil, nil, statusCode, reason, retryDelay
 	}
+	return s.fetchNewAPIAccountDataWithSession(ctx, account, baseURL, apiKey, token, userID, proxyURL, tlsProfile, now)
+}
+
+func (s *UpstreamBillingProbeService) fetchNewAPIAccountDataWithSession(
+	ctx context.Context,
+	account *Account,
+	baseURL string,
+	apiKey string,
+	token string,
+	userID int,
+	proxyURL string,
+	tlsProfile *tlsfingerprint.Profile,
+	now time.Time,
+) (map[string]any, *UpstreamAccountBalanceSnapshot, int, string, time.Duration) {
 	balance := s.fetchNewAPIAccountBalance(ctx, account, baseURL, token, userID, proxyURL, tlsProfile, now)
 	rate, statusCode, reason, retryDelay := s.fetchNewAPICurrentKeyRate(
 		ctx, account, baseURL, apiKey, token, userID, proxyURL, tlsProfile, now,
@@ -1015,6 +1039,20 @@ func (s *UpstreamBillingProbeService) fetchNewAPIAccountData(
 		"observed_at":               now.UTC().Format(time.RFC3339Nano),
 	}
 	return data, balance, http.StatusOK, "", 0
+}
+
+func isPiteUpstreamSite(host string) bool {
+	return strings.EqualFold(strings.TrimSpace(host), "ai.pite.chat")
+}
+
+func parsePiteStoredSystemSession(username string, password string) (string, int, bool) {
+	userID, err := strconv.Atoi(strings.TrimSpace(username))
+	token := strings.TrimSpace(password)
+	// Pite 新版查询链路使用站点级 system token 和 New-Api-User，不再走网页登录换 token。
+	if err != nil || userID <= 0 || token == "" {
+		return "", 0, false
+	}
+	return token, userID, true
 }
 
 func (s *UpstreamBillingProbeService) newAPIWebAccountAccessToken(

@@ -206,13 +206,16 @@ type webAccountRateHTTPStub struct {
 }
 
 type newAPIWebAccountHTTPStub struct {
-	mu            sync.Mutex
-	requests      []string
-	currentAPIKey string
-	currentGroup  string
-	groupRate     float64
-	rawQuota      float64
-	quotaPerUnit  float64
+	mu                 sync.Mutex
+	requests           []string
+	currentAPIKey      string
+	currentGroup       string
+	groupRate          float64
+	rawQuota           float64
+	quotaPerUnit       float64
+	rejectWebLogin     bool
+	requiredAuth       string
+	requiredNewAPIUser string
 }
 
 func (u *newAPIWebAccountHTTPStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
@@ -224,16 +227,22 @@ func (u *newAPIWebAccountHTTPStub) Do(req *http.Request, _ string, _ int64, _ in
 	case "/v1/sub2api/billing":
 		return jsonResponse(http.StatusNotFound, "{\"message\":\"not supported\"}"), nil
 	case "/api/user/login":
+		if u.rejectWebLogin {
+			return jsonResponse(http.StatusInternalServerError, "{\"success\":false,\"message\":\"login should not be used\"}"), nil
+		}
 		resp := jsonResponse(http.StatusOK, "{\"success\":true,\"data\":{\"id\":9}}")
 		resp.Header.Add("Set-Cookie", "session=browser-session; Path=/; HttpOnly")
 		return resp, nil
 	case "/api/user/token":
+		if u.rejectWebLogin {
+			return jsonResponse(http.StatusInternalServerError, "{\"success\":false,\"message\":\"token endpoint should not be used\"}"), nil
+		}
 		if req.Header.Get("Cookie") == "" || req.Header.Get("New-Api-User") != "9" {
 			return jsonResponse(http.StatusUnauthorized, "{\"success\":false}"), nil
 		}
 		return jsonResponse(http.StatusOK, "{\"success\":true,\"data\":\"system-access\"}"), nil
 	case "/api/token/":
-		if req.Header.Get("Authorization") != "system-access" || req.Header.Get("New-Api-User") != "9" {
+		if !u.hasExpectedNewAPIWebAuth(req) {
 			return jsonResponse(http.StatusUnauthorized, "{\"success\":false}"), nil
 		}
 		return jsonResponse(http.StatusOK, fmt.Sprintf(
@@ -242,12 +251,18 @@ func (u *newAPIWebAccountHTTPStub) Do(req *http.Request, _ string, _ int64, _ in
 			u.currentGroup,
 		)), nil
 	case "/api/user/self/groups":
+		if !u.hasExpectedNewAPIWebAuth(req) {
+			return jsonResponse(http.StatusUnauthorized, "{\"success\":false}"), nil
+		}
 		return jsonResponse(http.StatusOK, fmt.Sprintf(
 			"{\"success\":true,\"data\":{%q:{\"ratio\":%v}}}",
 			u.currentGroup,
 			u.groupRate,
 		)), nil
 	case "/api/user/self":
+		if !u.hasExpectedNewAPIWebAuth(req) {
+			return jsonResponse(http.StatusUnauthorized, "{\"success\":false}"), nil
+		}
 		return jsonResponse(http.StatusOK, fmt.Sprintf(
 			"{\"success\":true,\"data\":{\"quota\":%v,\"status\":1}}",
 			u.rawQuota,
@@ -260,6 +275,18 @@ func (u *newAPIWebAccountHTTPStub) Do(req *http.Request, _ string, _ int64, _ in
 	default:
 		return jsonResponse(http.StatusNotFound, "not found"), nil
 	}
+}
+
+func (u *newAPIWebAccountHTTPStub) hasExpectedNewAPIWebAuth(req *http.Request) bool {
+	requiredAuth := u.requiredAuth
+	if requiredAuth == "" {
+		requiredAuth = "system-access"
+	}
+	requiredUser := u.requiredNewAPIUser
+	if requiredUser == "" {
+		requiredUser = "9"
+	}
+	return req.Header.Get("Authorization") == requiredAuth && req.Header.Get("New-Api-User") == requiredUser
 }
 
 func (u *newAPIWebAccountHTTPStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
@@ -384,12 +411,16 @@ func newUpstreamBillingProbeTestService(
 }
 
 func attachUpstreamSiteCredential(svc *UpstreamBillingProbeService, host string) {
+	attachUpstreamSiteCredentialWithValues(svc, host, "admin@example.com", "secret")
+}
+
+func attachUpstreamSiteCredentialWithValues(svc *UpstreamBillingProbeService, host string, username string, password string) {
 	svc.SetUpstreamSiteCredentialService(NewUpstreamSiteCredentialService(
 		&upstreamSiteCredentialRepoStub{credentials: map[string]*UpstreamSiteCredential{
 			host: {
 				Host:               host,
-				LoginUsername:      "admin@example.com",
-				PasswordCiphertext: "cipher:secret",
+				LoginUsername:      username,
+				PasswordCiphertext: "cipher:" + password,
 			},
 		}},
 		upstreamSiteCredentialEncryptorStub{},
@@ -672,6 +703,50 @@ func TestUpstreamBillingProbeUsesNewAPIWebLoginForAIGC(t *testing.T) {
 		"GET /v1/sub2api/billing",
 		"POST /api/user/login",
 		"GET /api/user/token",
+		"GET /api/user/self",
+		"GET /api/status",
+		"GET /api/token/",
+		"GET /api/user/self/groups",
+	}, upstream.requestPaths())
+}
+
+func TestUpstreamBillingProbeUsesPiteStoredSystemTokenAndUserID(t *testing.T) {
+	account := &Account{
+		ID:          364,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-pite-current",
+			"base_url": "https://ai.pite.chat/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &newAPIWebAccountHTTPStub{
+		currentAPIKey:      "sk-pite-current",
+		currentGroup:       "pro20x",
+		groupRate:          0.16,
+		rawQuota:           880000,
+		quotaPerUnit:       500000,
+		rejectWebLogin:     true,
+		requiredAuth:       "system-access",
+		requiredNewAPIUser: "4319",
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredentialWithValues(svc, "ai.pite.chat", "4319", "system-access")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, 0.16, snapshot.Data["effective_rate_multiplier"])
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.InDelta(t, 1.76, *snapshot.Balance.Amount, 0.000001)
+	require.Equal(t, "USD", snapshot.Balance.Unit)
+	require.Equal(t, []string{
+		"GET /v1/sub2api/billing",
 		"GET /api/user/self",
 		"GET /api/status",
 		"GET /api/token/",
