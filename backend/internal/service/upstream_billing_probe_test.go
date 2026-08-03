@@ -724,7 +724,8 @@ func TestUpstreamBillingProbeUsesPiteStoredSystemTokenAndUserID(t *testing.T) {
 	}
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
 	upstream := &newAPIWebAccountHTTPStub{
-		currentAPIKey:      "sk-pite-current",
+		// Pite 会省略 sk- 并只返回密钥前缀，必须与完整 API Key 正确匹配。
+		currentAPIKey:      "pite-cur",
 		currentGroup:       "pro20x",
 		groupRate:          0.16,
 		rawQuota:           880000,

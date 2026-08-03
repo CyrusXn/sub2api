@@ -1706,8 +1706,10 @@ func webAccountMaskedKeyMatches(candidate string, fullAPIKey string) bool {
 
 	lowerMasked := strings.ToLower(masked)
 	lowerFull := strings.ToLower(full)
-	if len(masked) >= 8 && strings.HasPrefix(lowerFull, lowerMasked) {
-		return true
+	// Pite 的脱敏值会省略 sk-，同时保留原值比较以兼容其他 NewAPI 站点。
+	comparableFullKeys := []string{lowerFull}
+	if strings.HasPrefix(lowerFull, "sk-") {
+		comparableFullKeys = append(comparableFullKeys, strings.TrimPrefix(lowerFull, "sk-"))
 	}
 	parts := strings.FieldsFunc(lowerMasked, func(r rune) bool {
 		switch r {
@@ -1717,14 +1719,23 @@ func webAccountMaskedKeyMatches(candidate string, fullAPIKey string) bool {
 			return false
 		}
 	})
-	if len(parts) >= 2 {
-		prefix := strings.TrimSpace(parts[0])
-		suffix := strings.TrimSpace(parts[len(parts)-1])
-		return len(prefix) >= 2 && len(suffix) >= 2 && strings.HasPrefix(lowerFull, prefix) && strings.HasSuffix(lowerFull, suffix)
-	}
-	if len(parts) == 1 {
-		token := strings.TrimSpace(parts[0])
-		return len(token) >= 6 && (strings.HasPrefix(lowerFull, token) || strings.HasSuffix(lowerFull, token))
+	for _, comparableFull := range comparableFullKeys {
+		if len(masked) >= 8 && strings.HasPrefix(comparableFull, lowerMasked) {
+			return true
+		}
+		if len(parts) >= 2 {
+			prefix := strings.TrimSpace(parts[0])
+			suffix := strings.TrimSpace(parts[len(parts)-1])
+			if len(prefix) >= 2 && len(suffix) >= 2 && strings.HasPrefix(comparableFull, prefix) && strings.HasSuffix(comparableFull, suffix) {
+				return true
+			}
+		}
+		if len(parts) == 1 {
+			token := strings.TrimSpace(parts[0])
+			if len(token) >= 6 && (strings.HasPrefix(comparableFull, token) || strings.HasSuffix(comparableFull, token)) {
+				return true
+			}
+		}
 	}
 	return false
 }
