@@ -208,6 +208,8 @@ type webAccountRateHTTPStub struct {
 type newAPIWebAccountHTTPStub struct {
 	mu                 sync.Mutex
 	requests           []string
+	standardStatus     int
+	standardResponse   string
 	currentAPIKey      string
 	currentGroup       string
 	groupRate          float64
@@ -225,7 +227,15 @@ func (u *newAPIWebAccountHTTPStub) Do(req *http.Request, _ string, _ int64, _ in
 
 	switch req.URL.Path {
 	case "/v1/sub2api/billing":
-		return jsonResponse(http.StatusNotFound, "{\"message\":\"not supported\"}"), nil
+		status := u.standardStatus
+		if status == 0 {
+			status = http.StatusNotFound
+		}
+		body := u.standardResponse
+		if body == "" {
+			body = "{\"message\":\"not supported\"}"
+		}
+		return jsonResponse(status, body), nil
 	case "/api/user/login":
 		if u.rejectWebLogin {
 			return jsonResponse(http.StatusInternalServerError, "{\"success\":false,\"message\":\"login should not be used\"}"), nil
@@ -724,6 +734,9 @@ func TestUpstreamBillingProbeUsesPiteStoredSystemTokenAndUserID(t *testing.T) {
 	}
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
 	upstream := &newAPIWebAccountHTTPStub{
+		// Pite 可能以 200 返回非 billing JSON，仍应回退到账户查询接口。
+		standardStatus:   http.StatusOK,
+		standardResponse: "{\"success\":false,\"message\":\"unsupported endpoint\"}",
 		// Pite 会省略 sk- 并只返回密钥前缀，必须与完整 API Key 正确匹配。
 		currentAPIKey:      "pite-cur",
 		currentGroup:       "pro20x",

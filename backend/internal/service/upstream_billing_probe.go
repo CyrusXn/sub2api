@@ -707,6 +707,14 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	}
 	data, err := parseUpstreamBillingProbeResponse(body)
 	if err != nil {
+		if upstreamBillingSupportsWebAccount(normalizedBaseURL) {
+			// 部分 NewAPI 站点会以 200 返回“不支持该接口”的普通 JSON，仍需回退到账户查询链路。
+			data, balance, statusCode, reason, retryDelay := s.fetchWebAccountBillingData(ctx, account, normalizedBaseURL, apiKey, proxyURL, tlsProfile, now)
+			if reason != "" {
+				return s.persistProbeFailureCleared(ctx, account, intervalMinutes, now, statusCode, reason, retryDelay, balance)
+			}
+			return s.persistProbeSuccess(ctx, account, intervalMinutes, now, statusCode, data, balance)
+		}
 		return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "invalid_response", retryAfter(resp.Header, now))
 	}
 	balance := s.fetchConfiguredWebAccountBalance(ctx, account, normalizedBaseURL, proxyURL, tlsProfile, now)
