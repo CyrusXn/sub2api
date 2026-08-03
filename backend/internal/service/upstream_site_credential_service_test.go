@@ -119,3 +119,9 @@ func TestUpstreamSiteCredentialServiceDeleteUsesNormalizedHost(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, repo.credentials)
 }
+
+func TestUpstreamSiteProtocolForHostClassifiesPiteAsNewAPI(t *testing.T) {
+	require.Equal(t, "newapi", upstreamSiteProtocolForHost("ai.pite.chat"))
+	require.Equal(t, "newapi", upstreamSiteProtocolForHost(" API.AIGCLINK.XYZ "))
+	require.Equal(t, "innom", upstreamSiteProtocolForHost("vovoapi.com"))
+}

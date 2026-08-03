@@ -175,7 +175,8 @@ func normalizeUpstreamSite(rawURL string) (string, string, error) {
 }
 
 func upstreamSiteProtocolForHost(host string) string {
-	if strings.EqualFold(strings.TrimSpace(host), "api.aigclink.xyz") {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "api.aigclink.xyz", "ai.pite.chat":
 		return "newapi"
 	}
 	return "innom"
