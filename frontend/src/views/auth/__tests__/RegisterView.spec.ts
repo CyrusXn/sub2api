@@ -110,7 +110,7 @@ describe('RegisterView invitation layout', () => {
     expect(wrapper.get('#invitation_code').exists()).toBe(true)
   })
 
-  it('does not render the promo code field even when the public switch is enabled', async () => {
+  it('renders the promo code field when the public switch is enabled', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       ...publicSettings,
       promo_code_enabled: true
@@ -119,6 +119,6 @@ describe('RegisterView invitation layout', () => {
     const wrapper = mountRegister()
     await flushPromises()
 
-    expect(wrapper.find('#promo_code').exists()).toBe(false)
+    expect(wrapper.get('#promo_code').exists()).toBe(true)
   })
 })
