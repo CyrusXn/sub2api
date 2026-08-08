@@ -676,10 +676,9 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
-const edition = computed(() => appStore.edition)
+// edition 只用于内部追踪，左上角及弹窗统一展示纯语义版本。
 const displayVersion = computed(() => {
-  if (!currentVersion.value) return ''
-  return edition.value ? `${currentVersion.value}-${edition.value}` : currentVersion.value
+  return currentVersion.value
 })
 
 // Update process states (local to this component)
