@@ -122,7 +122,7 @@
           :data="groups"
           :loading="loading"
           :server-side-sort="true"
-          default-sort-key="sort_order"
+          default-sort-key="platform"
           default-sort-order="asc"
           :column-width-storage-key="GROUP_COLUMN_WIDTH_STORAGE_KEY"
           :column-order-storage-key="GROUP_COLUMN_ORDER_STORAGE_KEY"
@@ -3733,6 +3733,7 @@
         <VueDraggable
           v-model="sortableGroups"
           :animation="200"
+          :move="canMoveSortableGroup"
           class="space-y-2"
         >
           <div
@@ -4292,6 +4293,11 @@ const allColumns = computed<Column[]>(() => [
     sortable: true,
   },
   {
+    key: "sort_order",
+    label: t("admin.groups.columns.sortOrder"),
+    sortable: true,
+  },
+  {
     key: "billing_type",
     label: t("admin.groups.columns.billingType"),
     sortable: true,
@@ -4665,7 +4671,7 @@ const pagination = reactive({
   pages: 0,
 });
 const sortState = reactive({
-  sort_by: "sort_order",
+  sort_by: "platform",
   sort_order: "asc" as "asc" | "desc",
 });
 
@@ -6425,12 +6431,9 @@ const handleClickOutside = (event: MouseEvent) => {
 // 打开排序弹窗
 const openSortModal = async () => {
   try {
-    // 获取所有分组（不分页）
+    // 服务端已经按平台优先级、排序值和 ID 返回，前端保持该稳定顺序。
     const allGroups = await adminAPI.groups.getAll();
-    // 按 sort_order 排序
-    sortableGroups.value = [...allGroups].sort(
-      (a, b) => a.sort_order - b.sort_order,
-    );
+    sortableGroups.value = [...allGroups];
     showSortModal.value = true;
   } catch (error) {
     appStore.showError(t("admin.groups.failedToLoad"));
@@ -6442,6 +6445,20 @@ const openSortModal = async () => {
 const closeSortModal = () => {
   showSortModal.value = false;
   sortableGroups.value = [];
+};
+
+// 平台优先级由服务端固定，排序弹窗只允许调整同平台内的 sort_order。
+const canMoveSortableGroup = (event: {
+  draggedContext?: { element?: AdminGroup };
+  relatedContext?: { element?: AdminGroup };
+}) => {
+  const draggedGroup = event.draggedContext?.element;
+  const relatedGroup = event.relatedContext?.element;
+  return Boolean(
+    draggedGroup &&
+      relatedGroup &&
+      draggedGroup.platform === relatedGroup.platform,
+  );
 };
 
 // 保存排序

@@ -250,7 +250,7 @@ func (h *GroupHandler) List(c *gin.Context) {
 		search = search[:100]
 	}
 	isExclusiveStr := c.Query("is_exclusive")
-	sortBy := c.DefaultQuery("sort_by", "sort_order")
+	sortBy := c.DefaultQuery("sort_by", "platform")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 
 	var isExclusive *bool

@@ -37,6 +37,7 @@ const messages: Record<string, string> = {
   'admin.groups.columns.name': 'Name',
   'admin.groups.columns.id': 'ID',
   'admin.groups.columns.platform': 'Platform',
+  'admin.groups.columns.sortOrder': 'Sort Value',
   'admin.groups.columns.billingType': 'Billing Type',
   'admin.groups.columns.rateMultiplier': 'Rate Multiplier',
   'admin.groups.columns.adminUsageMultiplier': 'Admin Usage Multiplier',
@@ -149,7 +150,14 @@ const TablePageLayoutStub = {
 }
 
 const DataTableStub = {
-  props: ['columns', 'data', 'columnWidthStorageKey', 'columnOrderStorageKey'],
+  props: [
+    'columns',
+    'data',
+    'defaultSortKey',
+    'defaultSortOrder',
+    'columnWidthStorageKey',
+    'columnOrderStorageKey',
+  ],
   emits: ['sort'],
   template: `
     <div>
@@ -185,6 +193,11 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
+const VueDraggableStub = {
+  props: ['modelValue', 'move'],
+  template: '<div><slot /></div>',
+}
+
 const mountView = async () => {
   const wrapper = mount(GroupsView, {
     global: {
@@ -202,7 +215,7 @@ const mountView = async () => {
         GroupCapacityBadge: true,
         GroupRateMultipliersModal: true,
         GroupRPMOverridesModal: true,
-        VueDraggable: { template: '<div><slot /></div>' },
+        VueDraggable: VueDraggableStub,
       },
     },
   })
@@ -287,6 +300,7 @@ describe('admin GroupsView column settings', () => {
     expect(columnKeys(wrapper)).toEqual([
       'name',
       'platform',
+      'sort_order',
       'billing_type',
       'rate_multiplier',
       'admin_usage_multiplier',
@@ -299,12 +313,57 @@ describe('admin GroupsView column settings', () => {
     ])
     const columnMeta = JSON.parse(wrapper.get('[data-test="columns-meta"]').text()) as Array<{ key: string; width?: number }>
     expect(columnMeta.find((column) => column.key === 'actions')?.width).toBe(300)
+    expect(columnMeta.find((column) => column.key === 'sort_order')).toMatchObject({
+      key: 'sort_order',
+    })
 
     const table = wrapper.getComponent(DataTableStub)
+    expect(table.props('defaultSortKey')).toBe('platform')
+    expect(table.props('defaultSortOrder')).toBe('asc')
     expect(table.props('columnWidthStorageKey')).toBe('group-table-column-widths:v2')
     expect(table.props('columnOrderStorageKey')).toBe('group-table-column-order')
     expect(localStorage.getItem('group-hidden-columns')).toBe(JSON.stringify(['id']))
     expect(localStorage.getItem('group-column-settings-version')).toBe('2')
+  })
+
+  it('requests the platform-priority default sort and exposes the sort value as sortable', async () => {
+    const wrapper = await mountView()
+
+    expect(listGroups).toHaveBeenCalledWith(
+      1,
+      20,
+      expect.objectContaining({ sort_by: 'platform', sort_order: 'asc' }),
+      expect.any(Object),
+    )
+    const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{
+      key: string
+      sortable: boolean
+    }>
+    expect(columns.find((column) => column.key === 'sort_order')).toMatchObject({ sortable: true })
+  })
+
+  it('only allows drag sorting within the same platform', async () => {
+    const anthropic = createGroup({ id: 1, platform: 'anthropic' })
+    const anotherAnthropic = createGroup({ id: 2, platform: 'anthropic' })
+    const openai = createGroup({ id: 3, platform: 'openai' })
+    getAllGroups.mockResolvedValue([anthropic, anotherAnthropic, openai])
+    const wrapper = await mountView()
+
+    await wrapper.get('button[title="admin.groups.sortOrder"]').trigger('click')
+    await flushPromises()
+
+    const canMove = wrapper.getComponent(VueDraggableStub).props('move') as (event: {
+      draggedContext: { element: AdminGroup }
+      relatedContext: { element: AdminGroup }
+    }) => boolean
+    expect(canMove({
+      draggedContext: { element: anthropic },
+      relatedContext: { element: anotherAnthropic },
+    })).toBe(true)
+    expect(canMove({
+      draggedContext: { element: anthropic },
+      relatedContext: { element: openai },
+    })).toBe(false)
   })
 
   it('applies saved hidden columns on mount and ignores unknown keys', async () => {
@@ -320,6 +379,7 @@ describe('admin GroupsView column settings', () => {
       'name',
       'id',
       'platform',
+      'sort_order',
       'billing_type',
       'rate_multiplier',
       'admin_usage_multiplier',
@@ -339,6 +399,7 @@ describe('admin GroupsView column settings', () => {
     expect(columnKeys(wrapper)).toEqual([
       'name',
       'platform',
+      'sort_order',
       'billing_type',
       'rate_multiplier',
       'admin_usage_multiplier',
@@ -363,6 +424,7 @@ describe('admin GroupsView column settings', () => {
     expect(columnKeys(wrapper)).toEqual([
       'name',
       'platform',
+      'sort_order',
       'billing_type',
       'rate_multiplier',
       'admin_usage_multiplier',
@@ -387,6 +449,7 @@ describe('admin GroupsView column settings', () => {
       'name',
       'id',
       'platform',
+      'sort_order',
       'billing_type',
       'rate_multiplier',
       'admin_usage_multiplier',

@@ -87,6 +87,49 @@ func (s *GroupRepoSuite) TestList_DefaultSortBySortOrderAsc() {
 	s.Require().Less(indexByID[g2.ID], indexByID[g1.ID])
 }
 
+func (s *GroupRepoSuite) TestListAndListActive_DefaultToPlatformThenSortOrder() {
+	groupsToCreate := []*service.Group{
+		{Name: "platform-openai", Platform: service.PlatformOpenAI, SortOrder: 10},
+		{Name: "platform-anthropic-later", Platform: service.PlatformAnthropic, SortOrder: 20},
+		{Name: "platform-composite", Platform: service.PlatformComposite, SortOrder: 10},
+		{Name: "platform-grok", Platform: service.PlatformGrok, SortOrder: 10},
+		{Name: "platform-antigravity", Platform: service.PlatformAntigravity, SortOrder: 10},
+		{Name: "platform-gemini", Platform: service.PlatformGemini, SortOrder: 10},
+		{Name: "platform-anthropic-first", Platform: service.PlatformAnthropic, SortOrder: 5},
+	}
+	for _, item := range groupsToCreate {
+		item.RateMultiplier = 1
+		item.Status = service.StatusActive
+		item.SubscriptionType = service.SubscriptionTypeStandard
+		s.Require().NoError(s.repo.Create(s.ctx, item))
+	}
+	wantIDs := []int64{
+		groupsToCreate[6].ID,
+		groupsToCreate[1].ID,
+		groupsToCreate[0].ID,
+		groupsToCreate[5].ID,
+		groupsToCreate[4].ID,
+		groupsToCreate[3].ID,
+		groupsToCreate[2].ID,
+	}
+
+	listed, _, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 100})
+	s.Require().NoError(err)
+	s.Require().Equal(wantIDs, groupIDs(listed))
+
+	active, err := s.repo.ListActive(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Equal(wantIDs, groupIDs(active))
+}
+
+func groupIDs(groups []service.Group) []int64 {
+	ids := make([]int64, 0, len(groups))
+	for _, item := range groups {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
 func (s *GroupRepoSuite) TestList_SortBySortOrderDesc() {
 	g1 := &service.Group{Name: "g1", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard, SortOrder: 40}
 	g2 := &service.Group{Name: "g2", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard, SortOrder: 50}

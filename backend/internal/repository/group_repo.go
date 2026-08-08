@@ -530,18 +530,30 @@ func (r *groupRepository) listWithAccountCountSort(ctx context.Context, q *dbent
 func groupListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
+	if sortBy == "" || sortBy == "platform" {
+		descending := sortBy != "" && sortOrder == pagination.SortOrderDesc
+		if descending {
+			return []func(*entsql.Selector){
+				groupPlatformPriorityOrder(true),
+				dbent.Desc(group.FieldSortOrder),
+				dbent.Desc(group.FieldID),
+			}
+		}
+		return []func(*entsql.Selector){
+			groupPlatformPriorityOrder(false),
+			dbent.Asc(group.FieldSortOrder),
+			dbent.Asc(group.FieldID),
+		}
+	}
 
 	var field string
 	tieField := group.FieldID
 	defaultOrder := true
 	switch sortBy {
-	case "", "sort_order":
+	case "sort_order":
 		field = group.FieldSortOrder
 	case "name":
 		field = group.FieldName
-		defaultOrder = false
-	case "platform":
-		field = group.FieldPlatform
 		defaultOrder = false
 	case "billing_type", "subscription_type":
 		field = group.FieldSubscriptionType
@@ -581,10 +593,36 @@ func groupListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 	return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(tieField)}
 }
 
+func groupPlatformPriorityOrder(descending bool) func(*entsql.Selector) {
+	return func(selector *entsql.Selector) {
+		direction := "ASC"
+		if descending {
+			direction = "DESC"
+		}
+		// 未知平台统一排在六个受支持平台之后，再由 sort_order 和 ID 保证稳定顺序。
+		expression := fmt.Sprintf(
+			"CASE %s WHEN '%s' THEN 1 WHEN '%s' THEN 2 WHEN '%s' THEN 3 WHEN '%s' THEN 4 WHEN '%s' THEN 5 WHEN '%s' THEN 6 ELSE 7 END %s",
+			selector.C(group.FieldPlatform),
+			service.PlatformAnthropic,
+			service.PlatformOpenAI,
+			service.PlatformGemini,
+			service.PlatformAntigravity,
+			service.PlatformGrok,
+			service.PlatformComposite,
+			direction,
+		)
+		selector.OrderExpr(entsql.Expr(expression))
+	}
+}
+
 func (r *groupRepository) ListActive(ctx context.Context) ([]service.Group, error) {
 	groups, err := r.client.Group.Query().
 		Where(group.StatusEQ(service.StatusActive)).
-		Order(dbent.Asc(group.FieldSortOrder), dbent.Asc(group.FieldID)).
+		Order(
+			groupPlatformPriorityOrder(false),
+			dbent.Asc(group.FieldSortOrder),
+			dbent.Asc(group.FieldID),
+		).
 		All(ctx)
 	if err != nil {
 		return nil, err
