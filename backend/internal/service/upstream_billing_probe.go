@@ -755,6 +755,7 @@ func (s *UpstreamBillingProbeService) persistProbeSuccess(
 	data map[string]any,
 	balance *UpstreamAccountBalanceSnapshot,
 ) (*UpstreamBillingProbeSnapshot, error) {
+	normalizeHBYBillingProbeResult(account, data, balance)
 	snapshot := &UpstreamBillingProbeSnapshot{
 		Status:        UpstreamBillingProbeStatusOK,
 		Data:          data,
@@ -799,6 +800,36 @@ func (s *UpstreamBillingProbeService) persistProbeSuccess(
 		)
 	}
 	return snapshot, nil
+}
+
+func normalizeHBYBillingProbeResult(
+	account *Account,
+	data map[string]any,
+	balance *UpstreamAccountBalanceSnapshot,
+) {
+	if account == nil {
+		return
+	}
+	parsed, err := url.Parse(strings.TrimSpace(account.GetCredential("base_url")))
+	if err != nil || strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".") != "hubway.cc" {
+		return
+	}
+	// HBY 的站内金额单位为充值金额的 10 倍；在落快照前统一换算，
+	// 让展示、自动倍率同步、排序和调度始终消费同一份真实数值。
+	for _, key := range []string{
+		"group_rate_multiplier",
+		"user_rate_multiplier",
+		"resolved_rate_multiplier",
+		"effective_rate_multiplier",
+	} {
+		if value, ok := resolveAccountExtraNumber(data, key); ok {
+			data[key] = value / 10
+		}
+	}
+	if balance != nil && balance.Amount != nil {
+		amount := *balance.Amount / 10
+		balance.Amount = &amount
+	}
 }
 
 func (s *UpstreamBillingProbeService) persistProbeFailure(

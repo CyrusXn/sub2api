@@ -75,7 +75,16 @@ vi.mock('vue-i18n', async () => {
 })
 
 const DataTableStub = {
-  props: ['columns', 'data', 'columnWidthStorageKey', 'columnOrderStorageKey', 'selectable', 'selectedKeys'],
+  props: [
+    'columns',
+    'data',
+    'defaultSortKey',
+    'defaultSortOrder',
+    'columnWidthStorageKey',
+    'columnOrderStorageKey',
+    'selectable',
+    'selectedKeys'
+  ],
   emits: ['selectionChange'],
   template: `
     <div data-test="data-table">
@@ -134,9 +143,77 @@ const BulkEditAccountModalStub = {
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
 }
 
+const expiredProbeSnapshot = () => ({
+  status: 'ok',
+  data: {
+    object: 'sub2api.key_billing',
+    schema_version: 1,
+    billing_scope: 'token',
+    group_rate_multiplier: 0.5,
+    resolved_rate_multiplier: 0.5,
+    peak_rate_enabled: false,
+    effective_rate_multiplier: 0.5,
+    observed_at: new Date(Date.now() - 120_000).toISOString()
+  },
+  fresh_until: new Date(Date.now() - 60_000).toISOString(),
+  last_attempt_at: new Date(Date.now() - 120_000).toISOString(),
+  next_probe_at: new Date(Date.now() - 30_000).toISOString()
+})
+
+const dueProbeAccount = (id: number, overrides: Record<string, unknown> = {}) => ({
+  id,
+  name: `upstream-${id}`,
+  platform: 'openai',
+  type: 'apikey',
+  status: 'active',
+  schedulable: true,
+  extra: {
+    upstream_billing_probe_enabled: true,
+    upstream_billing_probe: expiredProbeSnapshot()
+  },
+  created_at: '2026-07-13T00:00:00Z',
+  updated_at: '2026-07-13T00:00:00Z',
+  ...overrides
+})
+
+const mountAccountsForSortAndProbe = () => mount(AccountsView, {
+  global: {
+    stubs: {
+      AppLayout: { template: '<div><slot /></div>' },
+      TablePageLayout: { template: '<div><slot name="table" /></div>' },
+      DataTable: DataTableStub,
+      AccountTableActions: true,
+      AccountTableFilters: true,
+      AccountBulkActionsBar: true,
+      AccountActionMenu: true,
+      Pagination: true,
+      ConfirmDialog: true,
+      ImportDataModal: true,
+      ReAuthAccountModal: true,
+      AccountTestModal: true,
+      AccountStatsModal: true,
+      ScheduledTestsPanel: true,
+      SyncFromCrsModal: true,
+      TempUnschedStatusModal: true,
+      ErrorPassthroughRulesModal: true,
+      TLSFingerprintProfilesModal: true,
+      CreateAccountModal: true,
+      EditAccountModal: true,
+      BulkEditAccountModal: true,
+      PlatformTypeBadge: true,
+      AccountCapacityCell: true,
+      AccountStatusIndicator: true,
+      AccountTodayStatsCell: true,
+      AccountGroupsCell: true,
+      AccountUsageCell: true,
+      Icon: true
+    }
+  }
+})
+
 describe('admin AccountsView bulk edit scope', () => {
   beforeEach(() => {
-	vi.unstubAllEnvs()
+    vi.unstubAllEnvs()
     localStorage.clear()
 
     listAccounts.mockReset()
@@ -168,6 +245,56 @@ describe('admin AccountsView bulk edit scope', () => {
     getAllGroups.mockResolvedValue([])
     probeUpstreamBilling.mockResolvedValue({})
     probeUpstreamBillingBatch.mockResolvedValue([])
+  })
+
+  it('defaults the account list to upstream billing rate ascending', async () => {
+    const wrapper = mountAccountsForSortAndProbe()
+
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ sort_by: 'upstream_billing_rate', sort_order: 'asc' }),
+      expect.any(Object)
+    )
+    const table = wrapper.getComponent(DataTableStub)
+    expect(table.props('defaultSortKey')).toBe('upstream_billing_rate')
+    expect(table.props('defaultSortOrder')).toBe('asc')
+  })
+
+  it('migrates the previous name ascending default to upstream billing rate ascending once', async () => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: 'name', order: 'asc' }))
+
+    mountAccountsForSortAndProbe()
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ sort_by: 'upstream_billing_rate', sort_order: 'asc' }),
+      expect.any(Object)
+    )
+    expect(localStorage.getItem('account-table-sort')).toBe(JSON.stringify({
+      key: 'upstream_billing_rate',
+      order: 'asc'
+    }))
+    expect(localStorage.getItem('account-table-sort-default-version')).toBe('upstream-billing-rate-asc')
+  })
+
+  it('preserves an administrator selected account sort during the default migration', async () => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: 'created_at', order: 'desc' }))
+
+    mountAccountsForSortAndProbe()
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ sort_by: 'created_at', sort_order: 'desc' }),
+      expect.any(Object)
+    )
+    expect(localStorage.getItem('account-table-sort')).toBe(JSON.stringify({ key: 'created_at', order: 'desc' }))
   })
 
   it('opens bulk edit in filtered-results mode from the bulk actions dropdown', async () => {
@@ -364,16 +491,7 @@ describe('admin AccountsView bulk edit scope', () => {
   })
 
   it('refreshes visible upstream rates in batches of 20 after the account query', async () => {
-    const accounts = Array.from({ length: 21 }, (_, index) => ({
-      id: index + 1,
-      name: `upstream-${index + 1}`,
-      platform: 'openai',
-      type: 'apikey',
-      status: 'active',
-      schedulable: true,
-      created_at: '2026-07-13T00:00:00Z',
-      updated_at: '2026-07-13T00:00:00Z'
-    }))
+    const accounts = Array.from({ length: 21 }, (_, index) => dueProbeAccount(index + 1))
     listAccounts.mockResolvedValue({ items: accounts, total: 21, page: 1, page_size: 21, pages: 1 })
 
     mount(AccountsView, {
@@ -415,6 +533,35 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(probeUpstreamBillingBatch).toHaveBeenNthCalledWith(1, accounts.slice(0, 20).map(account => account.id))
     expect(probeUpstreamBillingBatch).toHaveBeenNthCalledWith(2, [21])
+  })
+
+  it('only auto-probes enabled API-key accounts whose snapshot and retry delay have expired', async () => {
+    const future = new Date(Date.now() + 60_000).toISOString()
+    const accounts = [
+      dueProbeAccount(1),
+      dueProbeAccount(2, { extra: { upstream_billing_probe_enabled: false, upstream_billing_probe: expiredProbeSnapshot() } }),
+      dueProbeAccount(3, { extra: { upstream_billing_probe_enabled: true, upstream_billing_probe: { ...expiredProbeSnapshot(), fresh_until: future } } }),
+      dueProbeAccount(4, { extra: { upstream_billing_probe_enabled: true, upstream_billing_probe: { ...expiredProbeSnapshot(), next_probe_at: future } } }),
+      dueProbeAccount(5, { type: 'oauth' }),
+      dueProbeAccount(6, { extra: { upstream_billing_probe_enabled: true } })
+    ]
+    listAccounts.mockResolvedValue({ items: accounts, total: accounts.length, page: 1, page_size: 20, pages: 1 })
+
+    mountAccountsForSortAndProbe()
+    await flushPromises()
+
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([1, 6])
+  })
+
+  it('does not auto-probe accounts while the global probe switch is disabled', async () => {
+    getUpstreamBillingProbeSettings.mockResolvedValue({ enabled: false, interval_minutes: 30 })
+    listAccounts.mockResolvedValue({ items: [dueProbeAccount(1)], total: 1, page: 1, page_size: 20, pages: 1 })
+
+    mountAccountsForSortAndProbe()
+    await flushPromises()
+
+    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
   })
 
   it('does not probe upstream accounts when the local preview is read-only', async () => {
@@ -481,16 +628,7 @@ describe('admin AccountsView bulk edit scope', () => {
   })
 
   it('refreshes upstream rates for the new page after pagination reloads the account query', async () => {
-    const account = (id: number) => ({
-      id,
-      name: `upstream-${id}`,
-      platform: 'openai',
-      type: 'apikey',
-      status: 'active',
-      schedulable: true,
-      created_at: '2026-07-13T00:00:00Z',
-      updated_at: '2026-07-13T00:00:00Z'
-    })
+    const account = (id: number) => dueProbeAccount(id)
     listAccounts
       .mockResolvedValueOnce({ items: [account(1)], total: 2, page: 1, page_size: 1, pages: 2 })
       .mockResolvedValueOnce({ items: [account(2)], total: 2, page: 2, page_size: 1, pages: 2 })
@@ -667,7 +805,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
     await wrapper.get('[data-test="next-page"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"]').trigger('change')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 

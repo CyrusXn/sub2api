@@ -200,8 +200,8 @@
           row-key="id"
           :server-side-sort="true"
           @sort="handleSort"
-          default-sort-key="name"
-          default-sort-order="asc"
+          :default-sort-key="sortState.sort_by"
+          :default-sort-order="sortState.sort_order"
           :sort-storage-key="ACCOUNT_SORT_STORAGE_KEY"
           :column-width-storage-key="ACCOUNT_COLUMN_WIDTH_STORAGE_KEY"
           :column-order-storage-key="ACCOUNT_COLUMN_ORDER_STORAGE_KEY"
@@ -650,6 +650,8 @@ const HIDDEN_COLUMNS_CURRENT_VERSION = 'scheduler-score-hidden-by-default'
 
 // Sorting settings
 const ACCOUNT_SORT_STORAGE_KEY = 'account-table-sort'
+const ACCOUNT_SORT_DEFAULT_VERSION_KEY = 'account-table-sort-default-version'
+const ACCOUNT_SORT_DEFAULT_VERSION = 'upstream-billing-rate-asc'
 const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'account-table-column-widths:v2'
 const ACCOUNT_COLUMN_ORDER_STORAGE_KEY = 'account-table-column-order'
 type AccountSortOrder = 'asc' | 'desc'
@@ -670,17 +672,32 @@ const ACCOUNT_SORTABLE_KEYS = new Set([
   'expires_at'
 ])
 const loadInitialAccountSortState = (): AccountSortState => {
-  const fallback: AccountSortState = { sort_by: 'name', sort_order: 'asc' }
+  const fallback: AccountSortState = { sort_by: 'upstream_billing_rate', sort_order: 'asc' }
   try {
     const raw = localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY)
-    if (!raw) return fallback
+    if (!raw) {
+      localStorage.setItem(ACCOUNT_SORT_DEFAULT_VERSION_KEY, ACCOUNT_SORT_DEFAULT_VERSION)
+      return fallback
+    }
     const parsed = JSON.parse(raw) as { key?: string; order?: string }
     const key = typeof parsed.key === 'string' ? parsed.key : ''
     if (!ACCOUNT_SORTABLE_KEYS.has(key)) return fallback
-    return {
+    const stored: AccountSortState = {
       sort_by: key,
       sort_order: parsed.order === 'desc' ? 'desc' : 'asc'
     }
+    // 旧版本的默认值是名称升序，仅迁移该默认值，保留管理员主动选择的其他排序。
+    if (
+      localStorage.getItem(ACCOUNT_SORT_DEFAULT_VERSION_KEY) !== ACCOUNT_SORT_DEFAULT_VERSION &&
+      stored.sort_by === 'name' &&
+      stored.sort_order === 'asc'
+    ) {
+      localStorage.setItem(ACCOUNT_SORT_STORAGE_KEY, JSON.stringify({ key: fallback.sort_by, order: fallback.sort_order }))
+      localStorage.setItem(ACCOUNT_SORT_DEFAULT_VERSION_KEY, ACCOUNT_SORT_DEFAULT_VERSION)
+      return fallback
+    }
+    localStorage.setItem(ACCOUNT_SORT_DEFAULT_VERSION_KEY, ACCOUNT_SORT_DEFAULT_VERSION)
+    return stored
   } catch {
     return fallback
   }
@@ -1000,9 +1017,24 @@ const resetAutoRefreshCache = () => {
 const isFirstLoad = ref(true)
 const isReadOnlyPreview = () => import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
 
-const visibleUpstreamBillingAccountIDs = () => accounts.value
-  .filter(account => account.platform === 'openai' && account.type === 'apikey')
-  .map(account => account.id)
+const probeTimestampIsDue = (value: unknown, now: number) => {
+  if (typeof value !== 'string' || value.trim() === '') return true
+  const timestamp = Date.parse(value)
+  return !Number.isFinite(timestamp) || timestamp <= now
+}
+
+const visibleUpstreamBillingAccountIDs = () => {
+  if (upstreamBillingProbeGloballyEnabled.value !== true) return []
+  const now = Date.now()
+  return accounts.value
+    .filter((account) => {
+      if (account.type !== 'apikey' || account.extra?.upstream_billing_probe_enabled !== true) return false
+      const snapshot = account.extra?.upstream_billing_probe
+      if (!snapshot) return true
+      return probeTimestampIsDue(snapshot.fresh_until, now) && probeTimestampIsDue(snapshot.next_probe_at, now)
+    })
+    .map(account => account.id)
+}
 
 const refreshVisibleUpstreamBillingRates = async () => {
   // 本地只读预览连接线上 API 时禁止触发探测，避免写线上快照或访问上游站点。
@@ -1289,7 +1321,8 @@ const refreshAccountsIncrementally = async () => {
 }
 
 const handleManualRefresh = async () => {
-  await Promise.all([load(), loadUpstreamBillingProbeGlobalState()])
+  await loadUpstreamBillingProbeGlobalState()
+  await load()
   // Force usage cells to refetch /usage on explicit user refresh.
   usageManualRefreshToken.value += 1
 }
@@ -2285,8 +2318,9 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 onMounted(async () => {
+  // 全局开关先于列表加载，避免页面刚打开时误触发已禁用的上游探测。
+  await loadUpstreamBillingProbeGlobalState()
   load()
-  loadUpstreamBillingProbeGlobalState()
   try {
     const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
     proxies.value = p

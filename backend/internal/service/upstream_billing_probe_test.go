@@ -521,6 +521,85 @@ func TestUpstreamBillingProbeUsesWebAccountRateForKnownHosts(t *testing.T) {
 	}, upstream.requestPaths())
 }
 
+func TestUpstreamBillingProbeNormalizesExactHBYHostBeforePersistingAndSyncing(t *testing.T) {
+	initialRate := 0.25
+	account := &Account{
+		ID:             52,
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeAPIKey,
+		Status:         StatusActive,
+		Concurrency:    1,
+		RateMultiplier: &initialRate,
+		Credentials: map[string]any{
+			"api_key":  "sk-live",
+			"base_url": "https://hubway.cc/v1",
+		},
+		Extra: map[string]any{
+			UpstreamBillingProbeEnabledExtraKey:    true,
+			UpstreamBillingRateSyncEnabledExtraKey: true,
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	svc := newUpstreamBillingProbeTestService(repo, &upstreamBillingProbeHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+	now := time.Date(2026, time.August, 8, 8, 0, 0, 0, time.UTC)
+	balanceAmount := 12.34
+	data := map[string]any{
+		"billing_scope":             "token",
+		"group_rate_multiplier":     0.5,
+		"user_rate_multiplier":      0.7,
+		"resolved_rate_multiplier":  0.7,
+		"effective_rate_multiplier": 0.7,
+		"peak_rate_multiplier":      1.5,
+		"applied_peak_multiplier":   1.5,
+	}
+	balance := &UpstreamAccountBalanceSnapshot{Status: UpstreamBillingProbeStatusOK, Amount: &balanceAmount, Unit: "USD"}
+
+	snapshot, err := svc.persistProbeSuccess(context.Background(), account, 30, now, http.StatusOK, data, balance)
+
+	require.NoError(t, err)
+	require.InDelta(t, 0.05, snapshot.Data["group_rate_multiplier"], 1e-12)
+	require.InDelta(t, 0.07, snapshot.Data["user_rate_multiplier"], 1e-12)
+	require.InDelta(t, 0.07, snapshot.Data["resolved_rate_multiplier"], 1e-12)
+	require.InDelta(t, 0.07, snapshot.Data["effective_rate_multiplier"], 1e-12)
+	require.Equal(t, 1.5, snapshot.Data["peak_rate_multiplier"])
+	require.Equal(t, 1.5, snapshot.Data["applied_peak_multiplier"])
+	require.NotNil(t, snapshot.Balance)
+	require.NotNil(t, snapshot.Balance.Amount)
+	require.InDelta(t, 1.234, *snapshot.Balance.Amount, 1e-12)
+	require.NotNil(t, snapshot.SyncedRateMultiplier)
+	require.InDelta(t, 0.07, *snapshot.SyncedRateMultiplier, 1e-12)
+	require.NotNil(t, account.RateMultiplier)
+	require.InDelta(t, 0.07, *account.RateMultiplier, 1e-12)
+}
+
+func TestUpstreamBillingProbeDoesNotNormalizeNonExactHBYHosts(t *testing.T) {
+	for _, baseURL := range []string{"https://api.hubway.cc/v1", "https://not-hubway.cc/v1"} {
+		t.Run(baseURL, func(t *testing.T) {
+			account := &Account{
+				ID:          53,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Concurrency: 1,
+				Credentials: map[string]any{"api_key": "sk-live", "base_url": baseURL},
+			}
+			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+			svc := newUpstreamBillingProbeTestService(repo, &upstreamBillingProbeHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+			amount := 12.34
+
+			snapshot, err := svc.persistProbeSuccess(context.Background(), account, 30, time.Now(), http.StatusOK,
+				map[string]any{"resolved_rate_multiplier": 0.5},
+				&UpstreamAccountBalanceSnapshot{Status: UpstreamBillingProbeStatusOK, Amount: &amount},
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, 0.5, snapshot.Data["resolved_rate_multiplier"])
+			require.NotNil(t, snapshot.Balance.Amount)
+			require.Equal(t, 12.34, *snapshot.Balance.Amount)
+		})
+	}
+}
+
 func TestUpstreamBillingProbePreservesWebLoginPasswordWhitespace(t *testing.T) {
 	account := &Account{
 		ID:          51,
@@ -826,7 +905,7 @@ func TestUpstreamBillingProbeMatchesMaskedWebAccountKey(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
-	require.Equal(t, 0.09, snapshot.Data["effective_rate_multiplier"])
+	require.Equal(t, 0.009, snapshot.Data["effective_rate_multiplier"])
 }
 
 func TestUpstreamBillingProbeMatchesUniqueWebAccountKeyName(t *testing.T) {
@@ -853,7 +932,7 @@ func TestUpstreamBillingProbeMatchesUniqueWebAccountKeyName(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
-	require.Equal(t, 0.09, snapshot.Data["effective_rate_multiplier"])
+	require.Equal(t, 0.009, snapshot.Data["effective_rate_multiplier"])
 }
 
 func TestUpstreamBillingProbeReusesWebLoginTokenButRefreshesKeyRate(t *testing.T) {
