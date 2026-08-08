@@ -10,6 +10,10 @@
           <input
             v-model="userKeyword"
             type="text"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             class="input pr-8"
             :placeholder="t('admin.usage.searchUserPlaceholder')"
             @input="debounceUserSearch"
@@ -47,6 +51,10 @@
           <input
             v-model="apiKeyKeyword"
             type="text"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             class="input pr-8"
             :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
             @input="debounceApiKeySearch"
@@ -90,6 +98,10 @@
           <input
             v-model="accountKeyword"
             type="text"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             class="input pr-8"
             :placeholder="t('admin.usage.searchAccountPlaceholder')"
             @input="debounceAccountSearch"

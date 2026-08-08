@@ -148,6 +148,70 @@ describe('admin UsersView', () => {
     vi.useRealTimers()
   })
 
+  it('starts with empty filter values and disables browser autofill on filter inputs', async () => {
+    localStorage.setItem('user-visible-filters', JSON.stringify(['role']))
+    localStorage.setItem('user-filter-values', JSON.stringify({
+      role: 'admin',
+      status: 'disabled',
+      group: 'legacy-group',
+      apiKeyGroup: 99,
+      attributes: { 7: 'legacy-value' }
+    }))
+
+    const wrapper = mount(UsersView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          EmptyState: true,
+          GroupBadge: true,
+          Select: true,
+          UserAttributesConfigModal: true,
+          UserConcurrencyCell: true,
+          UserCreateModal: true,
+          UserEditModal: true,
+          BulkEditUserModal: BulkEditUserModalStub,
+          UserPlatformQuotaModal: true,
+          UserApiKeysModal: true,
+          UserAllowedGroupsModal: true,
+          UserBalanceModal: true,
+          UserBalanceHistoryModal: true,
+          GroupReplaceModal: true,
+          Icon: true,
+          Teleport: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(listUsers).toHaveBeenCalledWith(
+      1,
+      20,
+      expect.objectContaining({
+        role: '',
+        status: '',
+        group_name: undefined,
+        api_key_group_id: undefined,
+        attributes: undefined
+      }),
+      expect.any(Object)
+    )
+    expect(localStorage.getItem('user-filter-values')).toBeNull()
+    expect(localStorage.getItem('user-visible-filters')).toBe(JSON.stringify(['role']))
+
+    const search = wrapper.get('input[type="text"]')
+    expect(search.attributes('autocomplete')).toBe('off')
+    expect(search.attributes('autocorrect')).toBe('off')
+    expect(search.attributes('autocapitalize')).toBe('none')
+    expect(search.attributes('spellcheck')).toBe('false')
+  })
+
   it('shows active, used, and created activity columns in order and requests last_used_at sort', async () => {
     const wrapper = mount(UsersView, {
       global: {

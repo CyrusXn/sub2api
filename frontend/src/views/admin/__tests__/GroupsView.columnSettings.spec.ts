@@ -260,6 +260,23 @@ describe('admin GroupsView column settings', () => {
     isCurrentStep.mockReturnValue(false)
   })
 
+  it('starts with an empty search and disables browser autofill on the search input', async () => {
+    const wrapper = await mountView()
+    const search = wrapper.get('input[type="text"]')
+
+    expect(search.element.value).toBe('')
+    expect(search.attributes('autocomplete')).toBe('off')
+    expect(search.attributes('autocorrect')).toBe('off')
+    expect(search.attributes('autocapitalize')).toBe('none')
+    expect(search.attributes('spellcheck')).toBe('false')
+    expect(listGroups).toHaveBeenCalledWith(
+      1,
+      20,
+      expect.objectContaining({ search: undefined }),
+      expect.any(Object)
+    )
+  })
+
   afterEach(() => {
     localStorage.clear()
   })

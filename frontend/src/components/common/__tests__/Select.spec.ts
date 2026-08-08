@@ -65,6 +65,28 @@ afterEach(() => {
 })
 
 describe('Select dropdown viewport constraints', () => {
+  it('disables browser autofill on the searchable input', async () => {
+    const wrapper = mount(Select, {
+      props: {
+        modelValue: null,
+        searchable: true,
+        options: [
+          { value: 'anthropic', label: 'Anthropic' },
+          { value: 'openai', label: 'OpenAI' }
+        ]
+      }
+    })
+    unmountWrapper = () => wrapper.unmount()
+
+    await wrapper.get('button').trigger('click')
+    await nextTick()
+    const search = document.body.querySelector<HTMLInputElement>('.select-search-input')
+
+    expect(search?.getAttribute('autocomplete')).toBe('off')
+    expect(search?.getAttribute('autocorrect')).toBe('off')
+    expect(search?.getAttribute('autocapitalize')).toBe('none')
+    expect(search?.getAttribute('spellcheck')).toBe('false')
+  })
   it('preserves the existing 200px minimum width when space is available', async () => {
     setViewportWidth(1024)
     mockTriggerRect(20, 80)

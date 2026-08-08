@@ -16,6 +16,10 @@
               <input
                 v-model="searchQuery"
                 type="text"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="none"
+                spellcheck="false"
                 :placeholder="t('admin.groups.searchGroups')"
                 class="input pl-10"
                 @input="handleSearch"

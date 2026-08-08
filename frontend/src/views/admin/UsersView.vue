@@ -16,6 +16,10 @@
               <input
                 v-model="searchQuery"
                 type="text"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="none"
+                spellcheck="false"
                 :placeholder="t('admin.users.searchUsers')"
                 class="input pl-10"
                 @input="handleSearch"
@@ -82,6 +86,10 @@
                 <input
                   v-if="['text', 'textarea', 'email', 'url', 'date'].includes(getAttributeDefinition(Number(attrId))?.type || 'text')"
                   :value="value"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="none"
+                  spellcheck="false"
                   @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
                   @keyup.enter="applyFilter"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
@@ -92,6 +100,7 @@
                   v-else-if="getAttributeDefinition(Number(attrId))?.type === 'number'"
                   :value="value"
                   type="number"
+                  autocomplete="off"
                   @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
                   @keyup.enter="applyFilter"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
@@ -114,6 +123,10 @@
                 <input
                   v-else
                   :value="value"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="none"
+                  spellcheck="false"
                   @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
                   @keyup.enter="applyFilter"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
@@ -1156,46 +1169,27 @@ const builtInFilters = computed(() => [
   { key: 'apiKeyGroup', name: t('admin.users.apiKeyGroupFilter'), type: 'select' as const }
 ])
 
-// Load saved filters from localStorage
+// 只恢复筛选项的显示偏好；筛选值每次刷新都从空值开始。
 const loadSavedFilters = () => {
   try {
+    localStorage.removeItem(FILTER_VALUES_KEY)
     // Load visible filters
     const savedVisible = localStorage.getItem(VISIBLE_FILTERS_KEY)
     if (savedVisible) {
       const parsed = JSON.parse(savedVisible) as string[]
       parsed.forEach(key => visibleFilters.add(key))
     }
-    // Load filter values
-    const savedValues = localStorage.getItem(FILTER_VALUES_KEY)
-    if (savedValues) {
-      const parsed = JSON.parse(savedValues)
-      if (parsed.role) filters.role = parsed.role
-      if (parsed.status) filters.status = parsed.status
-      if (parsed.group) filters.group = parsed.group
-      if (typeof parsed.apiKeyGroup === 'number') filters.apiKeyGroup = parsed.apiKeyGroup
-      if (parsed.attributes) {
-        Object.assign(activeAttributeFilters, parsed.attributes)
-      }
-    }
   } catch (e) {
     console.error('Failed to load saved filters:', e)
   }
 }
 
-// Save filters to localStorage
+// 仅保存筛选项的显示偏好，不跨刷新保存实际查询值。
 const saveFiltersToStorage = () => {
   try {
     // Save visible filters
     localStorage.setItem(VISIBLE_FILTERS_KEY, JSON.stringify([...visibleFilters]))
-    // Save filter values
-    const values = {
-      role: filters.role,
-      status: filters.status,
-      group: filters.group,
-      apiKeyGroup: filters.apiKeyGroup,
-      attributes: activeAttributeFilters
-    }
-    localStorage.setItem(FILTER_VALUES_KEY, JSON.stringify(values))
+    localStorage.removeItem(FILTER_VALUES_KEY)
   } catch (e) {
     console.error('Failed to save filters:', e)
   }

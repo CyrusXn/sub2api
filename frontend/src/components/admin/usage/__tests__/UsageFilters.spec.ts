@@ -126,6 +126,20 @@ describe('UsageFilters — user search dropdown', () => {
     vi.useRealTimers()
   })
 
+  it('starts with empty search text and disables browser autofill on all search inputs', () => {
+    const wrapper = mountFilters()
+    const inputs = wrapper.findAll('input[type="text"]')
+
+    expect(inputs).toHaveLength(3)
+    for (const input of inputs) {
+      expect(input.element.value).toBe('')
+      expect(input.attributes('autocomplete')).toBe('off')
+      expect(input.attributes('autocorrect')).toBe('off')
+      expect(input.attributes('autocapitalize')).toBe('none')
+      expect(input.attributes('spellcheck')).toBe('false')
+    }
+  })
+
   it('(a) labels deleted users with the i18n badge and (b) sorts active users before deleted ones, (c) selection sets user_id', async () => {
     // Arrange: mock returns deleted FIRST (proves sorting re-orders to active-first)
     mockSearchUsers.mockResolvedValue([
