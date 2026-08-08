@@ -417,8 +417,11 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.get('[data-test="account-action-test"]').text()).toBe('admin.accounts.testConnection')
     expect(wrapper.get('[data-test="account-action-duplicate"]').text()).toBe('admin.accounts.duplicateAccount')
     expect(wrapper.get('[data-test="account-action-stats"]').text()).toBe('admin.accounts.viewStats')
+    const priorityIndex = columns.findIndex(column => column.key === 'priority')
+    expect(priorityIndex).toBeGreaterThanOrEqual(0)
+    expect(columns[priorityIndex + 1]?.key).toBe('upstream_billing_rate')
     expect(table.props('columnWidthStorageKey')).toBe('account-table-column-widths:v2')
-    expect(table.props('columnOrderStorageKey')).toBe('account-table-column-order')
+    expect(table.props('columnOrderStorageKey')).toBe('account-table-column-order:v2')
   })
 
   it('passes the loaded global probe state to every upstream billing cell', async () => {
@@ -552,6 +555,65 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
     expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([1, 6])
+  })
+
+  it('forces a fresh upstream billing probe for visible accounts on manual refresh', async () => {
+    const future = new Date(Date.now() + 60_000).toISOString()
+    const account = dueProbeAccount(9, {
+      extra: {
+        upstream_billing_probe_enabled: true,
+        upstream_billing_probe: {
+          ...expiredProbeSnapshot(),
+          fresh_until: future,
+          next_probe_at: future
+        }
+      }
+    })
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          AccountTableActions: AccountTableActionsRefreshStub,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          Pagination: true,
+          ConfirmDialog: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-test="manual-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([9])
   })
 
   it('does not auto-probe accounts while the global probe switch is disabled', async () => {

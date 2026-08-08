@@ -642,18 +642,18 @@ const accountToolsDropdownStyle = computed(() => ({
   width: `${accountToolsDropdownPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'rate_multiplier']
+const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
-// One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
+// One-time migration: hide scheduler score but keep dispatch priority visible so cost columns have a stable anchor.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
-const HIDDEN_COLUMNS_CURRENT_VERSION = 'scheduler-score-hidden-by-default'
+const HIDDEN_COLUMNS_CURRENT_VERSION = 'priority-visible-upstream-rate-next-to-dispatch'
 
 // Sorting settings
 const ACCOUNT_SORT_STORAGE_KEY = 'account-table-sort'
 const ACCOUNT_SORT_DEFAULT_VERSION_KEY = 'account-table-sort-default-version'
 const ACCOUNT_SORT_DEFAULT_VERSION = 'upstream-billing-rate-asc'
 const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'account-table-column-widths:v2'
-const ACCOUNT_COLUMN_ORDER_STORAGE_KEY = 'account-table-column-order'
+const ACCOUNT_COLUMN_ORDER_STORAGE_KEY = 'account-table-column-order:v2'
 type AccountSortOrder = 'asc' | 'desc'
 type AccountSortState = {
   sort_by: string
@@ -823,9 +823,11 @@ const loadSavedColumns = () => {
       parsed.forEach(key => {
         hiddenColumns.add(key)
       })
-      // Older saved column layouts may have scheduler_score visible; migrate them to the new safe default once.
+      // Older saved layouts inherited a hidden dispatch column from the old default; show it so the
+      // upstream declared multiplier stays visually next to the dispatch priority.
       if (localStorage.getItem(HIDDEN_COLUMNS_VERSION_KEY) !== HIDDEN_COLUMNS_CURRENT_VERSION) {
         hiddenColumns.add('scheduler_score')
+        hiddenColumns.delete('priority')
         localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
         localStorage.setItem(HIDDEN_COLUMNS_VERSION_KEY, HIDDEN_COLUMNS_CURRENT_VERSION)
       }
@@ -1023,12 +1025,13 @@ const probeTimestampIsDue = (value: unknown, now: number) => {
   return !Number.isFinite(timestamp) || timestamp <= now
 }
 
-const visibleUpstreamBillingAccountIDs = () => {
+const visibleUpstreamBillingAccountIDs = (options: { force?: boolean } = {}) => {
   if (upstreamBillingProbeGloballyEnabled.value !== true) return []
   const now = Date.now()
   return accounts.value
     .filter((account) => {
       if (account.type !== 'apikey' || account.extra?.upstream_billing_probe_enabled !== true) return false
+      if (options.force === true) return true
       const snapshot = account.extra?.upstream_billing_probe
       if (!snapshot) return true
       return probeTimestampIsDue(snapshot.fresh_until, now) && probeTimestampIsDue(snapshot.next_probe_at, now)
@@ -1036,11 +1039,11 @@ const visibleUpstreamBillingAccountIDs = () => {
     .map(account => account.id)
 }
 
-const refreshVisibleUpstreamBillingRates = async () => {
+const refreshVisibleUpstreamBillingRates = async (options: { force?: boolean } = {}) => {
   // 本地只读预览连接线上 API 时禁止触发探测，避免写线上快照或访问上游站点。
   if (isReadOnlyPreview()) return false
   if (upstreamBillingRefreshInFlight.value) return false
-  const accountIDs = visibleUpstreamBillingAccountIDs()
+  const accountIDs = visibleUpstreamBillingAccountIDs(options)
   if (accountIDs.length === 0) return false
 
   upstreamBillingRefreshInFlight.value = true
@@ -1076,7 +1079,7 @@ function markUpstreamBillingSortRefresh() {
   }
 }
 
-const load = async (options: { refreshUpstreamBilling?: boolean } = {}) => {
+const load = async (options: { refreshUpstreamBilling?: boolean; forceUpstreamBillingRefresh?: boolean } = {}) => {
   const requestParams = params as any
   markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
@@ -1093,12 +1096,12 @@ const load = async (options: { refreshUpstreamBilling?: boolean } = {}) => {
   }
   await refreshTodayStatsBatch()
   if (options.refreshUpstreamBilling !== false) {
-    const patched = await refreshVisibleUpstreamBillingRates()
+    const patched = await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
     if (patched) await refreshUpstreamBillingSortedList(true)
   }
 }
 
-const reload = async (options: { refreshUpstreamBilling?: boolean } = {}) => {
+const reload = async (options: { refreshUpstreamBilling?: boolean; forceUpstreamBillingRefresh?: boolean } = {}) => {
   markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
   hasPendingListSync.value = false
@@ -1107,7 +1110,7 @@ const reload = async (options: { refreshUpstreamBilling?: boolean } = {}) => {
   await baseReload()
   await refreshTodayStatsBatch()
   if (options.refreshUpstreamBilling !== false) {
-    const patched = await refreshVisibleUpstreamBillingRates()
+    const patched = await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
     if (patched) await refreshUpstreamBillingSortedList(true)
   }
 }
@@ -1322,7 +1325,7 @@ const refreshAccountsIncrementally = async () => {
 
 const handleManualRefresh = async () => {
   await loadUpstreamBillingProbeGlobalState()
-  await load()
+  await load({ forceUpstreamBillingRefresh: true })
   // Force usage cells to refetch /usage on explicit user refresh.
   usageManualRefreshToken.value += 1
 }
@@ -1556,10 +1559,10 @@ const allColumns = computed(() => {
   c.push(
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, width: 160 },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true, width: 96 },
-    { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false, width: 130 },
-    { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true, width: 152 },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, width: 190 },
     { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false, width: 150 },
+    { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false, width: 130 },
+    { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true, width: 152 },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true, width: 172 },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true, width: 154 },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true, width: 154 },
