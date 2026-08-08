@@ -31,6 +31,29 @@ const {
   showError: vi.fn()
 }))
 
+const parentAccount = {
+  id: 42,
+  name: 'parent-acc',
+  platform: 'openai',
+  type: 'apikey',
+  status: 'active',
+  schedulable: true,
+  created_at: '2026-08-08T00:00:00Z',
+  updated_at: '2026-08-08T00:00:00Z'
+}
+
+// 账号复制已移到行内高频操作区，测试表格桩需要渲染 actions 插槽。
+const DataTableStub = {
+  props: ['data'],
+  template: `
+    <div>
+      <div v-for="row in data" :key="row.id">
+        <slot name="cell-actions" :row="row" />
+      </div>
+    </div>
+  `
+}
+
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
@@ -74,7 +97,7 @@ const mountView = () =>
         TablePageLayout: {
           template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
         },
-        DataTable: true,
+        DataTable: DataTableStub,
         Pagination: true,
         ConfirmDialog: true,
         AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
@@ -110,7 +133,7 @@ describe('admin AccountsView — 外审 F2:spark 影子创建接线', () => {
     for (const fn of [listAccounts, listWithEtag, getBatchTodayStats, getAllProxies, getAllGroups, duplicateAccount, createSparkShadow, showSuccess, showError]) {
       fn.mockReset()
     }
-    listAccounts.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
+    listAccounts.mockResolvedValue({ items: [parentAccount], total: 1, page: 1, page_size: 20, pages: 1 })
     listWithEtag.mockResolvedValue({ notModified: true, etag: null, data: null })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
     getAllProxies.mockResolvedValue([])
@@ -123,11 +146,11 @@ describe('admin AccountsView — 外审 F2:spark 影子创建接线', () => {
     vi.unstubAllGlobals()
   })
 
-  it('AccountActionMenu 的 duplicate 事件一键复制账号并刷新列表', async () => {
+  it('行内 duplicate 按钮一键复制账号并刷新列表', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    wrapper.findComponent(AccountActionMenu).vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
+    await wrapper.get('[data-test="account-action-duplicate"]').trigger('click')
     await flushPromises()
 
     expect(duplicateAccount).toHaveBeenCalledTimes(1)
@@ -143,9 +166,9 @@ describe('admin AccountsView — 外审 F2:spark 影子创建接线', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    const menu = wrapper.findComponent(AccountActionMenu)
-    menu.vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
-    menu.vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
+    const duplicateButton = wrapper.get('[data-test="account-action-duplicate"]')
+    await duplicateButton.trigger('click')
+    await duplicateButton.trigger('click')
     await flushPromises()
 
     expect(duplicateAccount).toHaveBeenCalledTimes(1)
@@ -160,7 +183,7 @@ describe('admin AccountsView — 外审 F2:spark 影子创建接线', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    wrapper.findComponent(AccountActionMenu).vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
+    await wrapper.get('[data-test="account-action-duplicate"]').trigger('click')
     await flushPromises()
 
     expect(showError).toHaveBeenCalledWith('duplicate failed')
