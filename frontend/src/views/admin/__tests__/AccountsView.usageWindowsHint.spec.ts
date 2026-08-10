@@ -164,7 +164,7 @@ describe('admin AccountsView usage windows hint', () => {
     // Column label is still shown alongside the help icon.
     expect(header.text()).toContain('admin.accounts.columns.usageWindows')
 
-    const hint = wrapper.find('[data-test="usage-windows-hint"]')
+    const hint = header.find('[data-test="usage-windows-hint"]')
     expect(hint.exists()).toBe(true)
     expect(hint.text()).toBe('admin.accounts.usageWindowsHint')
   })

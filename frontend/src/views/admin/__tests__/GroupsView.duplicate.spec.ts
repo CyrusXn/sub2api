@@ -192,7 +192,7 @@ describe('GroupsView duplicate action', () => {
     getModelsListCandidates.mockResolvedValue([])
     getUsageSummary.mockResolvedValue([])
     getCapacitySummary.mockResolvedValue([])
-    // v0.1.172 挂载分组页时会读取实时能力，每个用例都必须恢复 Promise 返回值。
+    // 挂载分组页时会读取实时能力，每个用例都必须恢复 Promise 返回值。
     getLiveCapability.mockResolvedValue({ supported: false })
   })
 
