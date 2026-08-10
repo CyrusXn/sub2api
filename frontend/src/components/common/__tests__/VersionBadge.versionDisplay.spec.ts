@@ -56,4 +56,22 @@ describe('VersionBadge user-visible version', () => {
     expect(wrapper.text()).not.toContain('xnkaixin')
     wrapper.unmount()
   })
+
+  it('shows only the semantic version to non-admin users', () => {
+    authStore.isAdmin = false
+    const wrapper = mount(VersionBadge, {
+      props: {
+        version: '0.1.173-xnkaixin.20260810',
+      },
+      global: {
+        stubs: { Icon: true },
+      },
+    })
+
+    // 普通用户同样只能看到纯语义版本，不能暴露内部构建标识。
+    expect(wrapper.text()).toContain('v0.1.173')
+    expect(wrapper.text()).not.toContain('xnkaixin')
+    wrapper.unmount()
+    authStore.isAdmin = true
+  })
 })

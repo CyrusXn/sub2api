@@ -631,8 +631,8 @@
     </template>
 
     <!-- Non-admin: Simple static version text -->
-    <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
-      v{{ version }}
+    <span v-else-if="staticDisplayVersion" class="text-xs text-gray-500 dark:text-dark-400">
+      v{{ staticDisplayVersion }}
     </span>
   </div>
 </template>
@@ -676,10 +676,16 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
-// edition 只用于内部追踪，左上角及弹窗统一展示纯语义版本。
-const displayVersion = computed(() => {
-  return currentVersion.value
-})
+// 定制标识只用于内部追踪，管理员与普通用户统一展示纯语义版本。
+function getVisibleVersion(version: string) {
+  return version
+    .trim()
+    .replace(/^v(?=\d)/i, '')
+    .replace(/-(?:xnkaixin|xn)[a-z0-9._-]*$/i, '')
+}
+
+const displayVersion = computed(() => getVisibleVersion(currentVersion.value))
+const staticDisplayVersion = computed(() => getVisibleVersion(props.version || ''))
 
 // Update process states (local to this component)
 const updating = ref(false)
