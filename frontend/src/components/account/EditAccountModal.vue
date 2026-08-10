@@ -1415,7 +1415,7 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
-      <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div class="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
           <input v-model.number="form.concurrency" type="number" min="1" class="input"
@@ -1478,6 +1478,18 @@
               @update:model-value="handleUpstreamBillingRateSyncChange"
             />
           </div>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.adminUsageMultiplier') }}</label>
+          <input
+            v-model.number="form.admin_usage_multiplier"
+            type="number"
+            min="0"
+            step="0.001"
+            class="input"
+            data-testid="account-admin-usage-multiplier"
+          />
+          <p class="input-hint">{{ t('admin.accounts.adminUsageMultiplierHint') }}</p>
         </div>
       </div>
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -3223,6 +3235,7 @@ const form = reactive({
   load_factor: null as number | null,
   priority: 1,
   rate_multiplier: 1,
+  admin_usage_multiplier: 1,
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
   expires_at: null as number | null
@@ -3326,6 +3339,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
+  form.admin_usage_multiplier = newAccount.admin_usage_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
     ? newAccount.status
     : 'active'

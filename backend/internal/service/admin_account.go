@@ -298,6 +298,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		Concurrency:           source.Concurrency,
 		Priority:              source.Priority,
 		RateMultiplier:        cloneAccountValuePointer(source.RateMultiplier),
+		AdminUsageMultiplier:  cloneAccountValuePointer(source.AdminUsageMultiplier),
 		LoadFactor:            cloneAccountValuePointer(source.LoadFactor),
 		GroupIDs:              groupIDs,
 		ExpiresAt:             expiresAt,
@@ -505,6 +506,10 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		}
 		account.RateMultiplier = input.RateMultiplier
 	}
+	if err := validateAdminUsageMultiplier(input.AdminUsageMultiplier); err != nil {
+		return nil, err
+	}
+	account.AdminUsageMultiplier = input.AdminUsageMultiplier
 	if input.LoadFactor != nil && *input.LoadFactor > 0 {
 		if *input.LoadFactor > 10000 {
 			return nil, errors.New("load_factor must be <= 10000")
@@ -801,6 +806,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		account.RateMultiplier = input.RateMultiplier
 	}
+	if input.AdminUsageMultiplier != nil {
+		if err := validateAdminUsageMultiplier(input.AdminUsageMultiplier); err != nil {
+			return nil, err
+		}
+		account.AdminUsageMultiplier = input.AdminUsageMultiplier
+	}
 	if input.LoadFactor != nil {
 		if *input.LoadFactor <= 0 {
 			account.LoadFactor = nil // 0 或负数表示清除
@@ -1066,6 +1077,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			})
 		}
 	}
+	if err := validateAdminUsageMultiplier(input.AdminUsageMultiplier); err != nil {
+		return nil, err
+	}
 
 	// 校验并规范化请求头覆写配置（批量路径为 JSONB 顶层 key 合并，直接校验增量即可）
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
@@ -1109,6 +1123,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 	if input.RateMultiplier != nil {
 		repoUpdates.RateMultiplier = input.RateMultiplier
+	}
+	if input.AdminUsageMultiplier != nil {
+		repoUpdates.AdminUsageMultiplier = input.AdminUsageMultiplier
 	}
 	if input.LoadFactor != nil {
 		if *input.LoadFactor <= 0 {

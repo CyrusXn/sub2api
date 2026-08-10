@@ -14,3 +14,8 @@ func validateAdminUsageMultiplier(value *float64) error {
 	}
 	return nil
 }
+
+// ValidateAdminUsageMultiplier 暴露给 HTTP 层复用同一套值域校验。
+func ValidateAdminUsageMultiplier(value *float64) error {
+	return validateAdminUsageMultiplier(value)
+}

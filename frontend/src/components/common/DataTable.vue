@@ -132,19 +132,24 @@
             :data-column-key="column.key"
             :aria-sort="column.sortable ? getColumnAriaSort(column.key) : undefined"
             :style="getColumnWidthStyle(column)"
+            :draggable="isColumnDraggable(column)"
             :class="[
               'sticky-header-cell relative py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
               getColumnPaddingClass(column),
               { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable && !isResizing },
+              // 表头本身可拖拽时禁用文字选中，避免浏览器把拖列操作识别成选中文案。
+              { 'cursor-grab select-none': isColumnDraggable(column) },
               { 'is-column-dragging': draggingColumnKey === column.key },
               { 'is-column-drop-target': dragOverColumnKey === column.key },
               getStickyColumnClass(column, index),
               column.class
             ]"
             @click="column.sortable && !isResizing && handleSort(column.key)"
+            @dragstart.stop="startColumnDrag($event, column)"
             @dragover.prevent.stop="handleColumnDragOver($event, column)"
             @dragleave.stop="handleColumnDragLeave(column)"
             @drop.prevent.stop="dropColumn($event, column)"
+            @dragend.stop="endColumnDrag"
           >
             <div :class="['flex min-w-0 items-center space-x-1 pr-2', getHeaderContentAlignmentClass(column)]">
               <span

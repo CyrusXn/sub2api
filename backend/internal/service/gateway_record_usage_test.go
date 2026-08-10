@@ -406,6 +406,62 @@ func TestGatewayServiceRecordUsage_AdminUsageMultiplierAffectsSettlementButPrese
 	require.InDelta(t, usageRepo.lastLog.ActualCost, quotaSvc.lastAmount, 1e-12)
 }
 
+func TestGatewayServiceRecordUsage_AccountAdminUsageMultiplierAffectsBalanceAndUsage(t *testing.T) {
+	groupID := int64(904)
+	accountRate := 0.5
+	accountMultiplier := 1.5
+	usage := ClaudeUsage{InputTokens: 1000, OutputTokens: 100}
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	quotaSvc := &openAIRecordUsageAPIKeyQuotaStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_account_admin_usage_multiplier",
+			Usage:     usage,
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      804,
+			GroupID: i64p(groupID),
+			Group: &Group{
+				ID:                             groupID,
+				RateMultiplier:                 0.1,
+				AdminUsageMultiplier:           1,
+				AdminUsageMultiplierConfigured: true,
+				SubscriptionType:               SubscriptionTypeStandard,
+			},
+			Quota: 100,
+		},
+		User: &User{ID: 604},
+		Account: &Account{
+			ID:                   704,
+			RateMultiplier:       &accountRate,
+			AdminUsageMultiplier: &accountMultiplier,
+		},
+		APIKeyService: quotaSvc,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, 1500, usageRepo.lastLog.InputTokens)
+	require.Equal(t, 150, usageRepo.lastLog.OutputTokens)
+	require.InDelta(t, 0.1, usageRepo.lastLog.RateMultiplier, 1e-12)
+	require.NotNil(t, usageRepo.lastLog.AccountRateMultiplier)
+	require.InDelta(t, 0.75, *usageRepo.lastLog.AccountRateMultiplier, 1e-12)
+
+	baseCost, calcErr := svc.billingService.CalculateCost("claude-sonnet-4", UsageTokens{
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+	}, 0.1)
+	require.NoError(t, calcErr)
+	require.InDelta(t, baseCost.ActualCost*accountMultiplier, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, usageRepo.lastLog.ActualCost, userRepo.lastAmount, 1e-12)
+	require.InDelta(t, usageRepo.lastLog.ActualCost, quotaSvc.lastAmount, 1e-12)
+}
+
 func TestGatewayServiceRecordUsage_UsesExplicitPricingAtForPeakRate(t *testing.T) {
 	for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformGrok, PlatformAntigravity} {
 		t.Run(platform, func(t *testing.T) {

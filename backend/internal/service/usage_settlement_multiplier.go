@@ -21,6 +21,16 @@ func resolveAdminUsageSettlementMultiplier(user *User, group *Group) float64 {
 	return ResolveAdminUsageSettlementMultiplier(user, group)
 }
 
+// ResolveAdminUsageSettlementMultiplierForAccount 在用户/分组附加倍率基础上叠加账号附加倍率。
+// 账号倍率只在实际选中该账号后生效，确保用户余额、用量明细和 token 快照使用同一结果。
+func ResolveAdminUsageSettlementMultiplierForAccount(user *User, group *Group, account *Account) float64 {
+	return ResolveAdminUsageSettlementMultiplier(user, group) * account.AdminUsageRateMultiplier()
+}
+
+func resolveAdminUsageSettlementMultiplierForAccount(user *User, group *Group, account *Account) float64 {
+	return ResolveAdminUsageSettlementMultiplierForAccount(user, group, account)
+}
+
 func scaleSettlementToken(value int, multiplier float64) int {
 	return int(math.Round(float64(value) * multiplier))
 }

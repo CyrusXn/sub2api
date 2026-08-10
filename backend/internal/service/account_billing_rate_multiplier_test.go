@@ -25,3 +25,16 @@ func TestAccount_BillingRateMultiplier_NegativeFallsBackToOne(t *testing.T) {
 	a := Account{RateMultiplier: &v}
 	require.Equal(t, 1.0, a.BillingRateMultiplier())
 }
+
+func TestAccount_BillingRateMultiplier_AppliesAdminUsageMultiplier(t *testing.T) {
+	base := 0.5
+	admin := 2.0
+	a := Account{RateMultiplier: &base, AdminUsageMultiplier: &admin}
+	require.Equal(t, 1.0, a.BillingRateMultiplier())
+}
+
+func TestAccount_BillingRateMultiplier_AdminUsageMultiplierDefaultsToOneWhenNil(t *testing.T) {
+	base := 0.5
+	a := Account{RateMultiplier: &base}
+	require.Equal(t, 0.5, a.BillingRateMultiplier())
+}

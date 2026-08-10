@@ -263,6 +263,15 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(table.props('defaultSortOrder')).toBe('asc')
   })
 
+  it('exposes the account settlement multiplier as an admin-only account column', async () => {
+    const wrapper = mountAccountsForSortAndProbe()
+
+    await flushPromises()
+
+    const columnKeys = wrapper.findAll('[data-test="column-key"]').map(node => node.text())
+    expect(columnKeys).toContain('admin_usage_multiplier')
+  })
+
   it('migrates the previous name ascending default to upstream billing rate ascending once', async () => {
     localStorage.setItem('account-table-sort', JSON.stringify({ key: 'name', order: 'asc' }))
 
@@ -417,11 +426,30 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.get('[data-test="account-action-test"]').text()).toBe('admin.accounts.testConnection')
     expect(wrapper.get('[data-test="account-action-duplicate"]').text()).toBe('admin.accounts.duplicateAccount')
     expect(wrapper.get('[data-test="account-action-stats"]').text()).toBe('admin.accounts.viewStats')
-    const priorityIndex = columns.findIndex(column => column.key === 'priority')
-    expect(priorityIndex).toBeGreaterThanOrEqual(0)
-    expect(columns[priorityIndex + 1]?.key).toBe('upstream_billing_rate')
+    const schedulableIndex = columns.findIndex(column => column.key === 'schedulable')
+    expect(schedulableIndex).toBeGreaterThanOrEqual(0)
+    expect(columns[schedulableIndex + 1]?.key).toBe('upstream_billing_rate')
     expect(table.props('columnWidthStorageKey')).toBe('account-table-column-widths:v2')
     expect(table.props('columnOrderStorageKey')).toBe('account-table-column-order:v2')
+  })
+
+  it('migrates old persisted column order to keep upstream billing rate next to schedulable', async () => {
+    localStorage.setItem(
+      'account-table-column-order:v2',
+      JSON.stringify(['name', 'schedulable', 'priority', 'upstream_billing_rate', 'created_at'])
+    )
+
+    mountAccountsForSortAndProbe()
+    await flushPromises()
+
+    expect(JSON.parse(localStorage.getItem('account-table-column-order:v2') || '[]')).toEqual([
+      'name',
+      'schedulable',
+      'upstream_billing_rate',
+      'priority',
+      'created_at'
+    ])
+    expect(localStorage.getItem('account-table-column-order-version')).toBe('upstream-rate-after-schedulable')
   })
 
   it('passes the loaded global probe state to every upstream billing cell', async () => {
@@ -538,7 +566,7 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(probeUpstreamBillingBatch).toHaveBeenNthCalledWith(2, [21])
   })
 
-  it('only auto-probes enabled API-key accounts whose snapshot and retry delay have expired', async () => {
+  it('auto-probes enabled API-key accounts and expired persisted snapshots', async () => {
     const future = new Date(Date.now() + 60_000).toISOString()
     const accounts = [
       dueProbeAccount(1),
@@ -554,14 +582,14 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([1, 6])
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([1, 2, 6])
   })
 
   it('forces a fresh upstream billing probe for visible accounts on manual refresh', async () => {
     const future = new Date(Date.now() + 60_000).toISOString()
     const account = dueProbeAccount(9, {
       extra: {
-        upstream_billing_probe_enabled: true,
+        upstream_billing_probe_enabled: false,
         upstream_billing_probe: {
           ...expiredProbeSnapshot(),
           fresh_until: future,

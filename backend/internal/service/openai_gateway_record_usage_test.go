@@ -430,6 +430,8 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 func TestOpenAIGatewayServiceRecordUsage_AdminUsageMultiplierAffectsSettlementButPreservesRate(t *testing.T) {
 	groupID := int64(15)
 	userMultiplier := 10.0
+	accountRate := 0.5
+	accountMultiplier := 2.0
 	usage := OpenAIUsage{
 		InputTokens:              1447,
 		OutputTokens:             130,
@@ -462,21 +464,27 @@ func TestOpenAIGatewayServiceRecordUsage_AdminUsageMultiplierAffectsSettlementBu
 			ID:                   2006,
 			AdminUsageMultiplier: &userMultiplier,
 		},
-		Account:       &Account{ID: 3006},
+		Account: &Account{
+			ID:                   3006,
+			RateMultiplier:       &accountRate,
+			AdminUsageMultiplier: &accountMultiplier,
+		},
 		APIKeyService: quotaSvc,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, 13970, usageRepo.lastLog.InputTokens)
-	require.Equal(t, 1300, usageRepo.lastLog.OutputTokens)
-	require.Equal(t, 200, usageRepo.lastLog.CacheCreationTokens)
-	require.Equal(t, 300, usageRepo.lastLog.CacheReadTokens)
+	require.Equal(t, 27940, usageRepo.lastLog.InputTokens)
+	require.Equal(t, 2600, usageRepo.lastLog.OutputTokens)
+	require.Equal(t, 400, usageRepo.lastLog.CacheCreationTokens)
+	require.Equal(t, 600, usageRepo.lastLog.CacheReadTokens)
 	require.InDelta(t, 0.1, usageRepo.lastLog.RateMultiplier, 1e-12)
+	require.NotNil(t, usageRepo.lastLog.AccountRateMultiplier)
+	require.InDelta(t, 1.0, *usageRepo.lastLog.AccountRateMultiplier, 1e-12)
 
 	baseCost := expectedOpenAICost(t, svc, "gpt-5.1", usage, 0.1)
-	require.InDelta(t, baseCost.TotalCost*10, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, baseCost.ActualCost*10, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, baseCost.TotalCost*20, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, baseCost.ActualCost*20, usageRepo.lastLog.ActualCost, 1e-12)
 	require.InDelta(t, usageRepo.lastLog.ActualCost, userRepo.lastAmount, 1e-12)
 	require.InDelta(t, usageRepo.lastLog.ActualCost, quotaSvc.lastAmount, 1e-12)
 }

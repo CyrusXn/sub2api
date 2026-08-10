@@ -121,6 +121,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	if account.RateMultiplier != nil {
 		builder.SetRateMultiplier(*account.RateMultiplier)
 	}
+	if account.AdminUsageMultiplier != nil {
+		builder.SetAdminUsageMultiplier(*account.AdminUsageMultiplier)
+	}
 	if account.LoadFactor != nil {
 		builder.SetLoadFactor(*account.LoadFactor)
 	}
@@ -509,6 +512,9 @@ func (r *accountRepository) updateLockedAccount(
 
 	if explicitRateMultiplier != nil {
 		builder.SetRateMultiplier(*explicitRateMultiplier)
+	}
+	if account.AdminUsageMultiplier != nil {
+		builder.SetAdminUsageMultiplier(*account.AdminUsageMultiplier)
 	}
 	if account.LoadFactor != nil {
 		builder.SetLoadFactor(*account.LoadFactor)
@@ -2832,6 +2838,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		args = append(args, *updates.RateMultiplier)
 		idx++
 	}
+	if updates.AdminUsageMultiplier != nil {
+		setClauses = append(setClauses, "admin_usage_multiplier = $"+itoa(idx))
+		args = append(args, *updates.AdminUsageMultiplier)
+		idx++
+	}
 	if updates.LoadFactor != nil {
 		if *updates.LoadFactor <= 0 {
 			setClauses = append(setClauses, "load_factor = NULL")
@@ -3326,6 +3337,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 	}
 
 	rateMultiplier := m.RateMultiplier
+	adminUsageMultiplier := m.AdminUsageMultiplier
 
 	return &service.Account{
 		ID:                      m.ID,
@@ -3340,6 +3352,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		Concurrency:             m.Concurrency,
 		Priority:                m.Priority,
 		RateMultiplier:          &rateMultiplier,
+		AdminUsageMultiplier:    &adminUsageMultiplier,
 		LoadFactor:              m.LoadFactor,
 		Status:                  m.Status,
 		ErrorMessage:            derefString(m.ErrorMessage),

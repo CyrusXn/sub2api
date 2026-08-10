@@ -268,6 +268,27 @@ func (_u *AccountUpdate) AddRateMultiplier(v float64) *AccountUpdate {
 	return _u
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (_u *AccountUpdate) SetAdminUsageMultiplier(v float64) *AccountUpdate {
+	_u.mutation.ResetAdminUsageMultiplier()
+	_u.mutation.SetAdminUsageMultiplier(v)
+	return _u
+}
+
+// SetNillableAdminUsageMultiplier sets the "admin_usage_multiplier" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableAdminUsageMultiplier(v *float64) *AccountUpdate {
+	if v != nil {
+		_u.SetAdminUsageMultiplier(*v)
+	}
+	return _u
+}
+
+// AddAdminUsageMultiplier adds value to the "admin_usage_multiplier" field.
+func (_u *AccountUpdate) AddAdminUsageMultiplier(v float64) *AccountUpdate {
+	_u.mutation.AddAdminUsageMultiplier(v)
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *AccountUpdate) SetStatus(v string) *AccountUpdate {
 	_u.mutation.SetStatus(v)
@@ -868,6 +889,12 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(account.FieldRateMultiplier, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.AdminUsageMultiplier(); ok {
+		_spec.SetField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAdminUsageMultiplier(); ok {
+		_spec.AddField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
 	}
@@ -1405,6 +1432,27 @@ func (_u *AccountUpdateOne) SetNillableRateMultiplier(v *float64) *AccountUpdate
 // AddRateMultiplier adds value to the "rate_multiplier" field.
 func (_u *AccountUpdateOne) AddRateMultiplier(v float64) *AccountUpdateOne {
 	_u.mutation.AddRateMultiplier(v)
+	return _u
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (_u *AccountUpdateOne) SetAdminUsageMultiplier(v float64) *AccountUpdateOne {
+	_u.mutation.ResetAdminUsageMultiplier()
+	_u.mutation.SetAdminUsageMultiplier(v)
+	return _u
+}
+
+// SetNillableAdminUsageMultiplier sets the "admin_usage_multiplier" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableAdminUsageMultiplier(v *float64) *AccountUpdateOne {
+	if v != nil {
+		_u.SetAdminUsageMultiplier(*v)
+	}
+	return _u
+}
+
+// AddAdminUsageMultiplier adds value to the "admin_usage_multiplier" field.
+func (_u *AccountUpdateOne) AddAdminUsageMultiplier(v float64) *AccountUpdateOne {
+	_u.mutation.AddAdminUsageMultiplier(v)
 	return _u
 }
 
@@ -2037,6 +2085,12 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(account.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AdminUsageMultiplier(); ok {
+		_spec.SetField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAdminUsageMultiplier(); ok {
+		_spec.AddField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)

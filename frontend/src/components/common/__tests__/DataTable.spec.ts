@@ -496,10 +496,12 @@ describe('DataTable', () => {
     await wrapper.vm.$nextTick()
 
     const headers = wrapper.findAll('th[data-column-key]')
-    expect(headers.every((header) => header.attributes('draggable') !== 'true')).toBe(true)
+    expect(headers[0].attributes('draggable')).toBe('true')
+    expect(headers[1].attributes('draggable')).toBe('true')
+    expect(headers[2].attributes('draggable')).toBe('false')
     const dragHandles = wrapper.findAll('[data-test="column-drag-handle"]')
     expect(dragHandles).toHaveLength(2)
-    await dragHandles[1].trigger('dragstart', {
+    await headers[1].trigger('dragstart', {
       dataTransfer: { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: vi.fn() }
     })
     await headers[0].trigger('drop', { preventDefault: vi.fn() })

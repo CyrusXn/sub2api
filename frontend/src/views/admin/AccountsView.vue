@@ -349,6 +349,11 @@
               </span>
             </span>
           </template>
+          <template #cell-admin_usage_multiplier="{ row }">
+            <span class="text-sm font-mono text-gray-700 dark:text-gray-300">
+              {{ formatMultiplier(row.admin_usage_multiplier ?? 1) }}x
+            </span>
+          </template>
           <template #header-upstream_billing_rate="{ column }">
             <div class="flex items-center gap-1">
               <span>{{ column.label }}</span>
@@ -654,6 +659,8 @@ const ACCOUNT_SORT_DEFAULT_VERSION_KEY = 'account-table-sort-default-version'
 const ACCOUNT_SORT_DEFAULT_VERSION = 'upstream-billing-rate-asc'
 const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'account-table-column-widths:v2'
 const ACCOUNT_COLUMN_ORDER_STORAGE_KEY = 'account-table-column-order:v2'
+const ACCOUNT_COLUMN_ORDER_VERSION_KEY = 'account-table-column-order-version'
+const ACCOUNT_COLUMN_ORDER_CURRENT_VERSION = 'upstream-rate-after-schedulable'
 type AccountSortOrder = 'asc' | 'desc'
 type AccountSortState = {
   sort_by: string
@@ -845,6 +852,34 @@ const loadSavedColumns = () => {
   }
 }
 
+const migrateAccountColumnOrder = () => {
+  try {
+    if (localStorage.getItem(ACCOUNT_COLUMN_ORDER_VERSION_KEY) === ACCOUNT_COLUMN_ORDER_CURRENT_VERSION) return
+    const raw = localStorage.getItem(ACCOUNT_COLUMN_ORDER_STORAGE_KEY)
+    if (!raw) {
+      localStorage.setItem(ACCOUNT_COLUMN_ORDER_VERSION_KEY, ACCOUNT_COLUMN_ORDER_CURRENT_VERSION)
+      return
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      localStorage.setItem(ACCOUNT_COLUMN_ORDER_VERSION_KEY, ACCOUNT_COLUMN_ORDER_CURRENT_VERSION)
+      return
+    }
+    const keys = parsed.filter((key): key is string => typeof key === 'string')
+    const schedulableIndex = keys.indexOf('schedulable')
+    const upstreamRateIndex = keys.indexOf('upstream_billing_rate')
+    if (schedulableIndex !== -1 && upstreamRateIndex !== -1 && upstreamRateIndex !== schedulableIndex + 1) {
+      // 旧浏览器缓存会继续沿用旧列顺序；只迁移倍率列位置，不影响隐藏列和列宽。
+      keys.splice(upstreamRateIndex, 1)
+      keys.splice(keys.indexOf('schedulable') + 1, 0, 'upstream_billing_rate')
+      localStorage.setItem(ACCOUNT_COLUMN_ORDER_STORAGE_KEY, JSON.stringify(keys))
+    }
+    localStorage.setItem(ACCOUNT_COLUMN_ORDER_VERSION_KEY, ACCOUNT_COLUMN_ORDER_CURRENT_VERSION)
+  } catch (e) {
+    console.error('Failed to migrate account column order:', e)
+  }
+}
+
 const saveColumnsToStorage = () => {
   try {
     localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
@@ -885,6 +920,7 @@ const saveAutoRefreshToStorage = () => {
 
 if (typeof window !== 'undefined') {
   loadSavedColumns()
+  migrateAccountColumnOrder()
   loadSavedAutoRefresh()
 }
 
@@ -1030,9 +1066,13 @@ const visibleUpstreamBillingAccountIDs = (options: { force?: boolean } = {}) => 
   const now = Date.now()
   return accounts.value
     .filter((account) => {
-      if (account.type !== 'apikey' || account.extra?.upstream_billing_probe_enabled !== true) return false
+      if (account.type !== 'apikey') return false
       if (options.force === true) return true
+      const probeEnabled = account.extra?.upstream_billing_probe_enabled === true
       const snapshot = account.extra?.upstream_billing_probe
+      // 旧快照即使账号级自动探测开关关闭，也要在刷新列表时重新探测；
+      // 否则 HBY 这类已修正口径的旧 0.5x 快照会一直留在页面和调度依据里。
+      if (!probeEnabled && !snapshot) return false
       if (!snapshot) return true
       return probeTimestampIsDue(snapshot.fresh_until, now) && probeTimestampIsDue(snapshot.next_probe_at, now)
     })
@@ -1550,6 +1590,8 @@ const allColumns = computed(() => {
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false, width: 130 },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true, width: 116 },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true, width: 116 },
+    // 上游倍率直接放在调度右侧，方便按低倍率优先调度时同步观察。
+    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, width: 190 },
     { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false, width: 180 }
   ]
   if (!authStore.isSimpleMode) {
@@ -1559,10 +1601,10 @@ const allColumns = computed(() => {
   c.push(
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, width: 160 },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true, width: 96 },
-    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, width: 190 },
     { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false, width: 150 },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false, width: 130 },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true, width: 152 },
+    { key: 'admin_usage_multiplier', label: t('admin.accounts.columns.adminUsageMultiplier'), sortable: false, width: 152 },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true, width: 172 },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true, width: 154 },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true, width: 154 },

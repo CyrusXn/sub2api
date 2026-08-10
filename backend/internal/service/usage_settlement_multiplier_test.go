@@ -53,6 +53,19 @@ func TestResolveAdminUsageSettlementMultiplier(t *testing.T) {
 	}
 }
 
+func TestResolveAdminUsageSettlementMultiplierForAccount_ComposesAccountMultiplier(t *testing.T) {
+	userMultiplier := 1.2
+	accountMultiplier := 1.5
+
+	got := resolveAdminUsageSettlementMultiplierForAccount(
+		&User{AdminUsageMultiplier: &userMultiplier},
+		&Group{AdminUsageMultiplier: 3},
+		&Account{AdminUsageMultiplier: &accountMultiplier},
+	)
+
+	require.InDelta(t, 1.8, got, 1e-12)
+}
+
 func TestApplyAdminUsageSettlementMultiplier(t *testing.T) {
 	accountRate := 1.25
 	log := &UsageLog{

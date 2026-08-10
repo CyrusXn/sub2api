@@ -316,6 +316,23 @@ describe('EditAccountModal', () => {
     authIsSimpleMode.value = true
   })
 
+  it('loads and submits the account settlement multiplier', async () => {
+    const account = buildAccount()
+    account.admin_usage_multiplier = 1.5
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const multiplierInput = wrapper.get('[data-testid="account-admin-usage-multiplier"]')
+    expect((multiplierInput.element as HTMLInputElement).value).toBe('1.5')
+    await multiplierInput.setValue('1.75')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.admin_usage_multiplier).toBe(1.75)
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

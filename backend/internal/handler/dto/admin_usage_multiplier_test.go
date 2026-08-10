@@ -37,4 +37,24 @@ func TestAdminUsageMultiplierFieldsAreAdminOnly(t *testing.T) {
 
 	adminGroup := GroupFromServiceAdmin(group)
 	require.InDelta(t, 1.25, adminGroup.AdminUsageMultiplier, 1e-12)
+
+	accountRate := 0.5
+	accountMultiplier := 1.4
+	account := &service.Account{
+		ID:                   11,
+		Name:                 "admin-only-account",
+		RateMultiplier:       &accountRate,
+		AdminUsageMultiplier: &accountMultiplier,
+	}
+	adminAccount := AccountFromServiceShallow(account)
+	require.InDelta(t, 0.5, adminAccount.RateMultiplier, 1e-12)
+	require.InDelta(t, 1.4, adminAccount.AdminUsageMultiplier, 1e-12)
+
+	usageJSON, err := json.Marshal(UsageLogFromService(&service.UsageLog{
+		AccountID:             account.ID,
+		Account:               account,
+		AccountRateMultiplier: &accountRate,
+	}))
+	require.NoError(t, err)
+	require.NotContains(t, string(usageJSON), "admin_usage_multiplier")
 }

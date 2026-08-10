@@ -104,6 +104,20 @@ describe('BulkEditAccountModal', () => {
     )
   })
 
+  it('批量修改账号结算附加倍率时提交独立字段', async () => {
+    const wrapper = mountModal()
+
+    await wrapper.get('#bulk-edit-admin-usage-multiplier-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-admin-usage-multiplier').setValue('1.4')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      admin_usage_multiplier: 1.4
+    })
+  })
+
   it('后端拒绝修改同步账号倍率时展示专用错误', async () => {
     vi.mocked(adminAPI.accounts.bulkUpdate).mockRejectedValueOnce({
       status: 409,

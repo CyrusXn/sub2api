@@ -739,7 +739,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 附加倍率只由管理端配置，但必须在请求结算时固化。放在原始定价之后，
 	// 避免改变单价、基础有效倍率及长上下文判定，并让后续所有扣费共用同一结果。
-	settlementMultiplier := resolveAdminUsageSettlementMultiplier(user, apiKey.Group)
+	settlementMultiplier := resolveAdminUsageSettlementMultiplierForAccount(user, apiKey.Group, account)
 	applyAdminUsageSettlementMultiplier(usageLog, cost, settlementMultiplier)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）

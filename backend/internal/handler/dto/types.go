@@ -208,13 +208,15 @@ type Account struct {
 	LoadFactor              *int                           `json:"load_factor,omitempty"`
 	Priority                int                            `json:"priority"`
 	RateMultiplier          float64                        `json:"rate_multiplier"`
-	Status                  string                         `json:"status"`
-	ErrorMessage            string                         `json:"error_message"`
-	LastUsedAt              *time.Time                     `json:"last_used_at"`
-	ExpiresAt               *int64                         `json:"expires_at"`
-	AutoPauseOnExpired      bool                           `json:"auto_pause_on_expired"`
-	CreatedAt               time.Time                      `json:"created_at"`
-	UpdatedAt               time.Time                      `json:"updated_at"`
+	// AdminUsageMultiplier 仅账号管理接口返回，不进入普通用户用量 DTO。
+	AdminUsageMultiplier float64    `json:"admin_usage_multiplier"`
+	Status               string     `json:"status"`
+	ErrorMessage         string     `json:"error_message"`
+	LastUsedAt           *time.Time `json:"last_used_at"`
+	ExpiresAt            *int64     `json:"expires_at"`
+	AutoPauseOnExpired   bool       `json:"auto_pause_on_expired"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 
 	Schedulable bool `json:"schedulable"`
 

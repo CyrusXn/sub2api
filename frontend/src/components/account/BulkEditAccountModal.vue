@@ -761,6 +761,37 @@
         </div>
       </div>
 
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label
+            id="bulk-edit-admin-usage-multiplier-label"
+            class="input-label mb-0"
+            for="bulk-edit-admin-usage-multiplier-enabled"
+          >
+            {{ t('admin.accounts.adminUsageMultiplier') }}
+          </label>
+          <input
+            v-model="enableAdminUsageMultiplier"
+            id="bulk-edit-admin-usage-multiplier-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-admin-usage-multiplier"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <input
+          v-model.number="adminUsageMultiplier"
+          id="bulk-edit-admin-usage-multiplier"
+          type="number"
+          min="0"
+          step="0.001"
+          :disabled="!enableAdminUsageMultiplier"
+          class="input"
+          :class="!enableAdminUsageMultiplier && 'cursor-not-allowed opacity-50'"
+          aria-labelledby="bulk-edit-admin-usage-multiplier-label"
+        />
+        <p class="input-hint">{{ t('admin.accounts.adminUsageMultiplierHint') }}</p>
+      </div>
+
       <!-- Status -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -1473,6 +1504,7 @@ const enableConcurrency = ref(false)
 const enableLoadFactor = ref(false)
 const enablePriority = ref(false)
 const enableRateMultiplier = ref(false)
+const enableAdminUsageMultiplier = ref(false)
 const enableStatus = ref(false)
 const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
@@ -1505,6 +1537,7 @@ const concurrency = ref(1)
 const loadFactor = ref<number | null>(null)
 const priority = ref(1)
 const rateMultiplier = ref(1)
+const adminUsageMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const openaiPassthroughEnabled = ref(false)
@@ -1693,6 +1726,10 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (enableRateMultiplier.value) {
     updates.rate_multiplier = rateMultiplier.value
+  }
+
+  if (enableAdminUsageMultiplier.value) {
+    updates.admin_usage_multiplier = adminUsageMultiplier.value
   }
 
   if (enableStatus.value) {
@@ -1903,6 +1940,7 @@ const handleSubmit = async () => {
     enableLoadFactor.value ||
     enablePriority.value ||
     enableRateMultiplier.value ||
+    enableAdminUsageMultiplier.value ||
     enableStatus.value ||
     enableGroups.value ||
     enableOpenAIWSMode.value ||
@@ -2035,6 +2073,7 @@ watch(
       enableLoadFactor.value = false
       enablePriority.value = false
       enableRateMultiplier.value = false
+      enableAdminUsageMultiplier.value = false
       enableStatus.value = false
       enableGroups.value = false
       enableOpenAIPassthrough.value = false

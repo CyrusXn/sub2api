@@ -1147,6 +1147,8 @@ export interface Account {
   scheduler_scores?: AccountSchedulerGroupScore[] | null
   priority: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
+  // 仅管理端账号接口返回的结算附加倍率。
+  admin_usage_multiplier?: number
   status: 'active' | 'inactive' | 'error'
   error_message: string | null
   last_used_at: string | null
@@ -1410,6 +1412,7 @@ export interface CreateAccountRequest {
   load_factor?: number | null
   priority?: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
+  admin_usage_multiplier?: number
   group_ids?: number[]
   expires_at?: number | null
   auto_pause_on_expired?: boolean
@@ -1428,6 +1431,7 @@ export interface UpdateAccountRequest {
   load_factor?: number | null
   priority?: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
+  admin_usage_multiplier?: number
   schedulable?: boolean
   status?: 'active' | 'inactive' | 'error'
   group_ids?: number[]
@@ -1547,6 +1551,7 @@ export interface CodexSessionImportRequest {
   concurrency?: number
   priority?: number
   rate_multiplier?: number
+  admin_usage_multiplier?: number
   load_factor?: number | null
   expires_at?: number | null
   auto_pause_on_expired?: boolean
@@ -1566,6 +1571,7 @@ export interface OpenAICodexPATCreateRequest {
   concurrency?: number
   priority?: number
   rate_multiplier?: number
+  admin_usage_multiplier?: number
   load_factor?: number | null
   expires_at?: number | null
   auto_pause_on_expired?: boolean

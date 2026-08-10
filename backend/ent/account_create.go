@@ -195,6 +195,20 @@ func (_c *AccountCreate) SetNillableRateMultiplier(v *float64) *AccountCreate {
 	return _c
 }
 
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (_c *AccountCreate) SetAdminUsageMultiplier(v float64) *AccountCreate {
+	_c.mutation.SetAdminUsageMultiplier(v)
+	return _c
+}
+
+// SetNillableAdminUsageMultiplier sets the "admin_usage_multiplier" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableAdminUsageMultiplier(v *float64) *AccountCreate {
+	if v != nil {
+		_c.SetAdminUsageMultiplier(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *AccountCreate) SetStatus(v string) *AccountCreate {
 	_c.mutation.SetStatus(v)
@@ -565,6 +579,10 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultRateMultiplier
 		_c.mutation.SetRateMultiplier(v)
 	}
+	if _, ok := _c.mutation.AdminUsageMultiplier(); !ok {
+		v := account.DefaultAdminUsageMultiplier
+		_c.mutation.SetAdminUsageMultiplier(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := account.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -630,6 +648,9 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		return &ValidationError{Name: "rate_multiplier", err: errors.New(`ent: missing required field "Account.rate_multiplier"`)}
+	}
+	if _, ok := _c.mutation.AdminUsageMultiplier(); !ok {
+		return &ValidationError{Name: "admin_usage_multiplier", err: errors.New(`ent: missing required field "Account.admin_usage_multiplier"`)}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Account.status"`)}
@@ -740,6 +761,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RateMultiplier(); ok {
 		_spec.SetField(account.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
+	}
+	if value, ok := _c.mutation.AdminUsageMultiplier(); ok {
+		_spec.SetField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+		_node.AdminUsageMultiplier = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
@@ -1164,6 +1189,24 @@ func (u *AccountUpsert) UpdateRateMultiplier() *AccountUpsert {
 // AddRateMultiplier adds v to the "rate_multiplier" field.
 func (u *AccountUpsert) AddRateMultiplier(v float64) *AccountUpsert {
 	u.Add(account.FieldRateMultiplier, v)
+	return u
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *AccountUpsert) SetAdminUsageMultiplier(v float64) *AccountUpsert {
+	u.Set(account.FieldAdminUsageMultiplier, v)
+	return u
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateAdminUsageMultiplier() *AccountUpsert {
+	u.SetExcluded(account.FieldAdminUsageMultiplier)
+	return u
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *AccountUpsert) AddAdminUsageMultiplier(v float64) *AccountUpsert {
+	u.Add(account.FieldAdminUsageMultiplier, v)
 	return u
 }
 
@@ -1739,6 +1782,27 @@ func (u *AccountUpsertOne) AddRateMultiplier(v float64) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateRateMultiplier() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *AccountUpsertOne) SetAdminUsageMultiplier(v float64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAdminUsageMultiplier(v)
+	})
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *AccountUpsertOne) AddAdminUsageMultiplier(v float64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddAdminUsageMultiplier(v)
+	})
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateAdminUsageMultiplier() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAdminUsageMultiplier()
 	})
 }
 
@@ -2524,6 +2588,27 @@ func (u *AccountUpsertBulk) AddRateMultiplier(v float64) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateRateMultiplier() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAdminUsageMultiplier sets the "admin_usage_multiplier" field.
+func (u *AccountUpsertBulk) SetAdminUsageMultiplier(v float64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAdminUsageMultiplier(v)
+	})
+}
+
+// AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
+func (u *AccountUpsertBulk) AddAdminUsageMultiplier(v float64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddAdminUsageMultiplier(v)
+	})
+}
+
+// UpdateAdminUsageMultiplier sets the "admin_usage_multiplier" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateAdminUsageMultiplier() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAdminUsageMultiplier()
 	})
 }
 

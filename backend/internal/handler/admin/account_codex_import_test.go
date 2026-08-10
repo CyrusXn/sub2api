@@ -648,6 +648,30 @@ func TestImportCodexSessionsAccessTokenOnlySameWorkspaceDifferentUsersCreatesTwo
 	}
 }
 
+func TestImportCodexSessionsPassesAccountAdminUsageMultiplierToCreate(t *testing.T) {
+	svc := newCodexImportMemoryAdminService(nil)
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminUsageMultiplier := 1.6
+	req := CodexSessionImportRequest{
+		AdminUsageMultiplier: &adminUsageMultiplier,
+		SkipDefaultGroupBind: boolPtr(true),
+	}
+	entries := []codexImportEntry{
+		{Index: 1, Value: buildCodexAccessOnlyImportValue(t, "workspace-priced", "user-priced")},
+	}
+
+	result, err := handler.importCodexSessions(context.Background(), req, entries)
+	if err != nil {
+		t.Fatalf("importCodexSessions error = %v", err)
+	}
+	if result.Created != 1 || len(svc.createdAccounts) != 1 {
+		t.Fatalf("result = %+v, created accounts = %d", result, len(svc.createdAccounts))
+	}
+	if svc.createdAccounts[0].AdminUsageMultiplier == nil || *svc.createdAccounts[0].AdminUsageMultiplier != adminUsageMultiplier {
+		t.Fatalf("admin usage multiplier = %v, want %v", svc.createdAccounts[0].AdminUsageMultiplier, adminUsageMultiplier)
+	}
+}
+
 func TestImportCodexSessionsAccessTokenOnlySameWorkspaceAndUserDifferentTokensCreatesTwoAccounts(t *testing.T) {
 	svc := newCodexImportMemoryAdminService(nil)
 	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)

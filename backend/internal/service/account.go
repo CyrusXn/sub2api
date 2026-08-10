@@ -33,15 +33,17 @@ type Account struct {
 	Priority                int
 	// RateMultiplier 账号计费倍率（>=0，允许 0 表示该账号计费为 0）。
 	// 使用指针用于兼容旧版本调度缓存（Redis）中缺字段的情况：nil 表示按 1.0 处理。
-	RateMultiplier     *float64
-	LoadFactor         *int // 调度负载因子；nil 表示使用 Concurrency
-	Status             string
-	ErrorMessage       string
-	LastUsedAt         *time.Time
-	ExpiresAt          *time.Time
-	AutoPauseOnExpired bool
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	RateMultiplier *float64
+	// AdminUsageMultiplier 是仅管理端可配置的账号级附加倍率；nil 表示旧缓存缺字段，按 1.0 处理。
+	AdminUsageMultiplier *float64
+	LoadFactor           *int // 调度负载因子；nil 表示使用 Concurrency
+	Status               string
+	ErrorMessage         string
+	LastUsedAt           *time.Time
+	ExpiresAt            *time.Time
+	AutoPauseOnExpired   bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 
 	Schedulable bool
 
@@ -153,6 +155,13 @@ func (a *Account) IsSyntheticUITest() bool {
 // - 允许 0，表示该账号计费为 0
 // - 负数属于非法数据，出于安全考虑按 1.0 处理
 func (a *Account) BillingRateMultiplier() float64 {
+	base := a.BaseRateMultiplier()
+	admin := a.AdminUsageRateMultiplier()
+	return base * admin
+}
+
+// BaseRateMultiplier 返回账号原始计费倍率，供管理端编辑和上游倍率同步使用。
+func (a *Account) BaseRateMultiplier() float64 {
 	if a == nil || a.RateMultiplier == nil {
 		return 1.0
 	}
@@ -160,6 +169,18 @@ func (a *Account) BillingRateMultiplier() float64 {
 		return 1.0
 	}
 	return *a.RateMultiplier
+}
+
+// AdminUsageRateMultiplier 返回账号级管理统计附加倍率。
+// nil 表示旧缓存/旧数据缺字段，按 1.0 处理；负数属于非法数据，按 1.0 处理。
+func (a *Account) AdminUsageRateMultiplier() float64 {
+	if a == nil || a.AdminUsageMultiplier == nil {
+		return 1.0
+	}
+	if *a.AdminUsageMultiplier < 0 {
+		return 1.0
+	}
+	return *a.AdminUsageMultiplier
 }
 
 func (a *Account) EffectiveLoadFactor() int {

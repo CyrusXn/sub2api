@@ -374,7 +374,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 
 	// 附加倍率在本次请求结算时固化，但不覆盖单价、服务档位和原始有效倍率。
-	settlementMultiplier := resolveAdminUsageSettlementMultiplier(user, apiKey.Group)
+	settlementMultiplier := resolveAdminUsageSettlementMultiplierForAccount(user, apiKey.Group, account)
 	applyAdminUsageSettlementMultiplier(usageLog, cost, settlementMultiplier)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
