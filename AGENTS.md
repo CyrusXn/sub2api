@@ -15,7 +15,8 @@
 ## 工作区保护
 
 - 当前工作区可能包含用户未提交改动。开始前检查 `git status --short --branch`，不得执行 `git reset --hard`、`git checkout --` 或清理用户文件。
-- 发布工作优先使用仓库旁的持久 Git worktree，不使用可能被系统清理的 `/tmp` 或 `/private/tmp`。
+- 所有开发、官方同步、验证、构建和发布只允许在主项目 `/Users/xn/Code/ai-tools/sub2api` 完成，禁止创建或使用 release、WIP、临时 Git worktree。
+- 发布前必须在主项目提交全部入镜代码并确认工作区干净；存在无关未提交改动时暂停发布并保留现场，不得通过旁路 worktree 规避。
 - 只修改当前任务需要的文件，不顺手重构，不覆盖用户最新改动。
 - 代码、日志和注释默认使用中文；不得记录 API Key、Token、Cookie、密码、请求头或未脱敏上游响应。
 

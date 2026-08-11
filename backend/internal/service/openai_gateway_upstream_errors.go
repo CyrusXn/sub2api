@@ -322,10 +322,15 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 ) (*OpenAIForwardResult, error) {
 	body := s.readUpstreamErrorBody(resp)
 	body = s.redactAgentIdentitySensitiveBody(ctx, account, body)
+	requestedClientModel, upstreamModel := openAIErrorModelPair(requestedModel)
+	cooldownModel := ""
+	if len(requestedModel) > 0 {
+		cooldownModel = strings.TrimSpace(requestedModel[len(requestedModel)-1])
+	}
 
-	// cyber_policy 硬阻断：透传上游原始错误体给客户端（不重包成通用 502），不冷却账号。
-	// 当前请求恒透传（需求1）；标记供 handler 事后写风控/邮件。400 cyber 不可 failover
-	// （shouldFailoverUpstreamError(400)=false），故走到此处即可安全早返回。
+	// cyber_policy 硬阻断：保持上游状态码和标准错误字段，但先净化 body 再返回，避免
+	// 上游模型、厂商 metadata 或调试字段进入下游；账号不冷却，标记供 handler 事后写风控/邮件。
+	// 400 cyber 不可 failover（shouldFailoverUpstreamError(400)=false），故走到此处即可安全早返回。
 	if hit, code, cyberMsg := detectOpenAICyberPolicy(body); hit {
 		MarkOpsCyberPolicy(c, CyberPolicyMark{
 			Code:           code,
@@ -339,7 +344,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		if contentType == "" {
 			contentType = "application/json"
 		}
-		c.Data(resp.StatusCode, contentType, body)
+		c.Data(resp.StatusCode, contentType, sanitizeOpenAIErrorBody(body, requestedClientModel, upstreamModel))
 		if cyberMsg == "" {
 			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
 		}
@@ -394,7 +399,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
 		})
-		s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, requestedModel...)
+		s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, cooldownModel)
 		return nil, newOpenAIUpstreamFailoverError(
 			resp.StatusCode,
 			resp.Header,
@@ -417,7 +422,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		c.JSON(status, gin.H{
 			"error": gin.H{
 				"type":    errType,
-				"message": errMsg,
+				"message": sanitizeOpenAIErrorMessage(errMsg, requestedClientModel, upstreamModel),
 			},
 		})
 		if upstreamMsg == "" {
@@ -455,10 +460,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	// Handle upstream error (mark account status)
-	var reqModel string
-	if len(requestedModel) > 0 {
-		reqModel = strings.TrimSpace(requestedModel[0])
-	}
+	var reqModel = cooldownModel
 	if reqModel == "" {
 		reqModel, _, _ = extractOpenAIRequestMetaFromBody(requestBody)
 		reqModel = canonicalOpenAIAccountSchedulingModel(account, reqModel)
@@ -515,13 +517,13 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		errMsg = "Upstream request failed"
 	}
 	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
-		errMsg = upstreamMsg
+		errMsg = sanitizeOpenAIErrorMessage(upstreamMsg, requestedClientModel, upstreamModel)
 	}
 
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"type":    errType,
-			"message": errMsg,
+			"message": sanitizeOpenAIErrorMessage(errMsg, requestedClientModel, upstreamModel),
 		},
 	})
 

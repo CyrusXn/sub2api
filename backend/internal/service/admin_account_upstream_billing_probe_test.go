@@ -2,15 +2,24 @@ package service
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"testing"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/stretchr/testify/require"
 )
 
 type upstreamBillingProbeAdminRepo struct {
 	*upstreamBillingProbeAccountRepo
+	manualRateUpdates []upstreamBillingManualRateUpdate
+	updateCalls       int
+}
+
+type upstreamBillingManualRateUpdate struct {
+	AccountID int64
+	Value     *float64
 }
 
 func (r *upstreamBillingProbeAdminRepo) ListShadowsByParent(context.Context, int64) ([]*Account, error) {
@@ -110,6 +119,119 @@ func TestUpdateAccountRoutesRateIntentThroughAtomicBillingUpdater(t *testing.T) 
 	require.NotNil(t, repo.lastExplicitRate)
 	require.Zero(t, *repo.lastExplicitRate)
 	require.Zero(t, *updated.RateMultiplier)
+}
+
+func (r *upstreamBillingProbeAdminRepo) Update(ctx context.Context, account *Account) error {
+	r.updateCalls++
+	return r.upstreamBillingProbeAccountRepo.Update(ctx, account)
+}
+
+func (r *upstreamBillingProbeAdminRepo) UpdateUpstreamBillingManualRateMultiplier(_ context.Context, account *Account, value *float64) error {
+	r.manualRateUpdates = append(r.manualRateUpdates, upstreamBillingManualRateUpdate{AccountID: account.ID, Value: value})
+	account = r.accounts[account.ID]
+	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	if snapshot == nil || snapshot.Status != UpstreamBillingProbeStatusFailed {
+		return ErrUpstreamBillingManualRateUnavailable
+	}
+	snapshot.ManualRateMultiplier = value
+	account.Extra[UpstreamBillingProbeExtraKey] = snapshot
+	return nil
+}
+
+func TestUpdateAccountUpstreamBillingManualRateMultiplierSemantics(t *testing.T) {
+	accountID := int64(150)
+	newAccount := func() *Account {
+		return &Account{
+			ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive,
+			Credentials: map[string]any{"api_key": "sk-test"},
+			Extra:       map[string]any{UpstreamBillingProbeExtraKey: map[string]any{"status": UpstreamBillingProbeStatusFailed}},
+		}
+	}
+
+	t.Run("字段缺失不修改", func(t *testing.T) {
+		baseRepo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{accountID: newAccount()}}
+		repo := &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}
+		_, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{Name: "renamed"})
+		require.NoError(t, err)
+		require.Empty(t, repo.manualRateUpdates)
+	})
+
+	t.Run("数值设置且允许零", func(t *testing.T) {
+		for _, value := range []float64{0, 0.03} {
+			baseRepo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{accountID: newAccount()}}
+			repo := &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}
+			_, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+				UpstreamBillingManualRateMultiplierSet: true,
+				UpstreamBillingManualRateMultiplier:    &value,
+			})
+			require.NoError(t, err)
+			require.Len(t, repo.manualRateUpdates, 1)
+			require.Equal(t, value, *repo.manualRateUpdates[0].Value)
+		}
+	})
+
+	t.Run("null 清除", func(t *testing.T) {
+		account := newAccount()
+		account.Extra[UpstreamBillingProbeExtraKey].(map[string]any)["manual_rate_multiplier"] = 0.03
+		baseRepo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{accountID: account}}
+		repo := &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}
+		_, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+			UpstreamBillingManualRateMultiplierSet: true,
+		})
+		require.NoError(t, err)
+		require.Len(t, repo.manualRateUpdates, 1)
+		require.Nil(t, repo.manualRateUpdates[0].Value)
+	})
+}
+
+func TestUpdateAccountRejectsInvalidUpstreamBillingManualRateMultiplier(t *testing.T) {
+	failedSnapshot := map[string]any{UpstreamBillingProbeExtraKey: map[string]any{"status": UpstreamBillingProbeStatusFailed}}
+	tests := []struct {
+		name    string
+		account *Account
+		value   float64
+		reason  string
+	}{
+		{name: "负数", account: &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: failedSnapshot}, value: -0.01, reason: "INVALID_UPSTREAM_BILLING_MANUAL_RATE_MULTIPLIER"},
+		{name: "NaN", account: &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: failedSnapshot}, value: math.NaN(), reason: "INVALID_UPSTREAM_BILLING_MANUAL_RATE_MULTIPLIER"},
+		{name: "正无穷", account: &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: failedSnapshot}, value: math.Inf(1), reason: "INVALID_UPSTREAM_BILLING_MANUAL_RATE_MULTIPLIER"},
+		{name: "OAuth 不适用", account: &Account{ID: 4, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: failedSnapshot}, value: 0.03, reason: "UPSTREAM_BILLING_MANUAL_RATE_ACCOUNT_INVALID"},
+		{name: "成功快照不适用", account: &Account{ID: 5, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{UpstreamBillingProbeExtraKey: map[string]any{"status": UpstreamBillingProbeStatusOK}}}, value: 0.03, reason: "UPSTREAM_BILLING_MANUAL_RATE_REQUIRES_FAILED_PROBE"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseRepo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{tt.account.ID: tt.account}}
+			repo := &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}
+			_, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), tt.account.ID, &UpdateAccountInput{
+				UpstreamBillingManualRateMultiplierSet: true,
+				UpstreamBillingManualRateMultiplier:    &tt.value,
+			})
+			require.Error(t, err)
+			require.Equal(t, tt.reason, infraerrors.Reason(err))
+			require.Empty(t, repo.manualRateUpdates)
+		})
+	}
+}
+
+func TestUpdateAccountRejectsManualRateWithProbeDisableBeforeAnyWrite(t *testing.T) {
+	account := &Account{
+		ID: 6, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Extra: map[string]any{UpstreamBillingProbeExtraKey: map[string]any{"status": UpstreamBillingProbeStatusFailed}},
+	}
+	baseRepo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	repo := &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}
+	manualRate := 0.03
+
+	_, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), account.ID, &UpdateAccountInput{
+		Extra:                                  map[string]any{UpstreamBillingProbeEnabledExtraKey: false},
+		UpstreamBillingManualRateMultiplierSet: true,
+		UpstreamBillingManualRateMultiplier:    &manualRate,
+	})
+
+	require.ErrorIs(t, err, ErrUpstreamBillingManualRateRequiresFailedProbe)
+	require.Equal(t, 0, repo.updateCalls)
+	require.Empty(t, repo.manualRateUpdates)
 }
 
 func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
@@ -377,7 +499,7 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenProxyChanges(t *testing.T) {
 		},
 	}}
 
-	updated, err := (&adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{baseRepo}}).UpdateAccount(
+	updated, err := (&adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}}).UpdateAccount(
 		context.Background(),
 		accountID,
 		&UpdateAccountInput{ProxyID: &newProxyID},
@@ -407,7 +529,7 @@ func TestUpdateAccountPreservesProbeSnapshotWhenProxyIsUnchanged(t *testing.T) {
 		},
 	}}
 
-	updated, err := (&adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{baseRepo}}).UpdateAccount(
+	updated, err := (&adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}}).UpdateAccount(
 		context.Background(),
 		accountID,
 		&UpdateAccountInput{ProxyID: &unchangedProxyID},
@@ -779,7 +901,7 @@ func TestBulkUpdateAccountsInvalidatesProbeSnapshotForProxyUpdate(t *testing.T) 
 		ProxyID:    &proxyID,
 	}
 
-	result, err := (&adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{baseRepo}}).BulkUpdateAccounts(context.Background(), input)
+	result, err := (&adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{upstreamBillingProbeAccountRepo: baseRepo}}).BulkUpdateAccounts(context.Background(), input)
 
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Success)

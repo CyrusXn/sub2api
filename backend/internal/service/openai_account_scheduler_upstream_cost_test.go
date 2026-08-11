@@ -761,6 +761,37 @@ func TestOpenAIFreshUpstreamBillingRateUsesFreshCachedSuccessOnly(t *testing.T) 
 	}
 }
 
+func TestOpenAIFreshUpstreamBillingRateUsesFailedManualRateWithoutHistoricalSuccess(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	manualRate := 0.03
+	account := &Account{
+		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Extra: map[string]any{UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{
+			Status: UpstreamBillingProbeStatusFailed, ManualRateMultiplier: &manualRate,
+		}},
+	}
+
+	rate, ok := openAIFreshUpstreamBillingRate(account, now)
+	require.True(t, ok)
+	require.Equal(t, manualRate, rate)
+}
+
+func TestOpenAILegacyLowRatePriorityIncludesFailedManualRate(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	manualRate := 0.03
+	manual := &Account{
+		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Extra: map[string]any{UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{
+			Status: UpstreamBillingProbeStatusFailed, ManualRateMultiplier: &manualRate,
+		}},
+	}
+	automatic := upstreamCostTestAccount(2, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	order := newOpenAILegacyUpstreamRateOrder([]*Account{automatic, manual}, now, defaultOpenAIOAuthSchedulingRateMultiplier)
+
+	require.True(t, order.enabled)
+	require.Equal(t, -1, order.compare(manual, automatic))
+}
+
 func TestBuildOpenAISelectionOrderIncludesOverflowOnlyForCostScheduling(t *testing.T) {
 	scheduler := &defaultOpenAIAccountScheduler{}
 	candidates := []openAIAccountCandidateScore{

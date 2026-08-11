@@ -1034,6 +1034,7 @@ export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed'
 export interface UpstreamBillingProbeSnapshot {
   status: UpstreamBillingProbeStatus
   data?: UpstreamBillingData
+  manual_rate_multiplier?: number
   balance?: UpstreamAccountBalanceSnapshot
   received_at?: string
   fresh_until?: string
@@ -1475,6 +1476,7 @@ export interface UpdateAccountRequest {
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
   upstream_billing_rate_sync_enabled?: boolean
+  upstream_billing_manual_rate_multiplier?: number | null
   confirm_mixed_channel_risk?: boolean
 }
 

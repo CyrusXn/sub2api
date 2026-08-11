@@ -667,6 +667,10 @@ func userListOrder(params pagination.PaginationParams) []func(*entsql.Selector) 
 	case "balance":
 		field = dbuser.FieldBalance
 		defaultField = false
+	case "admin_usage_multiplier":
+		field = dbuser.FieldAdminUsageMultiplier
+		defaultField = false
+		nullsLastField = true
 	case "concurrency":
 		field = dbuser.FieldConcurrency
 		defaultField = false

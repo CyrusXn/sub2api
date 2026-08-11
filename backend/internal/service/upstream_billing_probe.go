@@ -87,6 +87,18 @@ var (
 		"UPSTREAM_BILLING_RATE_SYNC_CONFLICT",
 		"account rate multiplier cannot be changed while upstream billing rate sync is enabled",
 	)
+	ErrUpstreamBillingManualRateInvalid = infraerrors.BadRequest(
+		"INVALID_UPSTREAM_BILLING_MANUAL_RATE_MULTIPLIER", "upstream billing manual rate multiplier must be a finite number >= 0",
+	)
+	ErrUpstreamBillingManualRateAccountInvalid = infraerrors.BadRequest(
+		"UPSTREAM_BILLING_MANUAL_RATE_ACCOUNT_INVALID", "manual upstream billing rate is only available for OpenAI API key accounts",
+	)
+	ErrUpstreamBillingManualRateRequiresFailedProbe = infraerrors.BadRequest(
+		"UPSTREAM_BILLING_MANUAL_RATE_REQUIRES_FAILED_PROBE", "manual upstream billing rate requires a failed probe snapshot",
+	)
+	ErrUpstreamBillingManualRateUnavailable = infraerrors.Conflict(
+		"UPSTREAM_BILLING_MANUAL_RATE_UNAVAILABLE", "the account no longer has a failed upstream billing probe snapshot; reload and retry",
+	)
 )
 
 const (
@@ -120,6 +132,8 @@ type UpstreamBillingProbeSnapshot struct {
 	// stored snapshot always answers "did this probe move the account rate, and
 	// to what" without a separate history table.
 	SyncedRateMultiplier *float64 `json:"synced_rate_multiplier,omitempty"`
+	// ManualRateMultiplier 仅在失败探测时作为管理员兜底，不代表上游自动声明值。
+	ManualRateMultiplier *float64 `json:"manual_rate_multiplier,omitempty"`
 }
 
 // UpstreamAccountBalanceSnapshot 独立记录网页登录余额，避免余额失败覆盖已成功的倍率。
@@ -251,6 +265,10 @@ type cachedWebAccountToken struct {
 
 type upstreamBillingProbeSnapshotWriter interface {
 	UpdateUpstreamBillingProbeSnapshot(context.Context, *Account, *UpstreamBillingProbeSnapshot, *float64) error
+}
+
+type upstreamBillingManualRateMultiplierUpdater interface {
+	UpdateUpstreamBillingManualRateMultiplier(context.Context, *Account, *float64) error
 }
 
 type upstreamBillingProbeDueAccountLister interface {
@@ -860,8 +878,9 @@ func (s *UpstreamBillingProbeService) persistProbeFailure(
 		HTTPStatus:    statusCode,
 		LastError:     reason,
 	}
-	if previous != nil {
+	if previous != nil && status == UpstreamBillingProbeStatusFailed {
 		snapshot.Data = previous.Data
+		snapshot.ManualRateMultiplier = previous.ManualRateMultiplier
 		snapshot.ReceivedAt = previous.ReceivedAt
 		snapshot.FreshUntil = previous.FreshUntil
 		if snapshot.FreshUntil == nil && previous.Status == UpstreamBillingProbeStatusOK && previous.ReceivedAt != nil {
@@ -900,6 +919,10 @@ func (s *UpstreamBillingProbeService) persistProbeFailureCleared(
 		FailureCount:  failureCount,
 		HTTPStatus:    statusCode,
 		LastError:     reason,
+	}
+	if previous := decodeUpstreamBillingProbeSnapshot(account.Extra); previous != nil && status == UpstreamBillingProbeStatusFailed {
+		// 网页倍率失败会清除自动 data，但不能清除管理员手动兜底值。
+		snapshot.ManualRateMultiplier = previous.ManualRateMultiplier
 	}
 	if err := s.updateSnapshot(ctx, account, snapshot, nil); err != nil {
 		return nil, err
@@ -1305,7 +1328,18 @@ func (s *UpstreamBillingProbeService) fetchNewAPICurrentKeyRate(
 	}
 	tokenData, _ := tokenRoot["data"].(map[string]any)
 	items, _ := tokenData["items"].([]any)
-	currentKey := matchWebAccountCurrentKey(items, apiKey, "")
+	keyName := upstreamBillingFirstNonEmptyString(
+		account.GetCredential("key_name"),
+		account.GetCredential("api_key_name"),
+		account.Name,
+	)
+	currentKey := matchWebAccountCurrentKey(items, apiKey, keyName)
+	parsedBaseURL, _ := url.Parse(baseURL)
+	if currentKey == nil && parsedBaseURL != nil && isPiteUpstreamSite(parsedBaseURL.Hostname()) {
+		// New API/Pite-style dashboards often hide the token value from /api/token/.
+		// 仅 Pite 允许回退到最近使用的活跃 Key；其他 NewAPI 站点不能借用别的 Key 倍率。
+		currentKey = selectMostRecentWebAccountKey(items)
+	}
 	if currentKey == nil {
 		return 0, statusCode, "key_rate_not_found", retryDelay
 	}
@@ -1689,6 +1723,35 @@ func matchWebAccountCurrentKey(items []any, apiKey string, keyName string) map[s
 		namedMatch = item
 	}
 	return namedMatch
+}
+
+func selectMostRecentWebAccountKey(items []any) map[string]any {
+	var selected map[string]any
+	var selectedAt float64
+	for _, rawItem := range items {
+		item, _ := rawItem.(map[string]any)
+		if item == nil || !webAccountKeyItemActive(item) {
+			continue
+		}
+		if strings.TrimSpace(upstreamBillingStringFromAny(item["group"])) == "" {
+			continue
+		}
+		accessedAt := webAccountKeyLastUsedAt(item)
+		if selected == nil || accessedAt >= selectedAt {
+			selected = item
+			selectedAt = accessedAt
+		}
+	}
+	return selected
+}
+
+func webAccountKeyLastUsedAt(item map[string]any) float64 {
+	for _, field := range []string{"accessed_time", "last_used_at", "last_used_time", "used_at", "updated_time", "created_time"} {
+		if value, ok := numberFromAny(item[field]); ok {
+			return value
+		}
+	}
+	return 0
 }
 
 func webAccountKeyItemActive(item map[string]any) bool {

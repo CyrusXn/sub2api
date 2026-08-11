@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -36,6 +39,7 @@ type opsAccountRequestAlertSignal struct {
 	EffectiveStatus int
 	BalanceEvidence bool
 	ErrorSample     *opsAlertErrorSample
+	Attempt         *OpsUpstreamErrorEvent
 }
 
 type opsAccountRequestDiagnosis struct {
@@ -104,6 +108,7 @@ func buildOpsAccountRequestAlertSignals(entry *OpsInsertErrorLogInput) []*opsAcc
 			cloned.At = time.UnixMilli(upstream.AtUnixMs).UTC()
 		}
 		cloned.BalanceEvidence = hasOpsUpstreamBalanceEvidence(upstream, cloned.EffectiveStatus)
+		cloned.Attempt = upstream
 		if !cloned.BalanceEvidence && base.BalanceEvidence && base.AccountID != nil && *base.AccountID == accountID {
 			cloned.BalanceEvidence = true
 		}
@@ -330,81 +335,284 @@ func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAc
 		return
 	}
 
-	diagnosis := s.diagnoseAccountRequestSignals(ctx, signals)
-	if diagnosis == nil {
-		return
-	}
 	now := time.Now().UTC()
 	s.accountRequestAlertLastAt = now
 
-	activeEvent, err := s.opsRepo.GetActiveAlertEvent(ctx, rule.ID)
-	if err != nil {
-		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] get account request alert failed (rule=%d): %v", rule.ID, err)
+	dedupeRepo, ok := s.opsRepo.(OpsAlertDedupeRepository)
+	if !ok {
+		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] account request dedupe repository unavailable")
 		return
 	}
-	escalating := false
-	if activeEvent != nil {
-		activePriority := opsAccountDiagnosisPriority(getAlertDimensionString(activeEvent.Dimensions, "diagnosis"))
-		if diagnosis.Priority <= activePriority {
-			return
+	seen := make(map[string]struct{}, len(signals))
+	for _, signal := range signals {
+		if signal == nil || signal.AccountID == nil || *signal.AccountID <= 0 {
+			continue
 		}
-		escalating = true
-	}
+		s.hydrateOpsAccountRequestSignal(ctx, signal)
+		reason, reasonClass := buildOpsAccountRequestReason(signal)
+		dedupeKey := buildOpsAccountRequestDedupeKey(*signal.AccountID, reasonClass, reason)
+		if _, exists := seen[dedupeKey]; exists {
+			continue
+		}
+		seen[dedupeKey] = struct{}{}
 
-	if diagnosis.Platform != "" && s.opsService != nil {
-		if silenced, silenceErr := s.opsService.IsAlertSilenced(ctx, rule.ID, diagnosis.Platform, diagnosis.GroupID, nil, now); silenceErr == nil && silenced {
-			s.recordDatabaseSilencedAlertEmails(ctx, rule, buildAccountRequestAlertTitle(rule.Name, diagnosis), diagnosis.Severity, diagnosis.Platform, diagnosis.AccountDetails, diagnosis.ErrorSamples, now)
-			return
+		detail := buildOpsAccountRequestDetail(signal, reason, reasonClass)
+		if detail == nil {
+			continue
 		}
-	}
-	if !escalating {
-		latestEvent, latestErr := s.opsRepo.GetLatestAlertEvent(ctx, rule.ID)
+		if detail.Platform != "" && s.opsService != nil {
+			if silenced, silenceErr := s.opsService.IsAlertSilenced(ctx, rule.ID, detail.Platform, detail.GroupID, nil, now); silenceErr == nil && silenced {
+				s.recordDatabaseSilencedAlertEmails(ctx, rule, detail.AccountName+"异常", rule.Severity, detail.Platform, []*OpsAlertAccountDetail{detail}, []*opsAlertErrorSample{signal.ErrorSample}, now)
+				continue
+			}
+		}
+
+		latestEvent, latestErr := dedupeRepo.GetLatestAlertEventByDedupeKey(ctx, rule.ID, dedupeKey)
 		if latestErr != nil {
-			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] get latest account request alert failed (rule=%d): %v", rule.ID, latestErr)
-			return
+			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] get account request dedupe event failed (rule=%d): %v", rule.ID, latestErr)
+			continue
 		}
 		if latestEvent != nil && rule.CooldownMinutes > 0 && now.Sub(latestEvent.FiredAt) < time.Duration(rule.CooldownMinutes)*time.Minute {
-			return
+			continue
 		}
-	}
 
-	metricValue := float64(diagnosis.SignalCount)
-	event := &OpsAlertEvent{
-		RuleID:         rule.ID,
-		Severity:       diagnosis.Severity,
-		Status:         OpsAlertStatusFiring,
-		Title:          redactOpsAlertEmailText(buildAccountRequestAlertTitle(rule.Name, diagnosis)),
-		Description:    redactOpsAlertEmailText(buildAccountRequestAlertDescription(diagnosis)),
-		MetricValue:    float64Ptr(metricValue),
-		ThresholdValue: float64Ptr(rule.Threshold),
-		Dimensions:     buildAccountRequestAlertDimensions(diagnosis),
-		FiredAt:        now,
-		CreatedAt:      now,
+		severity := strings.TrimSpace(rule.Severity)
+		if severity == "" {
+			severity = "P1"
+		}
+		if reasonClass == "balance" {
+			severity = "P0"
+		}
+		metricValue := float64(1)
+		event := &OpsAlertEvent{
+			RuleID:         rule.ID,
+			Severity:       severity,
+			Status:         OpsAlertStatusFiring,
+			Title:          redactOpsAlertEmailText(detail.AccountName + "异常"),
+			Description:    reason,
+			MetricValue:    float64Ptr(metricValue),
+			ThresholdValue: float64Ptr(rule.Threshold),
+			Dimensions:     buildOpsAccountRequestSignalDimensions(detail, reasonClass),
+			DedupeKey:      dedupeKey,
+			FiredAt:        now,
+			CreatedAt:      now,
+		}
+		created, createErr := s.opsRepo.CreateAlertEvent(ctx, event)
+		if createErr != nil {
+			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] create account request alert failed (rule=%d account=%d): %v", rule.ID, detail.AccountID, createErr)
+			continue
+		}
+		if created == nil || created.ID <= 0 {
+			continue
+		}
+		detail.AlertEventID = created.ID
+		if detailRepo, supported := s.opsRepo.(OpsAlertAccountDetailRepository); supported {
+			if insertErr := detailRepo.InsertAlertAccountDetails(ctx, []*OpsAlertAccountDetail{detail}); insertErr != nil {
+				logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] 保存账号告警明细失败 (event=%d): %v", created.ID, insertErr)
+			}
+		}
+		s.maybeSendAlertEmail(ctx, runtimeCfg, rule, created, []*OpsAlertAccountDetail{detail}, []*opsAlertErrorSample{signal.ErrorSample})
 	}
-	created, err := s.opsRepo.CreateAlertEvent(ctx, event)
-	if err != nil {
-		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] create account request alert failed (rule=%d): %v", rule.ID, err)
+}
+
+// hydrateOpsAccountRequestSignal 从已落库的脱敏错误记录补齐用户和 API Key 名称。
+func (s *OpsAlertEvaluatorService) hydrateOpsAccountRequestSignal(ctx context.Context, signal *opsAccountRequestAlertSignal) {
+	if s == nil || s.opsRepo == nil || signal == nil || signal.ErrorSample == nil || signal.ErrorSample.Detail == nil {
 		return
 	}
-	if escalating && activeEvent != nil {
-		resolvedAt := now
-		if err := s.opsRepo.UpdateAlertEventStatus(ctx, activeEvent.ID, OpsAlertStatusResolved, &resolvedAt); err != nil {
-			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] resolve escalated account request alert failed (event=%d): %v", activeEvent.ID, err)
+	errorLogID := signal.ErrorSample.Detail.ID
+	if errorLogID <= 0 {
+		return
+	}
+	detail, err := s.opsRepo.GetErrorLogByID(ctx, errorLogID)
+	if err != nil || detail == nil {
+		return
+	}
+	attempts, _ := ParseOpsUpstreamErrors(detail.UpstreamErrors)
+	if len(attempts) == 0 {
+		attempts = signal.ErrorSample.Attempts
+	}
+	signal.ErrorSample = &opsAlertErrorSample{Detail: detail, Attempts: attempts}
+	if signal.AccountName == "" && detail.AccountID != nil && signal.AccountID != nil && *detail.AccountID == *signal.AccountID {
+		signal.AccountName = strings.TrimSpace(detail.AccountName)
+	}
+}
+
+// buildOpsAccountRequestReason 只从已脱敏字段生成一行直白原因，不复制完整上游响应。
+func buildOpsAccountRequestReason(signal *opsAccountRequestAlertSignal) (string, string) {
+	if signal == nil {
+		return "账号调用异常", "unknown"
+	}
+	if signal.BalanceEvidence {
+		return "余额不足", "balance"
+	}
+
+	specific := opsAccountRequestSpecificReason(signal)
+	phase := strings.ToLower(strings.TrimSpace(signal.Phase))
+	switch phase {
+	case "account_auth":
+		return appendOpsAccountReason("账号认证失败", specific), "account_auth"
+	case "network":
+		return appendOpsAccountReason("网络连接失败", specific), "network"
+	}
+	if signal.EffectiveStatus >= 400 {
+		fallback := "上游请求失败"
+		if signal.EffectiveStatus >= 500 {
+			fallback = "上游服务异常"
+		}
+		return fmt.Sprintf("%d：%s", signal.EffectiveStatus, valueOrFallback(specific, fallback)), fmt.Sprintf("http_%d", signal.EffectiveStatus)
+	}
+	if phase == "routing" {
+		return appendOpsAccountReason("账号路由失败", specific), "routing"
+	}
+	return valueOrFallback(specific, "账号调用异常"), "unknown"
+}
+
+func appendOpsAccountReason(prefix string, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" || strings.EqualFold(detail, prefix) {
+		return prefix
+	}
+	return prefix + "：" + detail
+}
+
+func valueOrFallback(value string, fallback string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func opsAccountRequestSpecificReason(signal *opsAccountRequestAlertSignal) string {
+	values := make([]string, 0, 10)
+	if signal != nil && signal.Attempt != nil {
+		values = append(values, signal.Attempt.Detail, signal.Attempt.Message, signal.Attempt.Reason, signal.Attempt.UpstreamResponseBody)
+	}
+	if signal != nil && signal.ErrorSample != nil && signal.ErrorSample.Detail != nil {
+		detail := signal.ErrorSample.Detail
+		values = append(values, detail.UpstreamErrorDetail, detail.UpstreamErrorMessage, detail.Message, detail.ErrorBody)
+	}
+	for _, value := range values {
+		if reason := normalizeOpsAccountReasonText(value); reason != "" {
+			return reason
 		}
 	}
-	if created != nil && created.ID > 0 {
-		for _, detail := range diagnosis.AccountDetails {
-			if detail != nil {
-				detail.AlertEventID = created.ID
-			}
-		}
-		if repo, ok := s.opsRepo.(OpsAlertAccountDetailRepository); ok {
-			if err := repo.InsertAlertAccountDetails(ctx, diagnosis.AccountDetails); err != nil {
-				logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] 保存账号告警明细失败 (event=%d): %v", created.ID, err)
-			}
-		}
-		s.maybeSendAlertEmail(ctx, runtimeCfg, rule, created, diagnosis.AccountDetails, diagnosis.ErrorSamples)
+	return ""
+}
+
+func normalizeOpsAccountReasonText(value string) string {
+	value = redactOpsAlertEmailText(value)
+	if value == "" {
+		return ""
 	}
+	if extracted := extractOpsAccountReasonFromJSON(value); extracted != "" {
+		value = extracted
+	}
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.TrimSpace(value)
+	if len(value) > 240 {
+		value = strings.TrimSpace(value[:240]) + "..."
+	}
+	return value
+}
+
+func extractOpsAccountReasonFromJSON(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return ""
+	}
+	return findOpsAccountReasonJSONValue(decoded)
+}
+
+func findOpsAccountReasonJSONValue(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"message", "detail", "reason", "error_description"} {
+			if text, ok := typed[key].(string); ok && strings.TrimSpace(text) != "" {
+				return redactOpsAlertEmailText(text)
+			}
+		}
+		if nested, ok := typed["error"]; ok {
+			if text := findOpsAccountReasonJSONValue(nested); text != "" {
+				return text
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if text := findOpsAccountReasonJSONValue(item); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func buildOpsAccountRequestDedupeKey(accountID int64, reasonClass string, reason string) string {
+	normalized := strings.ToLower(strings.Join(strings.Fields(redactOpsAlertEmailText(reason)), " "))
+	sum := sha256.Sum256([]byte(normalized))
+	return fmt.Sprintf("account:%d:%s:%s", accountID, strings.TrimSpace(reasonClass), hex.EncodeToString(sum[:8]))
+}
+
+func buildOpsAccountRequestDetail(signal *opsAccountRequestAlertSignal, reason string, reasonClass string) *OpsAlertAccountDetail {
+	if signal == nil || signal.AccountID == nil || *signal.AccountID <= 0 {
+		return nil
+	}
+	detail := &OpsAlertAccountDetail{
+		AccountID:   *signal.AccountID,
+		AccountName: redactOpsAlertEmailText(signal.AccountName),
+		Platform:    redactOpsAlertEmailText(signal.Platform),
+		GroupID:     cloneInt64Pointer(signal.GroupID),
+		Diagnosis:   strings.TrimSpace(reasonClass),
+		ErrorPhase:  redactOpsAlertEmailText(signal.Phase),
+		StatusCode:  signal.EffectiveStatus,
+		OccurredAt:  signal.At.UTC(),
+		ErrorReason: redactOpsAlertEmailText(reason),
+	}
+	if sample := signal.ErrorSample; sample != nil && sample.Detail != nil {
+		logDetail := sample.Detail
+		detail.ErrorLogID = logDetail.ID
+		detail.UserID = cloneInt64Pointer(logDetail.UserID)
+		detail.UserEmail = redactOpsAlertEmailText(logDetail.UserEmail)
+		detail.APIKeyID = cloneInt64Pointer(logDetail.APIKeyID)
+		detail.APIKeyName = redactOpsAlertEmailText(logDetail.APIKeyName)
+		detail.RequestID = redactOpsAlertEmailText(logDetail.RequestID)
+		detail.ClientRequestID = redactOpsAlertEmailText(logDetail.ClientRequestID)
+		detail.ErrorMessage = truncateString(redactOpsAlertEmailText(joinOpsAlertErrorText(logDetail)), 2000)
+		detail.RequestedModel = redactOpsAlertEmailText(opsFirstNonEmpty(logDetail.RequestedModel, logDetail.Model))
+		detail.UpstreamModel = redactOpsAlertEmailText(logDetail.UpstreamModel)
+		if detail.AccountName == "" && logDetail.AccountID != nil && *logDetail.AccountID == detail.AccountID {
+			detail.AccountName = redactOpsAlertEmailText(logDetail.AccountName)
+		}
+		if detail.Platform == "" {
+			detail.Platform = redactOpsAlertEmailText(logDetail.Platform)
+		}
+		if detail.GroupID == nil {
+			detail.GroupID = cloneInt64Pointer(logDetail.GroupID)
+		}
+		detail.GroupName = redactOpsAlertEmailText(logDetail.GroupName)
+	}
+	if detail.AccountName == "" {
+		detail.AccountName = fmt.Sprintf("账号 #%d", detail.AccountID)
+	}
+	return detail
+}
+
+func buildOpsAccountRequestSignalDimensions(detail *OpsAlertAccountDetail, reasonClass string) map[string]any {
+	dimensions := map[string]any{
+		"diagnosis":  strings.TrimSpace(reasonClass),
+		"account_id": detail.AccountID,
+	}
+	if detail.Platform != "" {
+		dimensions["platform"] = detail.Platform
+	}
+	if detail.GroupID != nil && *detail.GroupID > 0 {
+		dimensions["group_id"] = *detail.GroupID
+	}
+	return dimensions
 }
 
 func findAccountRequestAlertRule(rules []*OpsAlertRule) *OpsAlertRule {

@@ -170,6 +170,57 @@ func upstreamModelMismatchCondition(column string, mismatch bool) string {
 	return column + " IS FALSE"
 }
 
+func (r *usageLogRepository) ListRecentGPTAPIKeyIPCandidates(ctx context.Context, since time.Time, excludeEmail string, limit int) ([]service.RecentGPTAPIKeyIPCandidate, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	query := `
+WITH latest_per_key AS (
+    SELECT DISTINCT ON (l.api_key_id)
+        l.api_key_id,
+        l.user_id,
+        k.key,
+        k.name,
+        u.email,
+        l.ip_address,
+        COALESCE(NULLIF(TRIM(l.requested_model), ''), l.model) AS model,
+        l.created_at
+    FROM usage_logs AS l
+    JOIN api_keys AS k ON k.id = l.api_key_id AND k.deleted_at IS NULL
+    JOIN users AS u ON u.id = l.user_id
+    WHERE l.created_at >= $1
+      AND l.ip_address IS NOT NULL
+      AND BTRIM(l.ip_address) <> ''
+      AND k.key IS NOT NULL
+      AND BTRIM(k.key) <> ''
+      AND LOWER(u.email) <> LOWER($2)
+      AND LOWER(COALESCE(NULLIF(TRIM(l.requested_model), ''), l.model)) LIKE 'gpt%'
+    ORDER BY l.api_key_id, l.created_at DESC, l.id DESC
+)
+SELECT api_key_id, user_id, key, name, email, ip_address, model, created_at
+FROM latest_per_key
+ORDER BY created_at DESC
+LIMIT $3`
+	rows, err := r.sql.QueryContext(ctx, query, since, strings.TrimSpace(excludeEmail), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]service.RecentGPTAPIKeyIPCandidate, 0)
+	for rows.Next() {
+		var c service.RecentGPTAPIKeyIPCandidate
+		if err := rows.Scan(&c.APIKeyID, &c.UserID, &c.APIKey, &c.APIKeyName, &c.UserEmail, &c.IPAddress, &c.Model, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func shouldUseFastUsageLogTotal(filters UsageLogFilters) bool {
 	if filters.ExactTotal {
 		return false

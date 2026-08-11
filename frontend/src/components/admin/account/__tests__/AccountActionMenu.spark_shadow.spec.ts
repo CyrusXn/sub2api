@@ -49,7 +49,7 @@ const getBodyText = () => document.body.textContent ?? ''
 const getBodyButtons = () => Array.from(document.body.querySelectorAll('button'))
 
 describe('AccountActionMenu — spark shadow 按钮可见性', () => {
-  it('不再重复显示已移到操作列的测试、统计和复制按钮', () => {
+  it('保留行内测试按钮，并在更多菜单显示统计和复制操作', () => {
     const account = makeAccount({ platform: 'anthropic', type: 'apikey', parent_account_id: null })
     const wrapper = mount(AccountActionMenu, {
       props: { show: true, account, position },
@@ -57,8 +57,8 @@ describe('AccountActionMenu — spark shadow 按钮可见性', () => {
     })
     const body = getBodyText()
     expect(body).not.toContain('admin.accounts.testConnection')
-    expect(body).not.toContain('admin.accounts.viewStats')
-    expect(body).not.toContain('admin.accounts.duplicateAccount')
+    expect(body).toContain('admin.accounts.viewStats')
+    expect(body).toContain('admin.accounts.duplicateAccount')
     expect(body).toContain('admin.scheduledTests.schedule')
     wrapper.unmount()
   })

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,40 @@ const (
 	BillingTypeBalance      int8 = 0 // 钱包余额
 	BillingTypeSubscription int8 = 1 // 订阅套餐
 )
+
+const (
+	// AdminUsageAttributionEmail 是本地管理员自用请求的固定归因账号。
+	AdminUsageAttributionEmail = "admin@example.com"
+	// AdminUsageFallbackIP 是无法从最近真实用户请求归因时的本地兜底地址。
+	AdminUsageFallbackIP = "127.0.0.1"
+)
+
+// RecentGPTAPIKeyIPCandidate 表示最近 GPT 使用记录里可供本机 CC-Switch 轮换的 Key/IP 快照。
+// 明文 API Key 仅允许管理员专用接口和本机伴随进程使用，禁止写入日志或普通用户响应。
+type RecentGPTAPIKeyIPCandidate struct {
+	APIKeyID   int64
+	UserID     int64
+	APIKey     string
+	APIKeyName string
+	UserEmail  string
+	IPAddress  string
+	Model      string
+	CreatedAt  time.Time
+}
+
+// ResolveUsageLogIPAddress 先处理管理员兜底，再应用与来源 IP 绑定的短时归因租约。
+func ResolveUsageLogIPAddress(ctx context.Context, inputIP string, apiKey *APIKey, user *User, attribution *UsageIPAttributionService) string {
+	if user != nil && strings.EqualFold(strings.TrimSpace(user.Email), AdminUsageAttributionEmail) {
+		return AdminUsageFallbackIP
+	}
+	inputIP = strings.TrimSpace(inputIP)
+	if apiKey != nil {
+		if attributedIP, ok := attribution.Resolve(ctx, apiKey.ID, inputIP); ok {
+			return attributedIP
+		}
+	}
+	return inputIP
+}
 
 type RequestType int16
 

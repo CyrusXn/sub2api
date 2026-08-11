@@ -164,6 +164,33 @@ describe('UpstreamBillingRateCell', () => {
     expect(wrapper.text()).toContain('admin.accounts.upstreamBilling.stale')
   })
 
+  it('shows a failed snapshot manual rate without requiring freshness and marks its source', () => {
+    const wrapper = mount(UpstreamBillingRateCell, {
+      props: {
+        account: makeAccount({
+          extra: {
+            upstream_billing_probe: {
+              status: 'failed',
+              manual_rate_multiplier: 0.2,
+              last_attempt_at: '2026-07-13T00:00:00Z',
+              next_probe_at: '2026-07-13T01:00:00Z',
+              last_error: 'network_error'
+            }
+          }
+        }),
+        now: Date.now()
+      }
+    })
+
+    const rate = wrapper.get('[data-testid="upstream-billing-rate"]')
+    expect(rate.text()).toBe('0.2x')
+    expect(rate.classes()).toContain('bg-amber-50')
+    expect(rate.classes()).toContain('text-amber-700')
+    expect(wrapper.get('[data-testid="upstream-billing-manual-badge"]').text()).toBe(
+      'admin.accounts.upstreamBilling.manualSource'
+    )
+  })
+
   it('shows stale snapshot details, local next probe time, and the account probe state', async () => {
     const wrapper = mount(UpstreamBillingRateCell, {
       attachTo: document.body,

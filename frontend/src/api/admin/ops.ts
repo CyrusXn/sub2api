@@ -720,6 +720,7 @@ export interface AlertEvent {
   metric_value?: number
   threshold_value?: number
   dimensions?: Record<string, any>
+	dedupe_key?: string
   fired_at: string
   resolved_at?: string | null
   email_sent: boolean
@@ -738,6 +739,17 @@ export interface AlertAccountDetail {
 	error_phase: string
 	status_code: number
 	occurred_at: string
+	error_log_id?: number | null
+	user_id?: number | null
+	user_email?: string
+	api_key_id?: number | null
+	api_key_name?: string
+	request_id?: string
+	client_request_id?: string
+	error_reason?: string
+	error_message?: string
+	requested_model?: string
+	upstream_model?: string
 	created_at: string
 }
 

@@ -139,7 +139,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
-		writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
+		writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter, originalModel, upstreamModel)
 		return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)
 	}
 
@@ -151,7 +151,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 		return nil, fmt.Errorf("read upstream body: %w", err)
 	}
 
-	writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
+	writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter, originalModel, upstreamModel)
 
 	return &OpenAIForwardResult{
 		RequestID:     firstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id")),
@@ -164,15 +164,18 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	}, nil
 }
 
-func writeOpenAIEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, body []byte, filter *responseheaders.CompiledHeaderFilter) {
+func writeOpenAIEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, body []byte, filter *responseheaders.CompiledHeaderFilter, requestedModel, upstreamModel string) {
 	if c == nil || resp == nil {
 		return
 	}
 	if c.Writer.Written() {
 		return
 	}
-	if resp.Header != nil {
-		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, filter)
+	copySanitizedOpenAIResponseHeaders(c.Writer.Header(), resp.Header, filter)
+	if resp.StatusCode >= http.StatusBadRequest {
+		body = sanitizeOpenAIErrorBody(body, requestedModel, upstreamModel)
+	} else {
+		body = sanitizeOpenAIResponseJSON(body, requestedModel, upstreamModel)
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		c.Writer.Header().Set("Content-Type", ct)

@@ -1748,6 +1748,30 @@
         />
       </div>
 
+      <div
+        v-if="upstreamBillingManualRateEditable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="upstream-billing-manual-rate-field"
+      >
+        <label class="input-label" for="upstream-billing-manual-rate">
+          {{ t('admin.accounts.upstreamBilling.manualRateInput') }}
+        </label>
+        <input
+          id="upstream-billing-manual-rate"
+          v-model.number="upstreamBillingManualRateMultiplier"
+          type="number"
+          min="0"
+          step="any"
+          class="input max-w-xs font-mono"
+          :placeholder="upstreamBillingManualRatePlaceholder"
+          data-testid="upstream-billing-manual-rate-input"
+        />
+        <p class="input-hint">{{ t('admin.accounts.upstreamBilling.manualRateInputHint') }}</p>
+        <p v-if="lastAutomaticUpstreamBillingRate != null" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.upstreamBilling.lastAutomaticRateHint', { value: lastAutomaticUpstreamBillingRate }) }}
+        </p>
+      </div>
+
       <OllamaCloudUsageSettings
         v-if="account?.ollama_cloud_usage?.eligible"
         :account="account"
@@ -2718,7 +2742,8 @@ import type {
   OpenAICompactMode,
   OpenAIResponsesMode,
   OpenAIEndpointCapability,
-  OllamaCloudUsageState
+  OllamaCloudUsageState,
+  UpstreamBillingProbeSnapshot
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -2905,6 +2930,25 @@ const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
+// 手动倍率只作为失败快照的兜底值，不从历史自动倍率隐式回填。
+const upstreamBillingManualRateMultiplier = ref<number | ''>('')
+const upstreamBillingSnapshot = computed(() => props.account?.extra?.upstream_billing_probe)
+const upstreamBillingManualRateEditable = computed(
+  () => props.account?.platform === 'openai' &&
+    props.account?.type === 'apikey' &&
+    upstreamBillingSnapshot.value?.status === 'failed'
+)
+const lastAutomaticUpstreamBillingRate = computed(() => {
+  const value = upstreamBillingSnapshot.value?.data?.effective_rate_multiplier
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Number(value.toPrecision(12))
+    : null
+})
+const upstreamBillingManualRatePlaceholder = computed(() =>
+  lastAutomaticUpstreamBillingRate.value == null
+    ? t('admin.accounts.upstreamBilling.manualRateInputPlaceholder')
+    : String(lastAutomaticUpstreamBillingRate.value)
+)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityProjectId = ref('')
@@ -3413,6 +3457,12 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
+	const upstreamBillingSnapshot = extra?.upstream_billing_probe as UpstreamBillingProbeSnapshot | undefined
+	const manualRateMultiplier = upstreamBillingSnapshot?.manual_rate_multiplier
+	upstreamBillingManualRateMultiplier.value =
+		typeof manualRateMultiplier === 'number' && Number.isFinite(manualRateMultiplier) && manualRateMultiplier >= 0
+			? manualRateMultiplier
+			: ''
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   openaiPassthroughEnabled.value = false
@@ -4244,6 +4294,14 @@ const handleSubmit = async () => {
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
+    // 通过独立更新字段交给后端原子修改快照，避免覆盖并发探测结果。
+    if (upstreamBillingManualRateEditable.value) {
+      const manualRateMultiplier = upstreamBillingManualRateMultiplier.value
+      updatePayload.upstream_billing_manual_rate_multiplier =
+        typeof manualRateMultiplier === 'number' && Number.isFinite(manualRateMultiplier)
+          ? manualRateMultiplier
+          : null
+    }
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
     if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0

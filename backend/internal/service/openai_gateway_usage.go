@@ -370,9 +370,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.UserAgent = &input.UserAgent
 	}
 
-	// 添加 IPAddress
-	if input.IPAddress != "" {
-		usageLog.IPAddress = &input.IPAddress
+	// 添加 IPAddress。管理员自用请求统一归因到本地兜底地址，避免展示真实出口 IP。
+	if ipAddress := ResolveUsageLogIPAddress(ctx, input.IPAddress, apiKey, user, s.usageIPAttribution); ipAddress != "" {
+		usageLog.IPAddress = &ipAddress
 	}
 
 	// 添加 SessionID（客户端显式会话标识；缺失/无效时保持 nil）

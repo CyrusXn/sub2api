@@ -180,7 +180,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
-		return s.handleErrorResponse(ctx, resp, c, account, patchedBody, upstreamModel)
+		return s.handleErrorResponse(ctx, resp, c, account, patchedBody, originalModel, upstreamModel, upstreamModel)
 	}
 
 	// Attach model so rate-limit snapshots can fan out a team+model cool.

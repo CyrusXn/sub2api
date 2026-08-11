@@ -204,7 +204,10 @@
               data-test="column-resize-handle"
               :aria-label="`Resize ${column.label || column.key}`"
               draggable="false"
-              @mousedown.prevent.stop="startColumnResize($event, column, index)"
+              @pointerdown.prevent.stop="startColumnResize($event, column, index)"
+              @pointermove.prevent.stop="handleColumnResizeMove"
+              @pointerup.prevent.stop="finishColumnResize"
+              @pointercancel.prevent.stop="finishColumnResize"
               @dragstart.prevent.stop
               @click.prevent.stop
               @dblclick.prevent.stop="resetColumnWidth(column.key)"
@@ -592,11 +595,11 @@ const ACTIONS_DEFAULT_WIDTH = 240
 const columnWidths = ref<Record<string, number>>({})
 const resizingColumnKey = ref<string | null>(null)
 const isResizing = ref(false)
-let resizeMoveHandler: ((event: MouseEvent) => void) | null = null
-let resizeUpHandler: ((event: MouseEvent) => void) | null = null
 let resizeStartX = 0
 let resizeStartWidth = 0
 let resizeActiveKey = ''
+let resizePointerID: number | null = null
+let resizePointerTarget: HTMLElement | null = null
 let suppressSortUntil = 0
 
 // --- 列顺序拖拽与持久化 ---
@@ -816,57 +819,64 @@ const dropColumn = (event: DragEvent, column: Column) => {
 }
 
 const cleanupColumnResizeListeners = () => {
-  if (resizeMoveHandler) {
-    window.removeEventListener('mousemove', resizeMoveHandler)
-    resizeMoveHandler = null
+  if (resizePointerTarget && resizePointerID !== null) {
+    try {
+      resizePointerTarget.releasePointerCapture?.(resizePointerID)
+    } catch {
+      // 指针可能已经由浏览器释放，清理状态即可。
+    }
   }
-  if (resizeUpHandler) {
-    window.removeEventListener('mouseup', resizeUpHandler)
-    resizeUpHandler = null
-  }
+  resizePointerTarget = null
+  resizePointerID = null
   document.body.classList.remove('datatable-resizing')
 }
 
-const startColumnResize = (event: MouseEvent, column: Column, _index: number) => {
+const startColumnResize = (event: PointerEvent, column: Column, _index: number) => {
   if (!isColumnResizable(column)) return
+  if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return
   cleanupColumnResizeListeners()
   resizeActiveKey = column.key
   resizeStartX = event.clientX
-  const header = (event.currentTarget as HTMLElement | null)?.closest('th')
+  resizePointerTarget = event.currentTarget as HTMLElement | null
+  resizePointerID = event.pointerId
+  resizePointerTarget?.setPointerCapture?.(event.pointerId)
+  const header = resizePointerTarget?.closest('th')
   const measuredWidth = header?.getBoundingClientRect().width ?? 0
   resizeStartWidth = getColumnWidth(column)
     ?? (measuredWidth > 0 ? measuredWidth : FALLBACK_RESIZE_START_WIDTH)
   resizingColumnKey.value = column.key
   isResizing.value = true
   document.body.classList.add('datatable-resizing')
+}
 
-  resizeMoveHandler = (moveEvent: MouseEvent) => {
-    const delta = moveEvent.clientX - resizeStartX
-    const minWidth = getColumnMinWidth(column)
-    const nextWidth = Math.min(
-      MAX_COLUMN_WIDTH,
-      Math.max(minWidth, Math.round(resizeStartWidth + delta))
-    )
-    columnWidths.value = {
-      ...columnWidths.value,
-      [resizeActiveKey]: nextWidth
-    }
+const handleColumnResizeMove = (event: PointerEvent) => {
+  if (!isResizing.value || resizePointerID === null || event.pointerId !== resizePointerID) return
+  const column = props.columns.find(item => item.key === resizeActiveKey)
+  if (!column) return
+  const delta = event.clientX - resizeStartX
+  const minWidth = getColumnMinWidth(column)
+  const nextWidth = Math.min(
+    MAX_COLUMN_WIDTH,
+    Math.max(minWidth, Math.round(resizeStartWidth + delta))
+  )
+  columnWidths.value = {
+    ...columnWidths.value,
+    [resizeActiveKey]: nextWidth
   }
+}
 
-  resizeUpHandler = () => {
-    cleanupColumnResizeListeners()
-    writePersistedColumnWidths(columnWidths.value)
-    resizingColumnKey.value = null
-    // 避免松手时误触发排序
-    suppressSortUntil = Date.now() + 120
-    requestAnimationFrame(() => {
-      isResizing.value = false
-      checkScrollable()
-    })
-  }
-
-  window.addEventListener('mousemove', resizeMoveHandler)
-  window.addEventListener('mouseup', resizeUpHandler)
+const finishColumnResize = (event?: PointerEvent) => {
+  if (!isResizing.value) return
+  if (event && resizePointerID !== null && event.pointerId !== resizePointerID) return
+  writePersistedColumnWidths(columnWidths.value)
+  cleanupColumnResizeListeners()
+  resizingColumnKey.value = null
+  // 避免松手时误触发排序。
+  suppressSortUntil = Date.now() + 120
+  requestAnimationFrame(() => {
+    isResizing.value = false
+    checkScrollable()
+  })
 }
 
 const resetColumnWidth = (columnKey: string) => {

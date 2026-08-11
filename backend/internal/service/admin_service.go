@@ -408,15 +408,18 @@ type UpdateAccountInput struct {
 	Priority       *int     // 使用指针区分"未提供"和"设置为0"
 	RateMultiplier *float64 // 账号计费倍率（>=0，允许 0）
 	// AdminUsageMultiplier 仅管理端配置的账号结算附加倍率；nil 表示本次不修改。
-	AdminUsageMultiplier  *float64
-	LoadFactor            *int
-	Status                string
-	GroupIDs              *[]int64
-	ExpiresAt             *int64
-	AutoPauseOnExpired    *bool
-	ProbeEnabled          *bool
-	RateSyncEnabled       *bool
-	SkipMixedChannelCheck bool // 跳过混合渠道检查（用户已确认风险）
+	AdminUsageMultiplier *float64
+	LoadFactor           *int
+	Status               string
+	GroupIDs             *[]int64
+	ExpiresAt            *int64
+	AutoPauseOnExpired   *bool
+	ProbeEnabled         *bool
+	RateSyncEnabled      *bool
+	// UpstreamBillingManualRateMultiplierSet 区分字段缺失和显式 null。
+	UpstreamBillingManualRateMultiplierSet bool
+	UpstreamBillingManualRateMultiplier    *float64
+	SkipMixedChannelCheck                  bool // 跳过混合渠道检查（用户已确认风险）
 }
 
 // BulkUpdateAccountsInput describes the payload for bulk updating accounts.

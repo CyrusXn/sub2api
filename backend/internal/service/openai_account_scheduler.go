@@ -2779,8 +2779,17 @@ func openAIFreshUpstreamBillingRate(account *Account, now time.Time) (float64, b
 		return 0, false
 	}
 	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
-	if snapshot == nil || (snapshot.Status != UpstreamBillingProbeStatusOK && snapshot.Status != UpstreamBillingProbeStatusFailed) ||
-		snapshot.ReceivedAt == nil || snapshot.ReceivedAt.IsZero() {
+	if snapshot == nil || (snapshot.Status != UpstreamBillingProbeStatusOK && snapshot.Status != UpstreamBillingProbeStatusFailed) {
+		return 0, false
+	}
+	if snapshot.Status == UpstreamBillingProbeStatusFailed && snapshot.ManualRateMultiplier != nil {
+		value := *snapshot.ManualRateMultiplier
+		if value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+			// 手动兜底不依赖自动探测的时间窗口，失败后仍可参与低倍率调度。
+			return value, true
+		}
+	}
+	if snapshot.ReceivedAt == nil || snapshot.ReceivedAt.IsZero() {
 		return 0, false
 	}
 	receivedAt := *snapshot.ReceivedAt

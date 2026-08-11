@@ -702,6 +702,10 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 	if event.EmailSent {
 		return false
 	}
+	// 成功率/错误率继续用于看板和事件统计，但不再发送缺少具体账号原因的聚合邮件。
+	if shouldSuppressAggregateRateAlertEmail(rule.MetricType) {
+		return false
+	}
 
 	emailCfg, err := s.opsService.GetEmailNotificationConfig(ctx)
 	if err != nil || emailCfg == nil {
@@ -715,7 +719,8 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 	if alertTitle == "" {
 		alertTitle = redactOpsAlertEmailText(rule.Name)
 	}
-	subject := fmt.Sprintf("[运维告警][%s] %s", redactOpsAlertEmailText(event.Severity), alertTitle)
+	accountRequestAlert := strings.TrimSpace(rule.MetricType) == OpsAlertMetricAccountRequestFailure
+	subject := buildOpsAlertEmailSubject(rule, event)
 	samples := providedSamples
 	if len(samples) == 0 {
 		samples = s.collectAlertErrorSamples(ctx, rule, event)
@@ -795,7 +800,10 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 			continue
 		}
 		var sendErr error
-		if s.emailService.notificationEmailService != nil {
+		if accountRequestAlert {
+			// 账号异常使用固定直白主题和原因优先正文，避免自定义聚合模板重新加入 P0/P1。
+			sendErr = s.emailService.SendEmail(ctx, addr, subject, body)
+		} else if s.emailService.notificationEmailService != nil {
 			sendErr = s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
 				Event:          NotificationEmailEventOpsAlert,
 				Locale:         notificationEmailLocaleChinese,
@@ -827,6 +835,29 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 		_ = s.opsRepo.UpdateAlertEventEmailSent(context.Background(), event.ID, true)
 	}
 	return anySent
+}
+
+func buildOpsAlertEmailSubject(rule *OpsAlertRule, event *OpsAlertEvent) string {
+	if rule == nil || event == nil {
+		return "[运维告警]"
+	}
+	title := redactOpsAlertEmailText(event.Title)
+	if title == "" {
+		title = redactOpsAlertEmailText(rule.Name)
+	}
+	if strings.TrimSpace(rule.MetricType) == OpsAlertMetricAccountRequestFailure {
+		return "[运维告警]" + title
+	}
+	return fmt.Sprintf("[运维告警][%s] %s", redactOpsAlertEmailText(event.Severity), title)
+}
+
+func shouldSuppressAggregateRateAlertEmail(metricType string) bool {
+	switch strings.TrimSpace(metricType) {
+	case "success_rate", "error_rate", "upstream_error_rate":
+		return true
+	default:
+		return false
+	}
 }
 
 func opsAlertEmailVariables(rule *OpsAlertRule, event *OpsAlertEvent, detailHTML string) map[string]string {
@@ -888,6 +919,19 @@ func buildOpsAlertEmailBody(rule *OpsAlertRule, event *OpsAlertEvent, detailHTML
 	if rule == nil || event == nil {
 		return ""
 	}
+	if strings.TrimSpace(rule.MetricType) == OpsAlertMetricAccountRequestFailure {
+		return fmt.Sprintf(`
+<h2 style="margin:0 0 12px">%s</h2>
+<p><b>异常账号</b>：%s</p>
+<p><b>发生时间</b>：%s</p>
+%s
+`,
+			htmlEscape(redactOpsAlertEmailText(event.Description)),
+			htmlEscape(redactOpsAlertEmailText(event.Title)),
+			event.FiredAt.In(beijingLocation()).Format("2006-01-02 15:04:05 MST"),
+			detailHTML,
+		)
+	}
 	metric := strings.TrimSpace(rule.MetricType)
 	value := "-"
 	threshold := fmt.Sprintf("%.2f", rule.Threshold)
@@ -927,7 +971,7 @@ func buildOpsAlertAccountDetailHTML(details []*OpsAlertAccountDetail, limit int)
 		limit = len(details)
 	}
 
-	var rows strings.Builder
+	var blocks strings.Builder
 	for _, detail := range details[:limit] {
 		if detail == nil {
 			continue
@@ -936,36 +980,54 @@ func buildOpsAlertAccountDetailHTML(details []*OpsAlertAccountDetail, limit int)
 		if group == "" && detail.GroupID != nil {
 			group = fmt.Sprintf("ID %d", *detail.GroupID)
 		}
-		_, _ = fmt.Fprintf(&rows, `<tr>
-<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
-<td style="padding:8px;border:1px solid #e5e7eb;">%d</td>
-<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
-<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
-<td style="padding:8px;border:1px solid #e5e7eb;">%s</td>
-<td style="padding:8px;border:1px solid #e5e7eb;">%d</td>
-</tr>`,
+		user := "-"
+		if detail.UserID != nil {
+			user = fmt.Sprintf("%s（ID %d）", valueOrDash(detail.UserEmail), *detail.UserID)
+		} else if strings.TrimSpace(detail.UserEmail) != "" {
+			user = detail.UserEmail
+		}
+		apiKey := "-"
+		if detail.APIKeyID != nil {
+			apiKey = fmt.Sprintf("%s（ID %d）", valueOrDash(detail.APIKeyName), *detail.APIKeyID)
+		} else if strings.TrimSpace(detail.APIKeyName) != "" {
+			apiKey = detail.APIKeyName
+		}
+		models := valueOrDash(detail.RequestedModel) + " / " + valueOrDash(detail.UpstreamModel)
+		requestIDs := uniqueNonEmptyStrings(detail.RequestID, detail.ClientRequestID)
+		_, _ = fmt.Fprintf(&blocks, `<div style="margin:10px 0;padding:12px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa">
+<div style="font-size:16px;font-weight:700;margin-bottom:8px">%s</div>
+<div><strong>错误原因：</strong>%s</div>
+<div><strong>账号：</strong>%s（ID %d）</div>
+<div><strong>用户：</strong>%s</div>
+<div><strong>API Key：</strong>%s</div>
+<div><strong>平台 / 分组：</strong>%s / %s</div>
+<div><strong>请求模型 / 上游模型：</strong>%s</div>
+<div><strong>状态 / 阶段：</strong>%d / %s</div>
+<div><strong>请求 ID：</strong>%s</div>
+<div><strong>发生时间：</strong>%s</div>
+<pre style="white-space:pre-wrap;word-break:break-word;margin:8px 0 0;padding:8px;background:#f3f4f6;border-radius:6px;font-size:12px">%s</pre>
+</div>`,
+			htmlEscape(redactOpsAlertEmailText(detail.ErrorReason)),
+			htmlEscape(redactOpsAlertEmailText(detail.ErrorReason)),
 			htmlEscape(redactOpsAlertEmailText(detail.AccountName)),
 			detail.AccountID,
+			htmlEscape(redactOpsAlertEmailText(user)),
+			htmlEscape(redactOpsAlertEmailText(apiKey)),
 			htmlEscape(redactOpsAlertEmailText(detail.Platform)),
 			htmlEscape(redactOpsAlertEmailText(group)),
-			htmlEscape(opsAccountRequestPhaseLabel(detail.ErrorPhase)),
+			htmlEscape(redactOpsAlertEmailText(models)),
 			detail.StatusCode,
+			htmlEscape(opsAccountRequestPhaseLabel(detail.ErrorPhase)),
+			htmlEscape(redactOpsAlertEmailText(strings.Join(requestIDs, " / "))),
+			detail.OccurredAt.In(beijingLocation()).Format("2006-01-02 15:04:05 MST"),
+			htmlEscape(redactOpsAlertEmailText(detail.ErrorMessage)),
 		)
 	}
 	if remaining := len(details) - limit; remaining > 0 {
-		_, _ = fmt.Fprintf(&rows, `<tr><td colspan="6" style="padding:8px;border:1px solid #e5e7eb;color:#6b7280;">另有 %d 个异常账号，请前往运维监控查看完整明细。</td></tr>`, remaining)
+		_, _ = fmt.Fprintf(&blocks, `<div style="color:#6b7280;font-size:12px">另有 %d 个异常账号，请前往运维监控查看完整明细。</div>`, remaining)
 	}
 
-	return `<p><strong>异常账号明细</strong>：</p>
-<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;">
-<thead><tr>
-<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">账号名称</th>
-<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">账号 ID</th>
-<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">平台</th>
-<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">分组</th>
-<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">故障阶段</th>
-<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">状态码</th>
-</tr></thead><tbody>` + rows.String() + `</tbody></table>`
+	return `<p><strong>异常账号明细</strong>：</p>` + blocks.String()
 }
 
 func shouldSendOpsAlertEmailByMinSeverity(minSeverity string, ruleSeverity string) bool {

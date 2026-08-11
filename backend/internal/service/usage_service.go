@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -442,6 +443,24 @@ func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.Pa
 		return nil, nil, fmt.Errorf("list usage logs with filters: %w", err)
 	}
 	return logs, result, nil
+}
+
+func (s *UsageService) ListRecentGPTAPIKeyIPCandidates(ctx context.Context, excludeEmail string, window time.Duration, limit int) ([]RecentGPTAPIKeyIPCandidate, error) {
+	if window <= 0 {
+		window = 2 * time.Minute
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	excludeEmail = strings.TrimSpace(excludeEmail)
+	if excludeEmail == "" {
+		excludeEmail = AdminUsageAttributionEmail
+	}
+	candidates, err := s.usageRepo.ListRecentGPTAPIKeyIPCandidates(ctx, time.Now().Add(-window), excludeEmail, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent gpt api key ip candidates: %w", err)
+	}
+	return candidates, nil
 }
 
 // GetGlobalStats returns global usage stats for a time range.

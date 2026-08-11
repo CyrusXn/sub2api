@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -551,6 +552,21 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	if input.UpstreamBillingManualRateMultiplierSet {
+		if !isUpstreamBillingProbeAccount(account) {
+			return nil, ErrUpstreamBillingManualRateAccountInvalid
+		}
+		snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
+		if snapshot == nil || snapshot.Status != UpstreamBillingProbeStatusFailed {
+			return nil, ErrUpstreamBillingManualRateRequiresFailedProbe
+		}
+		if input.UpstreamBillingManualRateMultiplier != nil {
+			value := *input.UpstreamBillingManualRateMultiplier
+			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, ErrUpstreamBillingManualRateInvalid
+			}
+		}
+	}
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
@@ -795,6 +811,32 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			if err := s.checkMixedChannelRisk(ctx, account.ID, account.Platform, *input.GroupIDs); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	if input.UpstreamBillingManualRateMultiplierSet &&
+		(!reflect.DeepEqual(previousProbeIdentity, upstreamBillingProbeIdentity(account)) ||
+			(requestedProbeEnabledUpdate != nil && !*requestedProbeEnabledUpdate)) {
+		// 手动倍率涉及失败快照；先拒绝身份变更或关闭探测，避免错误响应产生部分写入。
+		return nil, ErrUpstreamBillingManualRateRequiresFailedProbe
+	}
+	if input.UpstreamBillingManualRateMultiplierSet {
+		if _, ok := s.accountRepo.(upstreamBillingManualRateMultiplierUpdater); !ok {
+			return nil, ErrUpstreamBillingProbeUnavailable
+		}
+	}
+	if input.UpstreamBillingManualRateMultiplierSet {
+		updater := s.accountRepo.(upstreamBillingManualRateMultiplierUpdater)
+		// 手动值先按 failed 快照和身份条件原子写入，失败时不留下普通字段副作用。
+		if err := updater.UpdateUpstreamBillingManualRateMultiplier(ctx, account, input.UpstreamBillingManualRateMultiplier); err != nil {
+			return nil, err
+		}
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		if snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra); snapshot != nil {
+			snapshot.ManualRateMultiplier = input.UpstreamBillingManualRateMultiplier
+			account.Extra[UpstreamBillingProbeExtraKey] = snapshot
 		}
 	}
 

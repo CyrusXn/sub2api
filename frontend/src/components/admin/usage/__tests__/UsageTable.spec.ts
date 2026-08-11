@@ -516,6 +516,42 @@ describe('admin UsageTable first-token display value', () => {
     expect(firstTokenValue?.classes()).toContain('text-emerald-600')
   })
 
+  it('keeps exactly ten seconds green only when the user threshold is supplied', () => {
+    const row = {
+      ...baseImageRow,
+      request_id: 'req-ten-seconds',
+      first_token_ms: 10_000,
+      display_first_token_ms: 10_000,
+      duration_ms: 12_345,
+    }
+    const mountOptions = {
+      props: {
+        data: [row],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    }
+
+    const adminWrapper = mount(UsageTable, mountOptions)
+    const userWrapper = mount(UsageTable, {
+      ...mountOptions,
+      props: { ...mountOptions.props, firstTokenGoodThroughMs: 10_000 },
+    })
+
+    const adminValue = adminWrapper.findAll('span').find((node) => node.text() === '10.00s')
+    const userValue = userWrapper.findAll('span').find((node) => node.text() === '10.00s')
+    expect(adminValue?.classes()).toContain('text-amber-600')
+    expect(userValue?.classes()).toContain('text-emerald-600')
+  })
+
   it('formats derived seconds with exactly two decimal places and falls back to the real value', () => {
     const wrapper = mount(UsageTable, {
       props: {

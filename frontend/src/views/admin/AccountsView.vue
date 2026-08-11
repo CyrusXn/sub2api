@@ -355,7 +355,10 @@
             </span>
           </template>
           <template #cell-admin_usage_multiplier="{ row }">
-            <span class="text-sm font-mono text-gray-700 dark:text-gray-300">
+            <span
+              class="block max-w-full truncate whitespace-nowrap text-sm font-mono text-gray-700 dark:text-gray-300"
+              :title="`${formatMultiplier(row.admin_usage_multiplier ?? 1)}x`"
+            >
               {{ formatMultiplier(row.admin_usage_multiplier ?? 1) }}x
             </span>
           </template>
@@ -368,14 +371,16 @@
             </div>
           </template>
           <template #cell-upstream_billing_rate="{ row }">
-            <UpstreamBillingRateCell
-              :account="row"
-              :global-probe-enabled="upstreamBillingProbeGloballyEnabled"
-              :now="upstreamBillingNow"
-              :probing="probingUpstreamBilling.has(row.id)"
-              :change-direction="upstreamBillingChangeDirections.get(row.id) ?? null"
-              @probe="handleProbeUpstreamBilling(row)"
-            />
+            <div class="max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+              <UpstreamBillingRateCell
+                :account="row"
+                :global-probe-enabled="upstreamBillingProbeGloballyEnabled"
+                :now="upstreamBillingNow"
+                :probing="probingUpstreamBilling.has(row.id)"
+                :change-direction="upstreamBillingChangeDirections.get(row.id) ?? null"
+                @probe="handleProbeUpstreamBilling(row)"
+              />
+            </div>
           </template>
           <template #cell-upstream_balance="{ row }">
             <UpstreamAccountBalanceCell :account="row" />
@@ -432,31 +437,15 @@
             </div>
           </template>
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
-              <button @click="handleEdit(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
+            <div class="flex items-center gap-1 whitespace-nowrap">
+              <button data-test="account-action-edit" type="button" :title="t('common.edit')" :aria-label="t('common.edit')" @click="handleEdit(row)" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
-                <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
-              <button @click="handleDelete(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-                <span class="text-xs">{{ t('common.delete') }}</span>
-              </button>
-              <!-- 高频操作直接展示，减少每行重复打开“更多”的步骤。 -->
-              <button data-test="account-action-test" @click="handleTest(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400">
+              <button data-test="account-action-test" type="button" :title="t('admin.accounts.testConnection')" :aria-label="t('admin.accounts.testConnection')" @click="handleTest(row)" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400">
                 <Icon name="play" size="sm" />
-                <span class="text-xs">{{ t('admin.accounts.testConnection') }}</span>
               </button>
-              <button v-if="canDuplicateAccount(row)" data-test="account-action-duplicate" @click="handleDuplicateAccount(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-sky-50 hover:text-sky-600 dark:hover:bg-sky-900/20 dark:hover:text-sky-400">
-                <Icon name="copy" size="sm" />
-                <span class="text-xs">{{ t('admin.accounts.duplicateAccount') }}</span>
-              </button>
-              <button data-test="account-action-stats" @click="handleViewStats(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400">
-                <Icon name="chart" size="sm" />
-                <span class="text-xs">{{ t('admin.accounts.viewStats') }}</span>
-              </button>
-              <button @click="openMenu(row, $event)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
+              <button data-test="account-action-more" type="button" :title="t('common.more')" :aria-label="t('common.more')" @click="openMenu(row, $event)" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
-                <span class="text-xs">{{ t('common.more') }}</span>
               </button>
             </div>
           </template>
@@ -471,7 +460,7 @@
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @delete="handleDelete" @duplicate="handleDuplicateAccount" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -665,7 +654,7 @@ const ACCOUNT_SORT_DEFAULT_VERSION = 'upstream-billing-rate-asc'
 const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'account-table-column-widths:v2'
 const ACCOUNT_COLUMN_ORDER_STORAGE_KEY = 'account-table-column-order:v2'
 const ACCOUNT_COLUMN_ORDER_VERSION_KEY = 'account-table-column-order-version'
-const ACCOUNT_COLUMN_ORDER_CURRENT_VERSION = 'upstream-rate-after-schedulable'
+const ACCOUNT_COLUMN_ORDER_CURRENT_VERSION = 'primary-account-columns-v3'
 type AccountSortOrder = 'asc' | 'desc'
 type AccountSortState = {
   sort_by: string
@@ -678,6 +667,7 @@ const ACCOUNT_SORTABLE_KEYS = new Set([
   'schedulable',
   'priority',
   'rate_multiplier',
+  'admin_usage_multiplier',
   'upstream_billing_rate',
   'last_used_at',
   'created_at',
@@ -1021,14 +1011,11 @@ const migrateAccountColumnOrder = () => {
       return
     }
     const keys = parsed.filter((key): key is string => typeof key === 'string')
-    const schedulableIndex = keys.indexOf('schedulable')
-    const upstreamRateIndex = keys.indexOf('upstream_billing_rate')
-    if (schedulableIndex !== -1 && upstreamRateIndex !== -1 && upstreamRateIndex !== schedulableIndex + 1) {
-      // 旧浏览器缓存会继续沿用旧列顺序；只迁移倍率列位置，不影响隐藏列和列宽。
-      keys.splice(upstreamRateIndex, 1)
-      keys.splice(keys.indexOf('schedulable') + 1, 0, 'upstream_billing_rate')
-      localStorage.setItem(ACCOUNT_COLUMN_ORDER_STORAGE_KEY, JSON.stringify(keys))
-    }
+    const primaryKeys = ['capacity', 'status', 'schedulable', 'upstream_billing_rate', 'upstream_balance', 'admin_usage_multiplier']
+    const next = keys.filter(key => !primaryKeys.includes(key))
+    const nameIndex = next.indexOf('name')
+    next.splice(nameIndex >= 0 ? nameIndex + 1 : 0, 0, ...primaryKeys)
+    localStorage.setItem(ACCOUNT_COLUMN_ORDER_STORAGE_KEY, JSON.stringify(next))
     localStorage.setItem(ACCOUNT_COLUMN_ORDER_VERSION_KEY, ACCOUNT_COLUMN_ORDER_CURRENT_VERSION)
   } catch (e) {
     console.error('Failed to migrate account column order:', e)
@@ -1755,14 +1742,15 @@ function getAntigravityTierClass(row: any): string {
 // All available columns
 const allColumns = computed(() => {
   const c = [
-    { key: 'name', label: t('admin.accounts.columns.name'), sortable: true, width: 300 },
-    { key: 'id', label: t('admin.accounts.columns.id'), sortable: true, width: 86 },
-    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false, width: 120 },
+    { key: 'name', label: t('admin.accounts.columns.name'), sortable: true, width: 160 },
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false, width: 130 },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true, width: 116 },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true, width: 116 },
-    // 上游倍率直接放在调度右侧，方便按低倍率优先调度时同步观察。
-    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, width: 190 },
+    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, width: 176 },
+    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false, width: 150 },
+    { key: 'admin_usage_multiplier', label: t('admin.accounts.columns.adminUsageMultiplier'), sortable: true, width: 152 },
+    { key: 'id', label: t('admin.accounts.columns.id'), sortable: true, width: 86 },
+    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false, width: 120 },
     { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false, width: 180 }
   ]
   if (!authStore.isSimpleMode) {
@@ -1772,15 +1760,13 @@ const allColumns = computed(() => {
   c.push(
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, width: 160 },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true, width: 96 },
-    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false, width: 150 },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false, width: 130 },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true, width: 152 },
-    { key: 'admin_usage_multiplier', label: t('admin.accounts.columns.adminUsageMultiplier'), sortable: false, width: 152 },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true, width: 172 },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true, width: 154 },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true, width: 154 },
     { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false, width: 220 },
-    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false, width: 340 }
+    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false, width: 144 }
   )
   return c
 })
@@ -1796,11 +1782,6 @@ const cols = computed(() =>
     col.key === 'name' || col.key === 'actions' || !hiddenColumns.has(col.key)
   )
 )
-
-const DUPLICABLE_ACCOUNT_TYPES = new Set<AccountType>(['apikey', 'upstream', 'bedrock', 'service_account'])
-const canDuplicateAccount = (account: Account) => {
-  return account.parent_account_id == null && DUPLICABLE_ACCOUNT_TYPES.has(account.type)
-}
 
 const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
 const openMenu = (a: Account, e: MouseEvent) => {

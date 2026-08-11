@@ -763,6 +763,7 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	usageIPAttribution    *UsageIPAttributionService
 }
 
 // NewGatewayService creates a new GatewayService
@@ -795,7 +796,12 @@ func NewGatewayService(
 	compositeResolver *CompositeRouteResolver,
 	balanceNotifyService *BalanceNotifyService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	usageIPAttribution ...*UsageIPAttributionService,
 ) *GatewayService {
+	var attribution *UsageIPAttributionService
+	if len(usageIPAttribution) > 0 {
+		attribution = usageIPAttribution[0]
+	}
 	userGroupRateTTL := resolveUserGroupRateCacheTTL(cfg)
 	modelsListTTL := resolveModelsListCacheTTL(cfg)
 
@@ -832,6 +838,7 @@ func NewGatewayService(
 		compositeResolver:     compositeResolver,
 		balanceNotifyService:  balanceNotifyService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
+		usageIPAttribution:    attribution,
 	}
 	svc.userGroupRateResolver = newUserGroupRateResolver(
 		userGroupRateRepo,

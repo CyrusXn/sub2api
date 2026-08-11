@@ -376,9 +376,9 @@ describe('DataTable', () => {
     await wrapper.vm.$nextTick()
 
     const handle = wrapper.get('[data-test="column-resize-handle"]')
-    await handle.trigger('mousedown', { clientX: 100 })
-    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 220 }))
-    window.dispatchEvent(new MouseEvent('mouseup'))
+    await handle.trigger('pointerdown', { clientX: 100, pointerId: 1, pointerType: 'mouse', button: 0 })
+    await handle.trigger('pointermove', { clientX: 220, pointerId: 1, pointerType: 'mouse' })
+    await handle.trigger('pointerup', { clientX: 220, pointerId: 1, pointerType: 'mouse' })
     await wrapper.vm.$nextTick()
 
     const saved = JSON.parse(localStorage.getItem(storageKey) || '{}')
@@ -395,6 +395,38 @@ describe('DataTable', () => {
     await wrapper2.vm.$nextTick()
     const nameHeader = wrapper2.findAll('th').find((th) => th.text().includes('Name'))
     expect(nameHeader?.attributes('style') || '').toContain(`${saved.name}px`)
+  })
+
+  it('resizes a desktop column with touch pointer capture and persists the width', async () => {
+    const storageKey = 'test-table-touch-column-widths'
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [
+          { key: 'name', label: 'Name', width: 160 },
+          { key: 'email', label: 'Email' }
+        ],
+        data: [{ id: 1, name: 'Alice', email: 'alice@example.com' }],
+        columnWidthStorageKey: storageKey
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const handle = wrapper.get('th[data-column-key="name"] [data-test="column-resize-handle"]')
+    const setPointerCapture = vi.fn()
+    const releasePointerCapture = vi.fn()
+    Object.defineProperties(handle.element, {
+      setPointerCapture: { configurable: true, value: setPointerCapture },
+      releasePointerCapture: { configurable: true, value: releasePointerCapture }
+    })
+
+    await handle.trigger('pointerdown', { clientX: 100, pointerId: 7, pointerType: 'touch' })
+    await handle.trigger('pointermove', { clientX: 180, pointerId: 7, pointerType: 'touch' })
+    await handle.trigger('pointerup', { clientX: 180, pointerId: 7, pointerType: 'touch' })
+    await wrapper.vm.$nextTick()
+
+    expect(setPointerCapture).toHaveBeenCalledWith(7)
+    expect(releasePointerCapture).toHaveBeenCalledWith(7)
+    expect(JSON.parse(localStorage.getItem(storageKey) || '{}')).toEqual({ name: 240 })
   })
 
   it('keeps columns without configured or persisted widths on browser auto layout', async () => {
@@ -459,9 +491,9 @@ describe('DataTable', () => {
     expect(initialColStyles.some((style) => style.includes('260px'))).toBe(true)
 
     const nameHandle = wrapper.get('th[data-column-key="name"] [data-test="column-resize-handle"]')
-    await nameHandle.trigger('mousedown', { clientX: 100 })
-    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 180 }))
-    window.dispatchEvent(new MouseEvent('mouseup'))
+    await nameHandle.trigger('pointerdown', { clientX: 100, pointerId: 2, pointerType: 'mouse', button: 0 })
+    await nameHandle.trigger('pointermove', { clientX: 180, pointerId: 2, pointerType: 'mouse' })
+    await nameHandle.trigger('pointerup', { clientX: 180, pointerId: 2, pointerType: 'mouse' })
     await wrapper.vm.$nextTick()
 
     let saved = JSON.parse(localStorage.getItem(storageKey) || '{}')

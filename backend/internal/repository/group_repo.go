@@ -587,6 +587,9 @@ func groupListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 	case "rate_multiplier":
 		field = group.FieldRateMultiplier
 		defaultOrder = false
+	case "admin_usage_multiplier":
+		field = group.FieldAdminUsageMultiplier
+		defaultOrder = false
 	case "is_exclusive":
 		field = group.FieldIsExclusive
 		defaultOrder = false

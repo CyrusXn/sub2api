@@ -290,6 +290,25 @@ function buildOpenAISetupTokenAccount() {
   } as any
 }
 
+function buildFailedUpstreamBillingAccount(manualRateMultiplier?: number) {
+  const account = buildAccount()
+  account.extra = {
+    upstream_billing_probe: {
+      status: 'failed',
+      data: {
+        effective_rate_multiplier: 0.9
+      },
+      ...(manualRateMultiplier === undefined
+        ? {}
+        : { manual_rate_multiplier: manualRateMultiplier }),
+      last_attempt_at: '2026-08-10T00:00:00Z',
+      next_probe_at: '2026-08-10T01:00:00Z',
+      last_error: 'http_error'
+    }
+  }
+  return account
+}
+
 function mountModal(account = buildAccount()) {
   return mount(EditAccountModal, {
     props: {
@@ -782,6 +801,70 @@ describe('EditAccountModal', () => {
     expect(payload?.upstream_billing_probe_enabled).toBe(true)
     expect(payload?.upstream_billing_rate_sync_enabled).toBe(false)
     expect(payload?.rate_multiplier).toBe(1)
+  })
+
+  it('shows and submits a manual upstream billing rate only for a failed OpenAI API key probe', async () => {
+    const account = buildFailedUpstreamBillingAccount(0.25)
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const input = wrapper.get<HTMLInputElement>('[data-testid="upstream-billing-manual-rate-input"]')
+    expect(input.element.value).toBe('0.25')
+
+    await input.setValue('0.2')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_manual_rate_multiplier).toBe(0.2)
+  })
+
+  it('submits null when the failed-probe manual rate is cleared', async () => {
+    const account = buildFailedUpstreamBillingAccount(0.25)
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="upstream-billing-manual-rate-input"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_manual_rate_multiplier).toBeNull()
+  })
+
+  it('keeps the last automatic rate as a hint and omits the manual field outside failed probes', async () => {
+    const account = buildFailedUpstreamBillingAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    const input = wrapper.get<HTMLInputElement>('[data-testid="upstream-billing-manual-rate-input"]')
+
+    expect(input.element.value).toBe('')
+    expect(input.attributes('placeholder')).toBe('0.9')
+
+    await wrapper.setProps({
+      account: {
+        ...account,
+        extra: {
+          upstream_billing_probe: {
+            status: 'ok',
+            data: { effective_rate_multiplier: 0.9 },
+            last_attempt_at: '2026-08-10T00:00:00Z',
+            next_probe_at: '2026-08-10T01:00:00Z'
+          }
+        }
+      }
+    })
+
+    expect(wrapper.find('[data-testid="upstream-billing-manual-rate-field"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('upstream_billing_manual_rate_multiplier')
   })
 
   it('clears OpenAI APIKey Responses override when set back to auto', async () => {

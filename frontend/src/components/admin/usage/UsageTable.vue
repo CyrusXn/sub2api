@@ -562,6 +562,8 @@ interface Props {
   defaultSortOrder?: 'asc' | 'desc'
   showAccountBilling?: boolean
   showUpstreamEndpoint?: boolean
+  /** 用户端允许首字恰好 10 秒时仍显示为绿色，管理端保持默认阈值。 */
+  firstTokenGoodThroughMs?: number
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
 }
@@ -573,6 +575,7 @@ const props = withDefaults(defineProps<Props>(), {
   defaultSortOrder: 'asc',
   showAccountBilling: true,
   showUpstreamEndpoint: true,
+  firstTokenGoodThroughMs: undefined,
   flat: false
 })
 const emit = defineEmits<{
@@ -688,8 +691,13 @@ const getDisplayFirstTokenMs = (row: AdminUsageLog): number | null => {
   return row.display_first_token_ms ?? row.first_token_ms ?? null
 }
 
-const getDisplayFirstTokenSeverity = (row: AdminUsageLog) =>
-  firstTokenSeverity(getDisplayFirstTokenMs(row) ?? 0)
+const getDisplayFirstTokenSeverity = (row: AdminUsageLog) => {
+  const firstTokenMs = getDisplayFirstTokenMs(row)
+  if (firstTokenMs != null && props.firstTokenGoodThroughMs != null && firstTokenMs <= props.firstTokenGoodThroughMs) {
+    return 'good'
+  }
+  return firstTokenSeverity(firstTokenMs ?? 0)
+}
 
 // 超过 1 分钟简化为 "Xm Ys"，免去人工换算（超过 1 小时再进位为 "Xh Ym"）
 const formatDuration = (ms: number | null | undefined): string => {

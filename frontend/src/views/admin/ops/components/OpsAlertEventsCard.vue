@@ -298,6 +298,29 @@ function formatAccountGroup(detail: AlertAccountDetail): string {
   return '-'
 }
 
+function formatAccountUser(detail: AlertAccountDetail): string {
+  const email = String(detail.user_email || '').trim()
+  if (detail.user_id) return `${email || '-'} (#${detail.user_id})`
+  return email || '-'
+}
+
+function formatAccountAPIKey(detail: AlertAccountDetail): string {
+  const name = String(detail.api_key_name || '').trim()
+  if (detail.api_key_id) return `${name || '-'} (#${detail.api_key_id})`
+  return name || '-'
+}
+
+function formatAccountRequestIDs(detail: AlertAccountDetail): string {
+  const values = [detail.request_id, detail.client_request_id]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+  return values.length ? values.join(' / ') : '-'
+}
+
+function formatAccountModels(detail: AlertAccountDetail): string {
+  return `${String(detail.requested_model || '').trim() || '-'} / ${String(detail.upstream_model || '').trim() || '-'}`
+}
+
 async function loadHistory() {
   const ev = selected.value
   if (!ev) {
@@ -782,55 +805,37 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
             {{ t('admin.ops.alertEvents.detail.accountDetailsLegacyEmpty') }}
           </div>
 
-          <div v-else-if="!isDesktopViewport" class="divide-y divide-gray-100 dark:divide-dark-700">
-            <div v-for="detail in accountDetails" :key="detail.id" class="space-y-2 py-3 first:pt-0 last:pb-0">
-              <div class="flex items-start justify-between gap-3">
+          <div v-else class="divide-y divide-gray-100 dark:divide-dark-700">
+            <article v-for="detail in accountDetails" :key="detail.id" class="space-y-3 py-4 first:pt-0 last:pb-0">
+              <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
                   <div class="break-words text-sm font-semibold text-gray-900 dark:text-white">
                     {{ detail.account_name || `#${detail.account_id}` }}
                   </div>
-                  <div class="mt-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400">
-                    ID {{ detail.account_id }}
+                  <div class="mt-1 break-words text-sm font-medium text-red-600 dark:text-red-400">
+                    {{ detail.error_reason || '-' }}
                   </div>
                 </div>
-                <span class="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-700 dark:bg-dark-700 dark:text-gray-300">
+                <span class="shrink-0 rounded-md bg-gray-100 px-2 py-1 font-mono text-[11px] font-semibold text-gray-700 dark:bg-dark-700 dark:text-gray-300">
                   {{ detail.status_code || '-' }}
                 </span>
               </div>
-              <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
-                <span>{{ t('admin.ops.alertEvents.detail.accountPlatform') }}：{{ detail.platform || '-' }}</span>
-                <span>{{ t('admin.ops.alertEvents.detail.accountGroup') }}：{{ formatAccountGroup(detail) }}</span>
-                <span>{{ t('admin.ops.alertEvents.detail.accountPhase') }}：{{ formatAccountPhase(detail.error_phase) }}</span>
-                <span class="col-span-2">{{ t('admin.ops.alertEvents.detail.accountOccurredAt') }}：{{ formatDateTime(detail.occurred_at) }}</span>
+              <dl class="grid grid-cols-1 gap-x-6 gap-y-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-2 lg:grid-cols-3">
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountId') }}</dt><dd class="mt-0.5 font-mono">{{ detail.account_id }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountUser') }}</dt><dd class="mt-0.5 break-all">{{ formatAccountUser(detail) }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountAPIKey') }}</dt><dd class="mt-0.5 break-all">{{ formatAccountAPIKey(detail) }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountPlatform') }}</dt><dd class="mt-0.5">{{ detail.platform || '-' }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountGroup') }}</dt><dd class="mt-0.5">{{ formatAccountGroup(detail) }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountPhase') }}</dt><dd class="mt-0.5">{{ formatAccountPhase(detail.error_phase) }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountModels') }}</dt><dd class="mt-0.5 break-all">{{ formatAccountModels(detail) }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountRequestIds') }}</dt><dd class="mt-0.5 break-all font-mono">{{ formatAccountRequestIDs(detail) }}</dd></div>
+                <div><dt class="font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountOccurredAt') }}</dt><dd class="mt-0.5 whitespace-nowrap">{{ formatDateTime(detail.occurred_at) }}</dd></div>
+              </dl>
+              <div>
+                <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.accountErrorMessage') }}</div>
+                <pre class="mt-1 whitespace-pre-wrap break-words rounded-md bg-gray-50 p-2 text-xs text-gray-700 dark:bg-dark-900 dark:text-gray-200">{{ detail.error_message || '-' }}</pre>
               </div>
-            </div>
-          </div>
-
-          <div v-else class="overflow-x-auto">
-            <table class="min-w-full table-fixed divide-y divide-gray-200 text-left dark:divide-dark-700">
-              <thead>
-                <tr class="text-[11px] font-bold uppercase text-gray-500 dark:text-gray-400">
-                  <th class="w-[26%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountName') }}</th>
-                  <th class="w-[12%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountId') }}</th>
-                  <th class="w-[14%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountPlatform') }}</th>
-                  <th class="w-[16%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountGroup') }}</th>
-                  <th class="w-[14%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountPhase') }}</th>
-                  <th class="w-[10%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountStatus') }}</th>
-                  <th class="w-[18%] px-3 py-2">{{ t('admin.ops.alertEvents.detail.accountOccurredAt') }}</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-                <tr v-for="detail in accountDetails" :key="detail.id" class="text-xs text-gray-700 dark:text-gray-200">
-                  <td class="break-words px-3 py-2 font-semibold">{{ detail.account_name || '-' }}</td>
-                  <td class="px-3 py-2 font-mono">{{ detail.account_id }}</td>
-                  <td class="break-words px-3 py-2">{{ detail.platform || '-' }}</td>
-                  <td class="break-words px-3 py-2">{{ formatAccountGroup(detail) }}</td>
-                  <td class="break-words px-3 py-2">{{ formatAccountPhase(detail.error_phase) }}</td>
-                  <td class="px-3 py-2 font-mono">{{ detail.status_code || '-' }}</td>
-                  <td class="whitespace-nowrap px-3 py-2">{{ formatDateTime(detail.occurred_at) }}</td>
-                </tr>
-              </tbody>
-            </table>
+            </article>
           </div>
         </section>
 

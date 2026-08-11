@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -1089,6 +1090,9 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 	case "rate_multiplier":
 		field = dbaccount.FieldRateMultiplier
 		defaultOrder = false
+	case "admin_usage_multiplier":
+		field = dbaccount.FieldAdminUsageMultiplier
+		defaultOrder = false
 	case "last_used_at":
 		field = dbaccount.FieldLastUsedAt
 		defaultOrder = false
@@ -1111,6 +1115,8 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 
 func upstreamBillingRateSortExpression(extra string) string {
 	status := extra + " #>> '{upstream_billing_probe,status}'"
+	manualJSON := extra + " #> '{upstream_billing_probe,manual_rate_multiplier}'"
+	manual := extra + " #>> '{upstream_billing_probe,manual_rate_multiplier}'"
 	effectiveJSON := extra + " #> '{upstream_billing_probe,data,effective_rate_multiplier}'"
 	effective := extra + " #>> '{upstream_billing_probe,data,effective_rate_multiplier}'"
 	resolvedJSON := extra + " #> '{upstream_billing_probe,data,resolved_rate_multiplier}'"
@@ -1137,10 +1143,12 @@ func upstreamBillingRateSortExpression(extra string) string {
 		" THEN (" + resolved + ")::numeric * CASE WHEN " + localMinute + " >= " + startMinute + " AND " + localMinute + " < " + endMinute +
 		" THEN " + peakMultiplierValue + " ELSE 1 END ELSE NULL END"
 	legacySnapshot := "jsonb_typeof(" + resolvedJSON + ") IS NULL AND jsonb_typeof(" + peakEnabledJSON + ") IS NULL"
-
-	return "CASE WHEN " + status + " IN ('ok', 'failed') AND (jsonb_typeof(" + resolvedJSON + ") = 'number' OR jsonb_typeof(" + effectiveJSON + ") = 'number') THEN CASE WHEN jsonb_typeof(" +
+	manualRate := "CASE WHEN " + status + " = 'failed' AND jsonb_typeof(" + manualJSON + ") = 'number' AND (" + manual + ")::numeric >= 0 THEN (" + manual + ")::numeric END"
+	automaticRate := "CASE WHEN " + status + " IN ('ok', 'failed') AND (jsonb_typeof(" + resolvedJSON + ") = 'number' OR jsonb_typeof(" + effectiveJSON + ") = 'number') THEN CASE WHEN jsonb_typeof(" +
 		resolvedJSON + ") = 'number' AND jsonb_typeof(" + peakEnabledJSON + ") = 'boolean' THEN CASE WHEN " + billingScope + " = 'token' THEN " + dynamicRate + " ELSE NULL END WHEN " + legacySnapshot +
 		" AND jsonb_typeof(" + effectiveJSON + ") = 'number' THEN (" + effective + ")::numeric END END"
+
+	return "COALESCE((" + manualRate + "), (" + automaticRate + "))"
 }
 
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
@@ -2594,6 +2602,93 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		if dbent.TxFromContext(ctx) == nil {
 			r.syncSchedulerAccountSnapshot(ctx, id)
 		}
+	}
+	return nil
+}
+
+// UpdateUpstreamBillingManualRateMultiplier 原子更新失败探测快照中的手动倍率。
+// 条件同时校验账号类型和 failed 状态，避免成功探测或身份变更后写入过期兜底值。
+func (r *accountRepository) UpdateUpstreamBillingManualRateMultiplier(ctx context.Context, account *service.Account, value *float64) error {
+	if account == nil {
+		return service.ErrAccountNilInput
+	}
+	if value != nil && (*value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0)) {
+		return service.ErrUpstreamBillingManualRateInvalid
+	}
+	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	if err != nil {
+		return err
+	}
+	var proxyID any
+	if account.ProxyID != nil {
+		proxyID = *account.ProxyID
+	}
+	var expectedSnapshot any
+	var expectedEnabled any
+	if account.Extra != nil {
+		expectedSnapshot = account.Extra[service.UpstreamBillingProbeExtraKey]
+		expectedEnabled = account.Extra[service.UpstreamBillingProbeEnabledExtraKey]
+	}
+	expectedSnapshotJSON, err := json.Marshal(expectedSnapshot)
+	if err != nil {
+		return err
+	}
+	expectedEnabledJSON, err := json.Marshal(expectedEnabled)
+	if err != nil {
+		return err
+	}
+	baseCtx := ctx
+	contextTx := dbent.TxFromContext(ctx)
+	client := clientFromContext(ctx, r.client)
+	var tx *dbent.Tx
+	if contextTx == nil {
+		var err error
+		tx, err = r.client.Tx(ctx)
+		if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+			return err
+		}
+		if tx != nil {
+			defer func() { _ = tx.Rollback() }()
+			ctx = dbent.NewTxContext(ctx, tx)
+			client = tx.Client()
+		}
+	}
+
+	var extraExpression, idPlaceholder string
+	var credentialsPlaceholder, proxyPlaceholder, snapshotPlaceholder, enabledPlaceholder string
+	var args []any
+	if value == nil {
+		extraExpression = "COALESCE(extra, '{}'::jsonb) #- '{upstream_billing_probe,manual_rate_multiplier}'::text[]"
+		args = []any{account.ID, string(credentials), proxyID, string(expectedSnapshotJSON), string(expectedEnabledJSON)}
+		idPlaceholder = "$1"
+		credentialsPlaceholder, proxyPlaceholder, snapshotPlaceholder, enabledPlaceholder = "$2", "$3", "$4", "$5"
+	} else {
+		extraExpression = "jsonb_set(COALESCE(extra, '{}'::jsonb), '{upstream_billing_probe,manual_rate_multiplier}'::text[], to_jsonb($1::double precision), true)"
+		args = []any{*value, account.ID, string(credentials), proxyID, string(expectedSnapshotJSON), string(expectedEnabledJSON)}
+		idPlaceholder = "$2"
+		credentialsPlaceholder, proxyPlaceholder, snapshotPlaceholder, enabledPlaceholder = "$3", "$4", "$5", "$6"
+	}
+	result, err := client.ExecContext(ctx, "UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW() WHERE id = "+idPlaceholder+" AND platform = 'openai' AND type = 'apikey' AND credentials = "+credentialsPlaceholder+"::jsonb AND proxy_id IS NOT DISTINCT FROM "+proxyPlaceholder+" AND COALESCE(extra -> 'upstream_billing_probe', 'null'::jsonb) = "+snapshotPlaceholder+"::jsonb AND COALESCE(extra -> 'upstream_billing_probe_enabled', 'null'::jsonb) = "+enabledPlaceholder+"::jsonb AND extra #>> '{upstream_billing_probe,status}' = 'failed' AND deleted_at IS NULL", args...)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrUpstreamBillingManualRateUnavailable
+	}
+	if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, nil); err != nil {
+		return err
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	if contextTx == nil {
+		r.syncSchedulerAccountSnapshot(baseCtx, account.ID)
 	}
 	return nil
 }

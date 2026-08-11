@@ -348,6 +348,7 @@ SELECT
   metric_value,
   threshold_value,
   dimensions,
+  COALESCE(dedupe_key, ''),
   fired_at,
   resolved_at,
   email_sent,
@@ -380,6 +381,7 @@ LIMIT ` + limitArg
 			&metricValue,
 			&thresholdValue,
 			&dimensionsRaw,
+			&ev.DedupeKey,
 			&ev.FiredAt,
 			&resolvedAt,
 			&ev.EmailSent,
@@ -432,6 +434,7 @@ SELECT
   metric_value,
   threshold_value,
   dimensions,
+  COALESCE(dedupe_key, ''),
   fired_at,
   resolved_at,
   email_sent,
@@ -469,6 +472,7 @@ SELECT
   metric_value,
   threshold_value,
   dimensions,
+  COALESCE(dedupe_key, ''),
   fired_at,
   resolved_at,
   email_sent,
@@ -508,6 +512,7 @@ SELECT
   metric_value,
   threshold_value,
   dimensions,
+  COALESCE(dedupe_key, ''),
   fired_at,
   resolved_at,
   email_sent,
@@ -519,6 +524,45 @@ LIMIT 1`
 
 	row := r.db.QueryRowContext(ctx, q, ruleID)
 	ev, err := scanOpsAlertEvent(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return ev, nil
+}
+
+func (r *opsRepository) GetLatestAlertEventByDedupeKey(ctx context.Context, ruleID int64, dedupeKey string) (*service.OpsAlertEvent, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("nil ops repository")
+	}
+	if ruleID <= 0 || strings.TrimSpace(dedupeKey) == "" {
+		return nil, fmt.Errorf("invalid alert dedupe lookup")
+	}
+
+	q := `
+SELECT
+  id,
+  COALESCE(rule_id, 0),
+  COALESCE(severity, ''),
+  COALESCE(status, ''),
+  COALESCE(title, ''),
+  COALESCE(description, ''),
+  metric_value,
+  threshold_value,
+  dimensions,
+  COALESCE(dedupe_key, ''),
+  fired_at,
+  resolved_at,
+  email_sent,
+  created_at
+FROM ops_alert_events
+WHERE rule_id = $1 AND dedupe_key = $2
+ORDER BY fired_at DESC, id DESC
+LIMIT 1`
+
+	ev, err := scanOpsAlertEvent(r.db.QueryRowContext(ctx, q, ruleID, strings.TrimSpace(dedupeKey)))
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -551,12 +595,13 @@ INSERT INTO ops_alert_events (
   metric_value,
   threshold_value,
   dimensions,
+  dedupe_key,
   fired_at,
   resolved_at,
   email_sent,
   created_at
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW()
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()
 )
 RETURNING
   id,
@@ -568,6 +613,7 @@ RETURNING
   metric_value,
   threshold_value,
   dimensions,
+  COALESCE(dedupe_key, ''),
   fired_at,
   resolved_at,
   email_sent,
@@ -584,6 +630,7 @@ RETURNING
 		opsNullFloat64(event.MetricValue),
 		opsNullFloat64(event.ThresholdValue),
 		dimensionsArg,
+		opsNullString(event.DedupeKey),
 		event.FiredAt,
 		opsNullTime(event.ResolvedAt),
 		event.EmailSent,
@@ -760,6 +807,7 @@ func scanOpsAlertEvent(row opsAlertEventRow) (*service.OpsAlertEvent, error) {
 		&metricValue,
 		&thresholdValue,
 		&dimensionsRaw,
+		&ev.DedupeKey,
 		&ev.FiredAt,
 		&resolvedAt,
 		&ev.EmailSent,

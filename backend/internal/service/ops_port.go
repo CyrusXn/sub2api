@@ -67,6 +67,11 @@ type OpsAlertAccountDetailRepository interface {
 	ListAlertAccountDetails(ctx context.Context, eventID int64) ([]*OpsAlertAccountDetail, error)
 }
 
+// OpsAlertDedupeRepository 为账号请求异常提供按原因冷却查询，避免扩大核心仓储接口。
+type OpsAlertDedupeRepository interface {
+	GetLatestAlertEventByDedupeKey(ctx context.Context, ruleID int64, dedupeKey string) (*OpsAlertEvent, error)
+}
+
 type OpsInsertErrorLogInput struct {
 	// ErrorLogID 由仓储在成功落库后回填，仅用于关联告警邮件与错误详情。
 	ErrorLogID int64

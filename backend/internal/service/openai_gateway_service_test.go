@@ -2723,8 +2723,8 @@ func TestOpenAIStreamingHeadersOverride(t *testing.T) {
 	if rec.Header().Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("expected Content-Type override, got %q", rec.Header().Get("Content-Type"))
 	}
-	if rec.Header().Get("X-Request-Id") != "req-123" {
-		t.Fatalf("expected X-Request-Id passthrough, got %q", rec.Header().Get("X-Request-Id"))
+	if rec.Header().Get("X-Request-Id") != "" {
+		t.Fatalf("expected upstream X-Request-Id to stay internal, got %q", rec.Header().Get("X-Request-Id"))
 	}
 }
 

@@ -69,6 +69,8 @@ func buildOpsAlertErrorSampleFromInput(entry *OpsInsertErrorLogInput) *opsAlertE
 			ClientRequestID:  redactOpsAlertEmailText(entry.ClientRequestID),
 			RequestID:        redactOpsAlertEmailText(entry.RequestID),
 			Message:          redactOpsAlertEmailText(entry.ErrorMessage),
+			UserID:           cloneInt64Pointer(entry.UserID),
+			APIKeyID:         cloneInt64Pointer(entry.APIKeyID),
 			AccountID:        cloneInt64Pointer(entry.AccountID),
 			GroupID:          cloneInt64Pointer(entry.GroupID),
 			RequestPath:      safeUpstreamURL(redactOpsAlertEmailText(entry.RequestPath)),

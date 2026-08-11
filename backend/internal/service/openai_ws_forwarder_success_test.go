@@ -62,7 +62,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 			"type": "response.created",
 			"response": map[string]any{
 				"id":    "resp_new_1",
-				"model": "gpt-5.1",
+				"model": "gpt-5.1-2026-08-01",
 			},
 		}); err != nil {
 			t.Errorf("write response.created failed: %v", err)
@@ -72,7 +72,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 			"type": "response.completed",
 			"response": map[string]any{
 				"id":    "resp_new_1",
-				"model": "gpt-5.1",
+				"model": "gpt-5.1-2026-08-01",
 				"usage": map[string]any{
 					"input_tokens":  12,
 					"output_tokens": 7,
@@ -170,6 +170,9 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 
 	responseBody := rec.Body.Bytes()
 	require.Equal(t, "resp_new_1", gjson.GetBytes(responseBody, "id").String())
+	require.Equal(t, "gpt-5.1", gjson.GetBytes(responseBody, "model").String())
+	require.NotContains(t, string(responseBody), "gpt-5.1-2026-08-01")
+	require.Equal(t, "gpt-5.1", result.UpstreamModel)
 }
 
 func TestOpenAIGatewayService_Forward_WSv2_UsesPatchedBodyAfterValidationDecode(t *testing.T) {

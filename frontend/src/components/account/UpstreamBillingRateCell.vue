@@ -11,7 +11,15 @@
         </span>
       </template>
       <div class="space-y-1">
-        <template v-if="hasEffectiveRate && data">
+        <template v-if="hasManualRate">
+          <p data-testid="upstream-billing-manual-rate-detail">
+            {{ t('admin.accounts.upstreamBilling.manualRate', { value: manualRate }) }}
+          </p>
+          <p v-if="lastDetectedRate != null">
+            {{ t('admin.accounts.upstreamBilling.lastDetectedRate', { value: lastDetectedRate }) }}
+          </p>
+        </template>
+        <template v-else-if="hasEffectiveRate && data">
           <p>{{ t('admin.accounts.upstreamBilling.groupRate', { value: data.group_rate_multiplier }) }}</p>
           <p v-if="data.user_rate_multiplier != null">
             {{ t('admin.accounts.upstreamBilling.userRate', { value: data.user_rate_multiplier }) }}
@@ -65,6 +73,13 @@
         </p>
       </div>
     </HelpTooltip>
+    <span
+      v-if="hasManualRate"
+      data-testid="upstream-billing-manual-badge"
+      class="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+    >
+      {{ t('admin.accounts.upstreamBilling.manualSource') }}
+    </span>
     <span
       v-if="hasEffectiveRate && changeDirection === 'up'"
       data-testid="upstream-billing-change-up"
@@ -128,6 +143,13 @@ const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000
 const eligible = computed(() => props.account.type === 'apikey')
 const snapshot = computed<UpstreamBillingProbeSnapshot | undefined>(() => props.account.extra?.upstream_billing_probe)
 const data = computed(() => snapshot.value?.data)
+const manualRate = computed(() => {
+  const value = snapshot.value?.manual_rate_multiplier
+  return snapshot.value?.status === 'failed' && typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Number(value.toPrecision(12))
+    : null
+})
+const hasManualRate = computed(() => manualRate.value != null)
 const probeEnabled = computed(() => props.account.extra?.upstream_billing_probe_enabled === true)
 const nextProbeAt = computed(() => {
   const value = snapshot.value?.next_probe_at
@@ -208,6 +230,7 @@ const elapsedSinceLastSuccess = computed(() => {
   return t('admin.accounts.upstreamBilling.daysAgo', { count: Math.floor(elapsedHours / 24) })
 })
 const effectiveRate = computed(() => {
+  if (manualRate.value != null) return `${manualRate.value}x`
   if (!validTimestamps.value || stale.value || !['ok', 'failed'].includes(snapshot.value?.status ?? '')) return '-'
   const value = currentEffectiveRate.value
   return value == null ? '-' : `${formatMultiplier(value)}x`
@@ -215,6 +238,7 @@ const effectiveRate = computed(() => {
 const statusLabel = computed(() => {
   if (!snapshot.value) return t('admin.accounts.upstreamBilling.notProbed')
   if (snapshot.value.status === 'unsupported') return t('admin.accounts.upstreamBilling.unsupported')
+  if (hasManualRate.value) return t('admin.accounts.upstreamBilling.failed')
   if (stale.value) return t('admin.accounts.upstreamBilling.stale')
   if (snapshot.value.status === 'failed') return t('admin.accounts.upstreamBilling.failed')
   return ''
@@ -222,12 +246,14 @@ const statusLabel = computed(() => {
 const statusClass = computed(() => {
   if (!snapshot.value) return 'text-gray-400 dark:text-gray-500'
   if (snapshot.value.status === 'unsupported') return 'text-gray-500 dark:text-gray-400'
+  if (hasManualRate.value) return 'text-red-600 dark:text-red-400'
   if (stale.value) return 'text-amber-600 dark:text-amber-400'
   if (snapshot.value.status === 'failed') return 'text-red-600 dark:text-red-400'
   return ''
 })
 const hasEffectiveRate = computed(() => effectiveRate.value !== '-')
 const effectiveRateClass = computed(() => {
+  if (hasManualRate.value) return 'rounded bg-amber-50 px-1.5 py-0.5 font-mono text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
   if (props.changeDirection === 'up') return 'font-mono text-red-600 dark:text-red-400'
   if (props.changeDirection === 'down') return 'font-mono text-emerald-600 dark:text-emerald-400'
   return 'font-mono text-gray-800 dark:text-gray-200'

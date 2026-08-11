@@ -103,6 +103,9 @@ func (r *usageBatchLogRepoStub) GetUserModelStats(context.Context, int64, time.T
 func (r *usageBatchLogRepoStub) ListWithFilters(context.Context, pagination.PaginationParams, usagestats.UsageLogFilters) ([]UsageLog, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
+func (r *usageBatchLogRepoStub) ListRecentGPTAPIKeyIPCandidates(context.Context, time.Time, string, int) ([]RecentGPTAPIKeyIPCandidate, error) {
+	return nil, nil
+}
 func (r *usageBatchLogRepoStub) GetGlobalStats(context.Context, time.Time, time.Time) (*usagestats.UsageStats, error) {
 	return nil, nil
 }

@@ -420,20 +420,31 @@ describe('admin AccountsView bulk edit scope', () => {
       sortable: true
     })
     expect(columns.some(column => column.key === 'select')).toBe(false)
-    expect(columns.find(column => column.key === 'actions')?.width).toBe(340)
+    expect(columns.find(column => column.key === 'name')?.width).toBe(160)
+    expect(columns.find(column => column.key === 'actions')?.width).toBe(144)
+    expect(columns.find(column => column.key === 'admin_usage_multiplier')?.sortable).toBe(true)
     expect(table.props('selectable')).toBe(true)
     expect(table.props('selectedKeys')).toEqual([])
-    expect(wrapper.get('[data-test="account-action-test"]').text()).toBe('admin.accounts.testConnection')
-    expect(wrapper.get('[data-test="account-action-duplicate"]').text()).toBe('admin.accounts.duplicateAccount')
-    expect(wrapper.get('[data-test="account-action-stats"]').text()).toBe('admin.accounts.viewStats')
+    expect(wrapper.get('[data-test="account-action-edit"]').text()).toBe('')
+    expect(wrapper.get('[data-test="account-action-test"]').text()).toBe('')
+    expect(wrapper.get('[data-test="account-action-more"]').text()).toBe('')
+    expect(wrapper.find('[data-test="account-action-duplicate"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="account-action-stats"]').exists()).toBe(false)
     const schedulableIndex = columns.findIndex(column => column.key === 'schedulable')
     expect(schedulableIndex).toBeGreaterThanOrEqual(0)
-    expect(columns[schedulableIndex + 1]?.key).toBe('upstream_billing_rate')
+    expect(columns.slice(schedulableIndex - 2, schedulableIndex + 4).map(column => column.key)).toEqual([
+      'capacity',
+      'status',
+      'schedulable',
+      'upstream_billing_rate',
+      'upstream_balance',
+      'admin_usage_multiplier'
+    ])
     expect(table.props('columnWidthStorageKey')).toBe('account-table-column-widths:v2')
     expect(table.props('columnOrderStorageKey')).toBe('account-table-column-order:v2')
   })
 
-  it('migrates old persisted column order to keep upstream billing rate next to schedulable', async () => {
+  it('migrates old persisted column order to keep the primary account columns together', async () => {
     localStorage.setItem(
       'account-table-column-order:v2',
       JSON.stringify(['name', 'schedulable', 'priority', 'upstream_billing_rate', 'created_at'])
@@ -442,14 +453,12 @@ describe('admin AccountsView bulk edit scope', () => {
     mountAccountsForSortAndProbe()
     await flushPromises()
 
-    expect(JSON.parse(localStorage.getItem('account-table-column-order:v2') || '[]')).toEqual([
-      'name',
-      'schedulable',
-      'upstream_billing_rate',
-      'priority',
-      'created_at'
-    ])
-    expect(localStorage.getItem('account-table-column-order-version')).toBe('upstream-rate-after-schedulable')
+    const storedOrder = JSON.parse(localStorage.getItem('account-table-column-order:v2') || '[]') as string[]
+    const primary = ['capacity', 'status', 'schedulable', 'upstream_billing_rate', 'upstream_balance', 'admin_usage_multiplier']
+    const primaryPositions = primary.map(key => storedOrder.indexOf(key))
+    expect(primaryPositions.every(position => position >= 0)).toBe(true)
+    expect(primaryPositions).toEqual([...primaryPositions].sort((a, b) => a - b))
+    expect(localStorage.getItem('account-table-column-order-version')).toBe('primary-account-columns-v3')
   })
 
   it('passes the loaded global probe state to every upstream billing cell', async () => {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -21,10 +22,11 @@ import (
 
 // UsageHandler handles admin usage-related requests
 type UsageHandler struct {
-	usageService   *service.UsageService
-	apiKeyService  *service.APIKeyService
-	adminService   service.AdminService
-	cleanupService *service.UsageCleanupService
+	usageService       *service.UsageService
+	apiKeyService      *service.APIKeyService
+	adminService       service.AdminService
+	cleanupService     *service.UsageCleanupService
+	usageIPAttribution *service.UsageIPAttributionService
 }
 
 // NewUsageHandler creates a new admin usage handler
@@ -33,12 +35,18 @@ func NewUsageHandler(
 	apiKeyService *service.APIKeyService,
 	adminService service.AdminService,
 	cleanupService *service.UsageCleanupService,
+	usageIPAttribution ...*service.UsageIPAttributionService,
 ) *UsageHandler {
+	var attribution *service.UsageIPAttributionService
+	if len(usageIPAttribution) > 0 {
+		attribution = usageIPAttribution[0]
+	}
 	return &UsageHandler{
-		usageService:   usageService,
-		apiKeyService:  apiKeyService,
-		adminService:   adminService,
-		cleanupService: cleanupService,
+		usageService:       usageService,
+		apiKeyService:      apiKeyService,
+		adminService:       adminService,
+		cleanupService:     cleanupService,
+		usageIPAttribution: attribution,
 	}
 }
 
@@ -55,6 +63,34 @@ type CreateUsageCleanupTaskRequest struct {
 	Stream      *bool   `json:"stream"`
 	BillingType *int8   `json:"billing_type"`
 	Timezone    string  `json:"timezone"`
+}
+
+type ccSwitchAPIKeyCandidate struct {
+	APIKeyID   int64     `json:"api_key_id"`
+	UserID     int64     `json:"user_id"`
+	APIKey     string    `json:"api_key"`
+	APIKeyName string    `json:"api_key_name"`
+	UserEmail  string    `json:"user_email"`
+	IPAddress  string    `json:"ip_address"`
+	Model      string    `json:"model"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type ccSwitchAPIKeyCandidatesResponse struct {
+	Candidates    []ccSwitchAPIKeyCandidate `json:"candidates"`
+	FallbackIP    string                    `json:"fallback_ip"`
+	ExcludeEmail  string                    `json:"exclude_email"`
+	WindowSeconds int                       `json:"window_seconds"`
+}
+
+type ccSwitchIPAttributionLeaseRequest struct {
+	APIKeyID int64 `json:"api_key_id" binding:"required"`
+}
+
+type ccSwitchIPAttributionLeaseResponse struct {
+	APIKeyID  int64  `json:"api_key_id"`
+	IPAddress string `json:"ip_address"`
+	ExpiresIn int    `json:"expires_in_seconds"`
 }
 
 // List handles listing all usage records with filters
@@ -212,6 +248,103 @@ func (h *UsageHandler) List(c *gin.Context) {
 		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+// CCSwitchAPIKeyCandidates returns recent non-admin GPT API Keys for the local CC-Switch companion.
+// GET /api/v1/admin/usage/cc-switch-api-key-candidates
+func (h *UsageHandler) CCSwitchAPIKeyCandidates(c *gin.Context) {
+	windowSeconds := 120
+	if raw := strings.TrimSpace(c.Query("window_seconds")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 30 || parsed > 300 {
+			response.BadRequest(c, "Invalid window_seconds, use 30-300")
+			return
+		}
+		windowSeconds = parsed
+	}
+
+	limit := 20
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 50 {
+			response.BadRequest(c, "Invalid limit, use 1-50")
+			return
+		}
+		limit = parsed
+	}
+
+	excludeEmail := strings.TrimSpace(c.DefaultQuery("exclude_email", service.AdminUsageAttributionEmail))
+	candidates, err := h.usageService.ListRecentGPTAPIKeyIPCandidates(c.Request.Context(), excludeEmail, time.Duration(windowSeconds)*time.Second, limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	out := make([]ccSwitchAPIKeyCandidate, 0, len(candidates))
+	for _, item := range candidates {
+		out = append(out, ccSwitchAPIKeyCandidate{
+			APIKeyID:   item.APIKeyID,
+			UserID:     item.UserID,
+			APIKey:     item.APIKey,
+			APIKeyName: item.APIKeyName,
+			UserEmail:  item.UserEmail,
+			IPAddress:  item.IPAddress,
+			Model:      item.Model,
+			CreatedAt:  item.CreatedAt,
+		})
+	}
+
+	response.Success(c, ccSwitchAPIKeyCandidatesResponse{
+		Candidates:    out,
+		FallbackIP:    service.AdminUsageFallbackIP,
+		ExcludeEmail:  excludeEmail,
+		WindowSeconds: windowSeconds,
+	})
+}
+
+// CCSwitchIPAttributionLease 为本机轮换后的 Key 建立短时 IP 归因租约。
+// 客户端只提交 Key ID，真实目标 IP 必须来自最近的非管理员 GPT 使用记录。
+// POST /api/v1/admin/usage/cc-switch-ip-attribution-lease
+func (h *UsageHandler) CCSwitchIPAttributionLease(c *gin.Context) {
+	var req ccSwitchIPAttributionLeaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.APIKeyID <= 0 {
+		response.BadRequest(c, "Invalid api_key_id")
+		return
+	}
+	sourceIP := strings.TrimSpace(ip.GetClientIP(c))
+	if sourceIP == "" {
+		response.BadRequest(c, "Unable to determine source IP")
+		return
+	}
+	candidates, err := h.usageService.ListRecentGPTAPIKeyIPCandidates(c.Request.Context(), service.AdminUsageAttributionEmail, time.Minute, 50)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	var targetIP string
+	for _, candidate := range candidates {
+		if candidate.APIKeyID == req.APIKeyID {
+			targetIP = strings.TrimSpace(candidate.IPAddress)
+			break
+		}
+	}
+	if targetIP == "" {
+		response.NotFound(c, "Recent non-admin GPT API key candidate not found")
+		return
+	}
+	if h.usageIPAttribution == nil {
+		response.InternalError(c, "Usage IP attribution is unavailable")
+		return
+	}
+	if err := h.usageIPAttribution.CreateLease(c.Request.Context(), req.APIKeyID, sourceIP, targetIP); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, ccSwitchIPAttributionLeaseResponse{
+		APIKeyID:  req.APIKeyID,
+		IPAddress: targetIP,
+		ExpiresIn: int(service.CCSwitchIPAttributionLeaseTTL / time.Second),
+	})
 }
 
 // Stats handles getting usage statistics with filters

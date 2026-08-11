@@ -51,6 +51,8 @@ type OpsAlertEvent struct {
 	ThresholdValue *float64 `json:"threshold_value,omitempty"`
 
 	Dimensions map[string]any `json:"dimensions,omitempty"`
+	// DedupeKey 仅用于内部冷却去重，不包含未脱敏上游响应。
+	DedupeKey string `json:"dedupe_key,omitempty"`
 
 	FiredAt    time.Time  `json:"fired_at"`
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
@@ -61,18 +63,29 @@ type OpsAlertEvent struct {
 
 // OpsAlertAccountDetail 是账号请求告警的非敏感账号快照，用于邮件和事件详情定位。
 type OpsAlertAccountDetail struct {
-	ID           int64     `json:"id"`
-	AlertEventID int64     `json:"alert_event_id"`
-	AccountID    int64     `json:"account_id"`
-	AccountName  string    `json:"account_name"`
-	Platform     string    `json:"platform"`
-	GroupID      *int64    `json:"group_id,omitempty"`
-	GroupName    string    `json:"group_name"`
-	Diagnosis    string    `json:"diagnosis"`
-	ErrorPhase   string    `json:"error_phase"`
-	StatusCode   int       `json:"status_code"`
-	OccurredAt   time.Time `json:"occurred_at"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	AlertEventID    int64     `json:"alert_event_id"`
+	AccountID       int64     `json:"account_id"`
+	AccountName     string    `json:"account_name"`
+	Platform        string    `json:"platform"`
+	GroupID         *int64    `json:"group_id,omitempty"`
+	GroupName       string    `json:"group_name"`
+	Diagnosis       string    `json:"diagnosis"`
+	ErrorPhase      string    `json:"error_phase"`
+	StatusCode      int       `json:"status_code"`
+	OccurredAt      time.Time `json:"occurred_at"`
+	ErrorLogID      int64     `json:"error_log_id,omitempty"`
+	UserID          *int64    `json:"user_id,omitempty"`
+	UserEmail       string    `json:"user_email"`
+	APIKeyID        *int64    `json:"api_key_id,omitempty"`
+	APIKeyName      string    `json:"api_key_name"`
+	RequestID       string    `json:"request_id"`
+	ClientRequestID string    `json:"client_request_id"`
+	ErrorReason     string    `json:"error_reason"`
+	ErrorMessage    string    `json:"error_message"`
+	RequestedModel  string    `json:"requested_model"`
+	UpstreamModel   string    `json:"upstream_model"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type OpsAlertSilence struct {

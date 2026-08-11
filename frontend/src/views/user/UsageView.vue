@@ -178,6 +178,7 @@
           :server-side-sort="true"
           :show-account-billing="false"
           :show-upstream-endpoint="false"
+          :first-token-good-through-ms="10_000"
           default-sort-key="created_at"
           default-sort-order="desc"
           @sort="handleSort"

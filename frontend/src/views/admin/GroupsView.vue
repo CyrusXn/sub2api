@@ -4520,7 +4520,7 @@ const allColumns = computed<Column[]>(() => [
   {
     key: "admin_usage_multiplier",
     label: t("admin.groups.columns.adminUsageMultiplier"),
-    sortable: false,
+    sortable: true,
   },
   {
     key: "is_exclusive",

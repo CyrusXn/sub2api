@@ -1104,7 +1104,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		ChannelID:             optionalInt64Ptr(input.ChannelID),
 		ModelMappingChain:     optionalTrimmedStringPtr(input.ModelMappingChain),
 		UserAgent:             optionalTrimmedStringPtr(input.UserAgent),
-		IPAddress:             optionalTrimmedStringPtr(input.IPAddress),
+		IPAddress:             optionalTrimmedStringPtr(ResolveUsageLogIPAddress(ctx, input.IPAddress, apiKey, user, s.usageIPAttribution)),
 		SessionID:             optionalTrimmedStringPtr(input.SessionID),
 		GroupID:               apiKey.GroupID,
 		SubscriptionID:        optionalSubscriptionID(subscription),

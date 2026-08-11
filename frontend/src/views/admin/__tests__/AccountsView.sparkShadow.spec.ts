@@ -146,11 +146,11 @@ describe('admin AccountsView — 外审 F2:spark 影子创建接线', () => {
     vi.unstubAllGlobals()
   })
 
-  it('行内 duplicate 按钮一键复制账号并刷新列表', async () => {
+  it('更多菜单的 duplicate 事件复制账号并刷新列表', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    await wrapper.get('[data-test="account-action-duplicate"]').trigger('click')
+    wrapper.findComponent(AccountActionMenu).vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
     await flushPromises()
 
     expect(duplicateAccount).toHaveBeenCalledTimes(1)
@@ -160,15 +160,15 @@ describe('admin AccountsView — 外审 F2:spark 影子创建接线', () => {
     wrapper.unmount()
   })
 
-  it('同一账号复制请求未完成时忽略重复点击', async () => {
+  it('更多菜单重复触发时忽略未完成账号的复制请求', async () => {
     let resolveDuplicate!: (account: { id: number; name: string }) => void
     duplicateAccount.mockImplementationOnce(() => new Promise(resolve => { resolveDuplicate = resolve }))
     const wrapper = mountView()
     await flushPromises()
 
-    const duplicateButton = wrapper.get('[data-test="account-action-duplicate"]')
-    await duplicateButton.trigger('click')
-    await duplicateButton.trigger('click')
+    const menu = wrapper.findComponent(AccountActionMenu)
+    menu.vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
+    menu.vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
     await flushPromises()
 
     expect(duplicateAccount).toHaveBeenCalledTimes(1)
@@ -177,13 +177,13 @@ describe('admin AccountsView — 外审 F2:spark 影子创建接线', () => {
     wrapper.unmount()
   })
 
-  it('复制失败时显示后端错误', async () => {
+  it('更多菜单复制失败时显示后端错误', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     duplicateAccount.mockRejectedValueOnce(new Error('duplicate failed'))
     const wrapper = mountView()
     await flushPromises()
 
-    await wrapper.get('[data-test="account-action-duplicate"]').trigger('click')
+    wrapper.findComponent(AccountActionMenu).vm.$emit('duplicate', { id: 42, name: 'parent-acc' })
     await flushPromises()
 
     expect(showError).toHaveBeenCalledWith('duplicate failed')

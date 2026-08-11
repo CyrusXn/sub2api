@@ -66,6 +66,7 @@ type UsageLogRepository interface {
 
 	// Admin usage listing/stats
 	ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]UsageLog, *pagination.PaginationResult, error)
+	ListRecentGPTAPIKeyIPCandidates(ctx context.Context, since time.Time, excludeEmail string, limit int) ([]RecentGPTAPIKeyIPCandidate, error)
 	GetGlobalStats(ctx context.Context, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetStatsWithFilters(ctx context.Context, filters usagestats.UsageLogFilters) (*usagestats.UsageStats, error)
 
