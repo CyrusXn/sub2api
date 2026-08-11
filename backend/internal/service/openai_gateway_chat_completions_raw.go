@@ -217,7 +217,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if clientStream {
 		result, forwardErr = s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))
 	} else {
-		result, forwardErr = s.bufferRawChatCompletions(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		result, forwardErr = s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
 	if result != nil {
 		addOpenAIUsage(&result.Usage, bridgeUsage)
@@ -421,6 +421,7 @@ func extractCCStreamUsage(payload string) *OpenAIUsage {
 func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
@@ -448,6 +449,11 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		usage = parsedUsage
 	}
 	respBody = sanitizeOpenAIResponseJSON(respBody, originalModel, upstreamModel)
+	responseModel := gjson.GetBytes(respBody, "model").String()
+	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) {
+		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
+		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
+	}
 
 	copySanitizedOpenAIResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
