@@ -24,6 +24,7 @@ vi.mock('@/api/admin', () => ({
       listWithEtag,
       getBatchTodayStats,
       getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }),
+      probeUpstreamBillingBatch: vi.fn().mockResolvedValue([]),
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
@@ -189,6 +190,11 @@ describe('admin AccountsView usage windows hint', () => {
     expect(wrapper.findAll('[data-test="usage-windows-hint"]').some(node =>
       node.text() === 'admin.accounts.upstreamBilling.trustWarning'
     )).toBe(true)
+    const label = header.find('[data-test="upstream-billing-label"]')
+    expect(label.exists()).toBe(true)
+    expect(label.classes()).toContain('truncate')
+    expect(label.classes()).toContain('whitespace-nowrap')
+    expect(label.attributes('title')).toBe('admin.accounts.columns.upstreamBillingRate')
     const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{ key: string; sortable: boolean }>
     expect(columns.find(column => column.key === 'upstream_billing_rate')?.sortable).toBe(true)
   })

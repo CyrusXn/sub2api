@@ -116,7 +116,6 @@ const usageLog = {
   image_count: 0,
   image_size: null,
   first_token_ms: 12,
-  display_first_token_ms: 999,
   duration_ms: 345,
   created_at: '2026-03-08T00:00:00Z',
   model: 'gpt-5.4',

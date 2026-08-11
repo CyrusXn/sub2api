@@ -22,6 +22,7 @@ vi.mock('@/stores/app', () => ({ useAppStore: () => appStoreMocks }))
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import type { AdminUsageLog } from '@/types'
 
 import UsageTable from '../UsageTable.vue'
 
@@ -461,8 +462,8 @@ describe('admin UsageTable tooltip', () => {
   })
 })
 
-describe('admin UsageTable first-token display value', () => {
-  it('keeps the real first-token value for records before the cutoff', () => {
+describe('admin UsageTable real first-token value', () => {
+  it('uses the real first-token value for historical records', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [
@@ -471,7 +472,6 @@ describe('admin UsageTable first-token display value', () => {
             request_id: 'req-user-historical-latency',
             created_at: '2026-07-29T23:59:59.999+08:00',
             first_token_ms: 45_000,
-            display_first_token_ms: 999,
             duration_ms: 12_345,
           },
         ],
@@ -493,7 +493,7 @@ describe('admin UsageTable first-token display value', () => {
     expect(wrapper.text()).not.toContain('999ms')
   })
 
-  it('uses the derived first-token value for text and health color while keeping real duration', () => {
+  it('ignores the legacy derived value and uses the real first-token value', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [
@@ -503,7 +503,7 @@ describe('admin UsageTable first-token display value', () => {
             first_token_ms: 45_000,
             display_first_token_ms: 999,
             duration_ms: 12_345,
-          },
+          } as unknown as AdminUsageLog,
         ],
         loading: false,
         columns: [{ key: 'latency', label: 'Latency' }],
@@ -519,12 +519,12 @@ describe('admin UsageTable first-token display value', () => {
     })
 
     expect(wrapper.text()).toContain('First')
-    expect(wrapper.text()).toContain('999ms')
+    expect(wrapper.text()).toContain('45.00s')
     expect(wrapper.text()).toContain('12.35s')
-    expect(wrapper.text()).not.toContain('45.00s')
+    expect(wrapper.text()).not.toContain('999ms')
 
-    const firstTokenValue = wrapper.findAll('span').find((node) => node.text() === '999ms')
-    expect(firstTokenValue?.classes()).toContain('text-emerald-600')
+    const firstTokenValue = wrapper.findAll('span').find((node) => node.text() === '45.00s')
+    expect(firstTokenValue?.classes()).toContain('text-orange-600')
   })
 
   it('keeps exactly ten seconds green only when the user threshold is supplied', () => {
@@ -532,7 +532,6 @@ describe('admin UsageTable first-token display value', () => {
       ...baseImageRow,
       request_id: 'req-ten-seconds',
       first_token_ms: 10_000,
-      display_first_token_ms: 10_000,
       duration_ms: 12_345,
     }
     const mountOptions = {
@@ -563,22 +562,20 @@ describe('admin UsageTable first-token display value', () => {
     expect(userValue?.classes()).toContain('text-emerald-600')
   })
 
-  it('formats derived seconds with exactly two decimal places and falls back to the real value', () => {
+  it('formats real seconds with exactly two decimal places', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [
           {
             ...baseImageRow,
-            request_id: 'req-user-derived-one-second',
-            first_token_ms: 45_000,
-            display_first_token_ms: 1_000,
+            request_id: 'req-user-real-one-second',
+            first_token_ms: 1_000,
             duration_ms: 1_500,
           },
           {
             ...baseImageRow,
-            request_id: 'req-user-derived-decimal-seconds',
-            first_token_ms: 45_000,
-            display_first_token_ms: 4_850,
+            request_id: 'req-user-real-decimal-seconds',
+            first_token_ms: 4_850,
             duration_ms: 5_000,
           },
           {

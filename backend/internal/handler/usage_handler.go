@@ -241,11 +241,17 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
+	out := mapUsageLogsForUserList(records)
+	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+// mapUsageLogsForUserList 仅返回真实用量指标，禁止为用户端生成首字延迟派生值。
+func mapUsageLogsForUserList(records []service.UsageLog) []dto.UsageLog {
 	out := make([]dto.UsageLog, 0, len(records))
 	for i := range records {
-		out = append(out, *dto.UsageLogFromServiceForUserList(&records[i]))
+		out = append(out, *dto.UsageLogFromService(&records[i]))
 	}
-	response.Paginated(c, out, result.Total, page, pageSize)
+	return out
 }
 
 // ListErrors handles listing the current user's failed requests (redacted).

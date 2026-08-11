@@ -234,19 +234,20 @@
           </div>
         </template>
 
+        <!-- 首字延迟只使用真实 first_token_ms，不再生成或读取随机派生值。 -->
         <!-- 合并首字/总耗时的健康度列：左侧色条上端随首字档、下端随总耗时档，中段(40%-60%)短渐变过渡，便于纵向扫视整体健康状况 -->
         <template #cell-latency="{ row }">
           <div class="flex items-stretch gap-2">
             <span
               class="w-1 shrink-0 rounded-full"
-              :class="getDisplayFirstTokenMs(row) != null
-                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[getDisplayFirstTokenSeverity(row)], LATENCY_BAR_TO_CLASSES[durationSeverity(row.duration_ms ?? 0)]]
+              :class="row.first_token_ms != null
+                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[getFirstTokenSeverity(row)], LATENCY_BAR_TO_CLASSES[durationSeverity(row.duration_ms ?? 0)]]
                 : LATENCY_BAR_CLASSES[durationSeverity(row.duration_ms ?? 0)]"
               aria-hidden="true"
             ></span>
             <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
-              <span v-if="getDisplayFirstTokenMs(row) != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[getDisplayFirstTokenSeverity(row)]">{{ formatDuration(getDisplayFirstTokenMs(row)) }}</span>
+              <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[getFirstTokenSeverity(row)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
@@ -714,19 +715,8 @@ const formatUserAgent = (ua: string): string => {
   return ua
 }
 
-// 北京时间 2026-07-30 00:00:00 前的历史记录始终展示真实首字。
-const USER_FIRST_TOKEN_DISPLAY_CUTOFF_MS = Date.parse('2026-07-30T00:00:00+08:00')
-
-const getDisplayFirstTokenMs = (row: AdminUsageLog): number | null => {
-  const createdAtMs = Date.parse(row.created_at)
-  if (!Number.isFinite(createdAtMs) || createdAtMs < USER_FIRST_TOKEN_DISPLAY_CUTOFF_MS) {
-    return row.first_token_ms ?? null
-  }
-  return row.display_first_token_ms ?? row.first_token_ms ?? null
-}
-
-const getDisplayFirstTokenSeverity = (row: AdminUsageLog) => {
-  const firstTokenMs = getDisplayFirstTokenMs(row)
+const getFirstTokenSeverity = (row: AdminUsageLog) => {
+  const firstTokenMs = row.first_token_ms
   if (firstTokenMs != null && props.firstTokenGoodThroughMs != null && firstTokenMs <= props.firstTokenGoodThroughMs) {
     return 'good'
   }

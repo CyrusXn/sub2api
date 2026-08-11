@@ -363,9 +363,13 @@
             </span>
           </template>
           <template #header-upstream_billing_rate="{ column }">
-            <div class="flex items-center gap-1">
-              <span>{{ column.label }}</span>
-              <span @click.stop>
+            <div class="flex min-w-0 flex-1 items-center gap-1 whitespace-nowrap">
+              <span
+                class="min-w-0 flex-1 truncate whitespace-nowrap"
+                :title="column.label"
+                data-test="upstream-billing-label"
+              >{{ column.label }}</span>
+              <span class="shrink-0" @click.stop>
                 <HelpTooltip :content="t('admin.accounts.upstreamBilling.trustWarning')" width-class="w-80" />
               </span>
             </div>
