@@ -139,11 +139,34 @@ func TestImportLegacyBalanceCenterSQLiteRestoresManualRowsFromLatestReconcileInp
 func TestLegacyAutomaticRecordsDeduplicateRepeatedOrdersAcrossReconciliations(t *testing.T) {
 	db := newLegacyBalanceSQLite(t, true)
 	seedLegacyBalanceSQLite(t, db, legacyManualBaselineRowsJSON())
+	const firstCreatedAt = "2026-08-12T09:00:00Z"
+	const firstOccurredAt = "2026-08-11T08:00:00Z"
+	if _, err := db.Exec(`UPDATE reconcile_runs SET created_at=? WHERE id='run-1'`, firstCreatedAt); err != nil {
+		t.Fatalf("更新首次对账时间失败: %v", err)
+	}
 	var original string
 	if err := db.QueryRow(`SELECT input_json FROM reconcile_runs WHERE id='run-1'`).Scan(&original); err != nil {
 		t.Fatalf("read reconcile input: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO reconcile_runs (id, input_json, result_json, created_at) VALUES ('run-2', ?, '{"status":"same"}', '2026-08-12T10:00:00Z')`, original); err != nil {
+	var firstInput map[string]any
+	if err := json.Unmarshal([]byte(original), &firstInput); err != nil {
+		t.Fatalf("解析首次对账输入失败: %v", err)
+	}
+	records := firstInput["automaticRecords"].([]any)
+	records[0].(map[string]any)["occurredAt"] = firstOccurredAt
+	firstBytes, err := json.Marshal(firstInput)
+	if err != nil {
+		t.Fatalf("编码首次对账输入失败: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE reconcile_runs SET input_json=? WHERE id='run-1'`, string(firstBytes)); err != nil {
+		t.Fatalf("更新首次自动记录失败: %v", err)
+	}
+	delete(records[0].(map[string]any), "occurredAt")
+	secondBytes, err := json.Marshal(firstInput)
+	if err != nil {
+		t.Fatalf("编码第二次对账输入失败: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO reconcile_runs (id, input_json, result_json, created_at) VALUES ('run-2', ?, '{"status":"same"}', '2026-08-12T10:00:00Z')`, string(secondBytes)); err != nil {
 		t.Fatalf("insert repeated reconcile: %v", err)
 	}
 
@@ -153,6 +176,55 @@ func TestLegacyAutomaticRecordsDeduplicateRepeatedOrdersAcrossReconciliations(t 
 	}
 	if len(data.AutomaticRecords) != 1 {
 		t.Fatalf("automatic records = %d, want 1 unique order", len(data.AutomaticRecords))
+	}
+	want, err := parseLegacyTime(firstCreatedAt)
+	if err != nil {
+		t.Fatalf("解析首次对账时间失败: %v", err)
+	}
+	if !data.AutomaticRecords[0].ReconciliationCreatedAt.Equal(want) {
+		t.Fatalf("重复订单回退时间 = %v, want first seen %v", data.AutomaticRecords[0].ReconciliationCreatedAt, want)
+	}
+	gotOccurredAt, err := legacyAutomaticOccurredAt(data.AutomaticRecords[0])
+	if err != nil {
+		t.Fatalf("选择重复订单时间失败: %v", err)
+	}
+	wantOccurredAt, err := parseLegacyTime(firstOccurredAt)
+	if err != nil {
+		t.Fatalf("解析首次实际时间失败: %v", err)
+	}
+	if !gotOccurredAt.Equal(wantOccurredAt) {
+		t.Fatalf("重复订单实际时间 = %v, want first valid %v", gotOccurredAt, wantOccurredAt)
+	}
+}
+
+func TestLegacyAutomaticRecordWithoutOccurredAtUsesReconciliationCreatedAt(t *testing.T) {
+	db := newLegacyBalanceSQLite(t, true)
+	seedLegacyBalanceSQLite(t, db, legacyManualBaselineRowsJSON())
+	const createdAt = "2026-08-12T10:20:30Z"
+	inputJSON := `{"manualRows":[],"automaticRecords":[{"source":"legacy","id":"stable-time","siteLabel":"HBY","amount":12.34}]}`
+	if _, err := db.Exec(`UPDATE reconcile_runs SET input_json=?, created_at=? WHERE id='run-1'`, inputJSON, createdAt); err != nil {
+		t.Fatalf("更新旧对账记录失败: %v", err)
+	}
+
+	data, err := loadLegacyBalanceCenterData(context.Background(), db)
+	if err != nil {
+		t.Fatalf("读取旧数据失败: %v", err)
+	}
+	if len(data.AutomaticRecords) != 1 {
+		t.Fatalf("automatic records = %d, want 1", len(data.AutomaticRecords))
+	}
+	want, err := parseLegacyTime(createdAt)
+	if err != nil {
+		t.Fatalf("解析测试时间失败: %v", err)
+	}
+	if !data.AutomaticRecords[0].ReconciliationCreatedAt.Equal(want) {
+		t.Fatalf("回退时间 = %v, want %v", data.AutomaticRecords[0].ReconciliationCreatedAt, want)
+	}
+}
+
+func TestLegacyAutomaticOccurredAtRejectsMissingStableTime(t *testing.T) {
+	if _, err := legacyAutomaticOccurredAt(legacyAutomaticRecord{OccurredAt: "invalid"}); err == nil {
+		t.Fatal("实际时间和对账时间均不可用时必须拒绝导入")
 	}
 }
 

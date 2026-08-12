@@ -135,14 +135,15 @@ type legacyManualRechargeEvent struct {
 }
 
 type legacyAutomaticRecord struct {
-	Source     string  `json:"source"`
-	ID         string  `json:"id"`
-	SiteLabel  string  `json:"siteLabel"`
-	Amount     float64 `json:"amount"`
-	OrderNo    string  `json:"orderNo"`
-	OccurredAt string  `json:"occurredAt"`
-	Note       string  `json:"note"`
-	RunID      string
+	Source                  string  `json:"source"`
+	ID                      string  `json:"id"`
+	SiteLabel               string  `json:"siteLabel"`
+	Amount                  float64 `json:"amount"`
+	OrderNo                 string  `json:"orderNo"`
+	OccurredAt              string  `json:"occurredAt"`
+	Note                    string  `json:"note"`
+	RunID                   string
+	ReconciliationCreatedAt time.Time
 }
 
 type legacyLiandongOrder struct {
@@ -575,8 +576,18 @@ func loadLegacyReconciliations(ctx context.Context, db *sql.DB) ([]legacyReconci
 		applyLegacyReconciliationResult(&item)
 		reconciliations = append(reconciliations, item)
 		for _, record := range legacyAutomaticRecordsFromInput(item.ID, item.InputJSON) {
+			// 旧自动记录可能没有独立时间，保留所属对账时间作为稳定回退值。
+			record.ReconciliationCreatedAt = item.CreatedAt
 			key := legacyAutomaticRecordKey(record)
 			if index, exists := automaticIndex[key]; exists {
+				// 重复订单可以更新元数据，但缺失独立时间时必须沿用首次出现时间。
+				previous := automatic[index]
+				record.ReconciliationCreatedAt = previous.ReconciliationCreatedAt
+				if _, err := parseLegacyTime(record.OccurredAt); err != nil {
+					if _, previousErr := parseLegacyTime(previous.OccurredAt); previousErr == nil {
+						record.OccurredAt = previous.OccurredAt
+					}
+				}
 				automatic[index] = record
 				continue
 			}
@@ -952,12 +963,12 @@ VALUES ($1,$2,$3,$4,'CNY',$5,$6) ON CONFLICT (source, source_key) DO NOTHING RET
 
 func insertLegacyAutomaticRecord(ctx context.Context, tx *sql.Tx, siteID *int64, record legacyAutomaticRecord) (bool, error) {
 	sourceKey := legacyAutomaticRecordKey(record)
-	occurredAt := time.Now().UTC()
-	if t, err := parseLegacyTime(record.OccurredAt); err == nil {
-		occurredAt = t
+	occurredAt, err := legacyAutomaticOccurredAt(record)
+	if err != nil {
+		return false, err
 	}
 	metadata, _ := json.Marshal(map[string]any{"site_label": record.SiteLabel, "order_no": record.OrderNo, "note": record.Note})
-	err := tx.QueryRowContext(ctx, `INSERT INTO balance_center_automatic_records (source, source_key, site_id, amount, currency, occurred_at, record_type, metadata)
+	err = tx.QueryRowContext(ctx, `INSERT INTO balance_center_automatic_records (source, source_key, site_id, amount, currency, occurred_at, record_type, metadata)
 VALUES ($1,$2,$3,$4,'CNY',$5,$6,$7::jsonb) ON CONFLICT (source, source_key) DO NOTHING RETURNING id`,
 		"legacy_automatic", sourceKey, siteID, record.Amount, occurredAt, record.Source, string(metadata)).Scan(new(int64))
 	if err == nil {
@@ -967,6 +978,16 @@ VALUES ($1,$2,$3,$4,'CNY',$5,$6,$7::jsonb) ON CONFLICT (source, source_key) DO N
 		return false, nil
 	}
 	return false, err
+}
+
+func legacyAutomaticOccurredAt(record legacyAutomaticRecord) (time.Time, error) {
+	if occurredAt, err := parseLegacyTime(record.OccurredAt); err == nil {
+		return occurredAt, nil
+	}
+	if !record.ReconciliationCreatedAt.IsZero() {
+		return record.ReconciliationCreatedAt, nil
+	}
+	return time.Time{}, errors.New("旧自动记录缺少稳定发生时间")
 }
 
 func legacyAutomaticRecordKey(record legacyAutomaticRecord) string {

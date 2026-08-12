@@ -59,14 +59,7 @@ func parseImportConfig(args []string) (importConfig, error) {
 		EncryptionKeyHex: strings.TrimSpace(os.Getenv("TOTP_ENCRYPTION_KEY")),
 	}
 	fs := flag.NewFlagSet("balance-center-import", flag.ContinueOnError)
-	fs.StringVar(&cfg.SQLitePath, "sqlite", cfg.SQLitePath, "旧 sub2-web SQLite 路径，例如 /opt/sub2-web/data/sub2-web.sqlite")
-	fs.StringVar(&cfg.TargetDSN, "target-dsn", cfg.TargetDSN, "目标 PostgreSQL DSN；也可用 BALANCE_CENTER_TARGET_DSN")
-	fs.StringVar(&cfg.OldMasterKey, "old-master-key", cfg.OldMasterKey, "旧 sub2-web master key；仅用于内存匹配和可选网页登录密码迁移")
-	fs.StringVar(&cfg.EncryptionKeyHex, "encryption-key-hex", cfg.EncryptionKeyHex, "新系统 TOTP/站点凭据 AES-256 hex key；仅迁移网页登录密码时需要")
-	fs.StringVar(&cfg.ManifestPath, "manifest", "", "dry-run 生成的不可变备份清单；正式导入必填")
-	fs.StringVar(&cfg.WriteManifestPath, "write-manifest", "", "dry-run 成功后写出当前备份清单")
-	fs.BoolVar(&cfg.Execute, "execute", false, "正式写入；默认 false 表示 dry-run 并回滚事务")
-	fs.BoolVar(&cfg.ConfirmImport, "confirm-import", false, "配合 --execute 使用，确认本次会写入目标库")
+	registerImportFlags(fs, &cfg)
 	if err := fs.Parse(args); err != nil {
 		return importConfig{}, err
 	}
@@ -92,6 +85,17 @@ func parseImportConfig(args []string) (importConfig, error) {
 		return importConfig{}, errors.New("--write-manifest 仅允许在 dry-run 使用")
 	}
 	return cfg, nil
+}
+
+func registerImportFlags(fs *flag.FlagSet, cfg *importConfig) {
+	fs.StringVar(&cfg.SQLitePath, "sqlite", cfg.SQLitePath, "旧 sub2-web SQLite 冻结备份路径，例如 /tmp/sub2-web-frozen.sqlite")
+	fs.StringVar(&cfg.TargetDSN, "target-dsn", cfg.TargetDSN, "目标 PostgreSQL DSN；也可用 BALANCE_CENTER_TARGET_DSN")
+	fs.StringVar(&cfg.OldMasterKey, "old-master-key", cfg.OldMasterKey, "旧 sub2-web master key；仅用于内存匹配和可选网页登录密码迁移")
+	fs.StringVar(&cfg.EncryptionKeyHex, "encryption-key-hex", cfg.EncryptionKeyHex, "新系统 TOTP/站点凭据 AES-256 hex key；仅迁移网页登录密码时需要")
+	fs.StringVar(&cfg.ManifestPath, "manifest", "", "dry-run 生成的不可变备份清单；正式导入必填")
+	fs.StringVar(&cfg.WriteManifestPath, "write-manifest", "", "dry-run 成功后写出当前备份清单")
+	fs.BoolVar(&cfg.Execute, "execute", false, "正式写入；默认 false 表示 dry-run 并回滚事务")
+	fs.BoolVar(&cfg.ConfirmImport, "confirm-import", false, "配合 --execute 使用，确认本次会写入目标库")
 }
 
 func runImport(ctx context.Context, cfg importConfig) (*service.BalanceCenterLegacyImportReport, error) {
