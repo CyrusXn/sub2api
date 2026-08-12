@@ -18,15 +18,36 @@ import (
 )
 
 const (
-	BalanceCenterLegacySource         = "legacy_sqlite"
-	BalanceCenterLegacyExpectedManual = 2262.37
+	BalanceCenterLegacySource          = "legacy_sqlite"
+	BalanceCenterLegacyManifestVersion = 1
 )
 
 type BalanceCenterLegacyImportOptions struct {
-	Execute             bool
-	OldMasterKey        string
-	PasswordEncryptor   SecretEncryptor
-	ExpectedManualTotal float64
+	Execute           bool
+	OldMasterKey      string
+	PasswordEncryptor SecretEncryptor
+	SourceSHA256      string
+	ExpectedManifest  *BalanceCenterLegacyImportManifest
+	VerifySource      func() error
+}
+
+// BalanceCenterLegacyImportManifest 锁定一次不可变旧库备份的全量源数据基线。
+type BalanceCenterLegacyImportManifest struct {
+	Version                 int     `json:"version"`
+	SourceSHA256            string  `json:"source_sha256"`
+	Sites                   int     `json:"sites"`
+	LegacyKeys              int     `json:"legacy_keys"`
+	EnabledKeys             int     `json:"enabled_keys"`
+	Snapshots               int     `json:"snapshots"`
+	ManualRows              int     `json:"manual_rows"`
+	ManualTotal             float64 `json:"manual_total"`
+	ManualRechargeEvents    int     `json:"manual_recharge_events"`
+	AutomaticRecords        int     `json:"automatic_records"`
+	LiandongOrders          int     `json:"liandong_orders"`
+	Reconciliations         int     `json:"reconciliations"`
+	MatchedKeys             int     `json:"matched_keys"`
+	ImportedSiteCredentials int     `json:"imported_site_credentials"`
+	SkippedSiteCredentials  int     `json:"skipped_site_credentials"`
 }
 
 type BalanceCenterLegacyImportReport struct {
@@ -149,35 +170,175 @@ func ImportLegacyBalanceCenterSQLite(ctx context.Context, sqliteDB *sql.DB, targ
 	if err != nil {
 		return nil, err
 	}
-	expected := options.ExpectedManualTotal
-	if expected == 0 {
-		expected = BalanceCenterLegacyExpectedManual
+	if options.VerifySource != nil {
+		if err := options.VerifySource(); err != nil {
+			return nil, err
+		}
 	}
 	report := summarizeLegacyBalanceCenterData(data)
 	report.DryRun = !options.Execute
-	if err := validateLegacyManualTotal(report.ManualTotal, expected); err != nil {
-		return report, err
-	}
 	if targetDB == nil {
+		if err := ValidateLegacyImportManifest(report, options.SourceSHA256, options.ExpectedManifest); err != nil {
+			return report, err
+		}
 		return report, nil
 	}
-	tx, err := targetDB.BeginTx(ctx, nil)
+	tx, err := targetDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: !options.Execute})
 	if err != nil {
 		return nil, fmt.Errorf("开始余额中心旧库导入事务失败: %w", err)
 	}
-	writeErr := writeLegacyBalanceCenterData(ctx, tx, data, report, options)
+	accounts, err := loadLegacyImportAccountFingerprints(ctx, tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return report, fmt.Errorf("读取目标账号匹配指纹失败: %w", err)
+	}
+	report.MatchedKeys = countLegacyMatchedKeys(data, accounts, options.OldMasterKey)
+	if err := previewLegacySiteCredentials(ctx, tx, data, accounts, options, report); err != nil {
+		_ = tx.Rollback()
+		return report, err
+	}
+	if err := ValidateLegacyImportManifest(report, options.SourceSHA256, options.ExpectedManifest); err != nil {
+		_ = tx.Rollback()
+		return report, err
+	}
+	if !options.Execute {
+		_ = tx.Rollback()
+		return report, nil
+	}
+	// 正式写入会按同一事务快照重新累计实际凭据结果。
+	report.ImportedSiteCredentials = 0
+	report.SkippedSiteCredentials = 0
+	writeErr := writeLegacyBalanceCenterData(ctx, tx, data, report, options, accounts)
 	if writeErr != nil {
 		_ = tx.Rollback()
 		return report, writeErr
 	}
-	if options.Execute {
-		if err := tx.Commit(); err != nil {
-			return report, fmt.Errorf("提交余额中心旧库导入失败: %w", err)
-		}
-		return report, nil
+	if err := tx.Commit(); err != nil {
+		return report, fmt.Errorf("提交余额中心旧库导入失败: %w", err)
 	}
-	_ = tx.Rollback()
 	return report, nil
+}
+
+func countLegacyMatchedKeys(data *legacyBalanceCenterData, accounts []targetAccountFingerprint, oldMasterKey string) int {
+	if data == nil {
+		return 0
+	}
+	sites := make(map[string]legacyBalanceSite, len(data.Sites))
+	for _, site := range data.Sites {
+		sites[site.ID] = site
+	}
+	matched := 0
+	for _, key := range data.Keys {
+		if matchLegacyKeyAccount(sites[key.SiteID].Domain, key.SecretCipher, oldMasterKey, accounts) != nil {
+			matched++
+		}
+	}
+	return matched
+}
+
+func previewLegacySiteCredentials(ctx context.Context, tx *sql.Tx, data *legacyBalanceCenterData, accounts []targetAccountFingerprint, options BalanceCenterLegacyImportOptions, report *BalanceCenterLegacyImportReport) error {
+	if data == nil || options.PasswordEncryptor == nil || options.OldMasterKey == "" {
+		return nil
+	}
+	for _, site := range data.Sites {
+		if site.LoginUsername == "" {
+			continue
+		}
+		matched := false
+		for _, key := range data.Keys {
+			if key.SiteID == site.ID && matchLegacyKeyAccount(site.Domain, key.SecretCipher, options.OldMasterKey, accounts) != nil {
+				matched = true
+				break
+			}
+		}
+		cipherText := data.Settings["siteLoginPassword."+site.ID]
+		if !matched || cipherText == "" {
+			continue
+		}
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM upstream_site_credentials WHERE host=$1)`, site.Domain).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			report.SkippedSiteCredentials++
+			continue
+		}
+		if _, err := decryptLegacySub2WebSecret(cipherText, options.OldMasterKey); err != nil {
+			report.SkippedSiteCredentials++
+			continue
+		}
+		report.ImportedSiteCredentials++
+	}
+	return nil
+}
+
+func LegacyImportManifestFromReport(report *BalanceCenterLegacyImportReport, sourceSHA256 string) BalanceCenterLegacyImportManifest {
+	if report == nil {
+		return BalanceCenterLegacyImportManifest{Version: BalanceCenterLegacyManifestVersion, SourceSHA256: strings.ToLower(strings.TrimSpace(sourceSHA256))}
+	}
+	return BalanceCenterLegacyImportManifest{
+		Version:                 BalanceCenterLegacyManifestVersion,
+		SourceSHA256:            strings.ToLower(strings.TrimSpace(sourceSHA256)),
+		Sites:                   report.Sites,
+		LegacyKeys:              report.LegacyKeys,
+		EnabledKeys:             report.EnabledKeys,
+		Snapshots:               report.Snapshots,
+		ManualRows:              report.ManualRows,
+		ManualTotal:             roundLegacyMoney(report.ManualTotal),
+		ManualRechargeEvents:    report.ManualRechargeEvents,
+		AutomaticRecords:        report.AutomaticRecords,
+		LiandongOrders:          report.LiandongOrders,
+		Reconciliations:         report.Reconciliations,
+		MatchedKeys:             report.MatchedKeys,
+		ImportedSiteCredentials: report.ImportedSiteCredentials,
+		SkippedSiteCredentials:  report.SkippedSiteCredentials,
+	}
+}
+
+func ValidateLegacyImportManifest(report *BalanceCenterLegacyImportReport, sourceSHA256 string, expected *BalanceCenterLegacyImportManifest) error {
+	if expected == nil {
+		return nil
+	}
+	if expected.Version != BalanceCenterLegacyManifestVersion {
+		return fmt.Errorf("旧库导入清单版本不支持: got %d want %d", expected.Version, BalanceCenterLegacyManifestVersion)
+	}
+	actual := LegacyImportManifestFromReport(report, sourceSHA256)
+	expectedCopy := *expected
+	expectedCopy.SourceSHA256 = strings.ToLower(strings.TrimSpace(expectedCopy.SourceSHA256))
+	expectedCopy.ManualTotal = roundLegacyMoney(expectedCopy.ManualTotal)
+	for _, mismatch := range legacyImportManifestMismatches(actual, expectedCopy) {
+		return fmt.Errorf("旧库导入清单校验失败: %s", mismatch)
+	}
+	return nil
+}
+
+func legacyImportManifestMismatches(actual, expected BalanceCenterLegacyImportManifest) []string {
+	checks := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"source_sha256", actual.SourceSHA256, expected.SourceSHA256},
+		{"sites", actual.Sites, expected.Sites},
+		{"legacy_keys", actual.LegacyKeys, expected.LegacyKeys},
+		{"enabled_keys", actual.EnabledKeys, expected.EnabledKeys},
+		{"snapshots", actual.Snapshots, expected.Snapshots},
+		{"manual_rows", actual.ManualRows, expected.ManualRows},
+		{"manual_total", actual.ManualTotal, expected.ManualTotal},
+		{"manual_recharge_events", actual.ManualRechargeEvents, expected.ManualRechargeEvents},
+		{"automatic_records", actual.AutomaticRecords, expected.AutomaticRecords},
+		{"liandong_orders", actual.LiandongOrders, expected.LiandongOrders},
+		{"reconciliations", actual.Reconciliations, expected.Reconciliations},
+		{"matched_keys", actual.MatchedKeys, expected.MatchedKeys},
+		{"imported_site_credentials", actual.ImportedSiteCredentials, expected.ImportedSiteCredentials},
+		{"skipped_site_credentials", actual.SkippedSiteCredentials, expected.SkippedSiteCredentials},
+	}
+	for _, check := range checks {
+		if check.got != check.want {
+			return []string{fmt.Sprintf("%s got %v want %v", check.name, check.got, check.want)}
+		}
+	}
+	return nil
 }
 
 func summarizeLegacyBalanceCenterData(data *legacyBalanceCenterData) *BalanceCenterLegacyImportReport {
@@ -202,13 +363,6 @@ func summarizeLegacyBalanceCenterData(data *legacyBalanceCenterData) *BalanceCen
 	}
 	report.ManualTotal = roundLegacyMoney(report.ManualTotal)
 	return report
-}
-
-func validateLegacyManualTotal(total, expected float64) error {
-	if math.Abs(roundLegacyMoney(total)-roundLegacyMoney(expected)) > 0.001 {
-		return fmt.Errorf("手工基线总额校验失败: got %.2f want %.2f", total, expected)
-	}
-	return nil
 }
 
 func loadLegacyBalanceCenterData(ctx context.Context, db *sql.DB) (*legacyBalanceCenterData, error) {
@@ -534,8 +688,7 @@ func applyLegacyReconciliationResult(item *legacyReconciliation) {
 	}
 }
 
-func writeLegacyBalanceCenterData(ctx context.Context, tx *sql.Tx, data *legacyBalanceCenterData, report *BalanceCenterLegacyImportReport, options BalanceCenterLegacyImportOptions) error {
-	accounts, _ := loadLegacyImportAccountFingerprints(ctx, tx)
+func writeLegacyBalanceCenterData(ctx context.Context, tx *sql.Tx, data *legacyBalanceCenterData, report *BalanceCenterLegacyImportReport, options BalanceCenterLegacyImportOptions, accounts []targetAccountFingerprint) error {
 	siteIDs := map[string]int64{}
 	siteByLegacyID := map[string]legacyBalanceSite{}
 	for _, site := range data.Sites {
@@ -555,9 +708,6 @@ func writeLegacyBalanceCenterData(ctx context.Context, tx *sql.Tx, data *legacyB
 	for _, key := range data.Keys {
 		site := siteByLegacyID[key.SiteID]
 		accountID := matchLegacyKeyAccount(site.Domain, key.SecretCipher, options.OldMasterKey, accounts)
-		if accountID != nil {
-			report.MatchedKeys++
-		}
 		id, inserted, err := insertLegacyKey(ctx, tx, siteIDs[key.SiteID], accountID, key)
 		if err != nil {
 			return err
@@ -769,7 +919,7 @@ func upsertLegacyCurrentState(ctx context.Context, tx *sql.Tx, siteID, legacyKey
 	_, err := tx.ExecContext(ctx, `INSERT INTO balance_center_current_states (identity_key, site_id, account_id, legacy_key_id, snapshot_id, status, balance, converted_balance, rate_multiplier, conversion_scale, currency, reason, probed_at, source)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 ON CONFLICT (identity_key) DO UPDATE SET site_id=EXCLUDED.site_id, account_id=EXCLUDED.account_id, legacy_key_id=EXCLUDED.legacy_key_id, snapshot_id=EXCLUDED.snapshot_id, status=EXCLUDED.status, balance=EXCLUDED.balance, converted_balance=EXCLUDED.converted_balance, rate_multiplier=EXCLUDED.rate_multiplier, conversion_scale=EXCLUDED.conversion_scale, currency=EXCLUDED.currency, reason=EXCLUDED.reason, probed_at=EXCLUDED.probed_at, source=EXCLUDED.source, updated_at=NOW()
-WHERE balance_center_current_states.probed_at <= EXCLUDED.probed_at`,
+WHERE balance_center_current_states.probed_at < EXCLUDED.probed_at`,
 		identityKey, siteID, accountID, legacyKeyID, snapshotID, normalizeLegacySnapshotStatus(snapshot.Status), balance, converted, snapshot.RateMultiplier, site.PaymentScale, snapshot.Unit, legacySnapshotReason(snapshot), snapshot.FetchedAt, BalanceCenterLegacySource)
 	return err
 }

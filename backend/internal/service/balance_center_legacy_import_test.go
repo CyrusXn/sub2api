@@ -35,8 +35,8 @@ func TestImportLegacyBalanceCenterSQLiteDryRunSummarizesLegacyData(t *testing.T)
 	if report.ManualRows != 15 {
 		t.Fatalf("manual rows = %d, want 15", report.ManualRows)
 	}
-	if report.ManualTotal != BalanceCenterLegacyExpectedManual {
-		t.Fatalf("manual total = %.2f, want %.2f", report.ManualTotal, BalanceCenterLegacyExpectedManual)
+	if report.ManualTotal != 2262.37 {
+		t.Fatalf("manual total = %.2f, want 2262.37", report.ManualTotal)
 	}
 	if report.ManualRechargeEvents != 1 {
 		t.Fatalf("manual recharge events = %d, want 1", report.ManualRechargeEvents)
@@ -56,12 +56,47 @@ func TestImportLegacyBalanceCenterSQLiteRejectsWrongManualBaseline(t *testing.T)
 	db := newLegacyBalanceSQLite(t, true)
 	seedLegacyBalanceSQLite(t, db, `[{"id":"bad","label":"HBY","expression":"1"}]`)
 
-	report, err := ImportLegacyBalanceCenterSQLite(context.Background(), db, nil, BalanceCenterLegacyImportOptions{})
+	report, err := ImportLegacyBalanceCenterSQLite(context.Background(), db, nil, BalanceCenterLegacyImportOptions{
+		ExpectedManifest: &BalanceCenterLegacyImportManifest{ManualRows: 1, ManualTotal: 2},
+	})
 	if err == nil {
 		t.Fatal("expected wrong manual baseline to fail")
 	}
 	if report == nil || report.ManualTotal != 1 {
 		t.Fatalf("report should expose the parsed wrong total, got %#v", report)
+	}
+}
+
+func TestImportLegacyBalanceCenterSQLiteAcceptsCurrentManualBaselineWithoutHardcodedTotal(t *testing.T) {
+	db := newLegacyBalanceSQLite(t, true)
+	seedLegacyBalanceSQLite(t, db, `[{"id":"current","label":"新基线","expression":"3229.77"}]`)
+
+	report, err := ImportLegacyBalanceCenterSQLite(context.Background(), db, nil, BalanceCenterLegacyImportOptions{})
+	if err != nil {
+		t.Fatalf("current immutable backup should define its own baseline: %v", err)
+	}
+	if report.ManualRows != 1 || report.ManualTotal != 3229.77 {
+		t.Fatalf("unexpected current baseline: %#v", report)
+	}
+}
+
+func TestValidateLegacyImportManifestChecksAllSourceCountsAndHash(t *testing.T) {
+	report := &BalanceCenterLegacyImportReport{
+		Sites: 14, LegacyKeys: 36, EnabledKeys: 36, Snapshots: 139841,
+		ManualRows: 16, ManualTotal: 3229.77, ManualRechargeEvents: 15,
+		AutomaticRecords: 5, LiandongOrders: 0, Reconciliations: 25,
+	}
+	manifest := LegacyImportManifestFromReport(report, "sha256-value")
+	if err := ValidateLegacyImportManifest(report, "sha256-value", &manifest); err != nil {
+		t.Fatalf("matching manifest should pass: %v", err)
+	}
+	manifest.Snapshots++
+	if err := ValidateLegacyImportManifest(report, "sha256-value", &manifest); err == nil {
+		t.Fatal("snapshot count drift must fail")
+	}
+	manifest.Snapshots--
+	if err := ValidateLegacyImportManifest(report, "other-hash", &manifest); err == nil {
+		t.Fatal("SQLite hash drift must fail")
 	}
 }
 
@@ -96,8 +131,8 @@ func TestImportLegacyBalanceCenterSQLiteRestoresManualRowsFromLatestReconcileInp
 	if report.ManualRows != 15 {
 		t.Fatalf("manual rows = %d, want 15", report.ManualRows)
 	}
-	if report.ManualTotal != BalanceCenterLegacyExpectedManual {
-		t.Fatalf("manual total = %.2f, want %.2f", report.ManualTotal, BalanceCenterLegacyExpectedManual)
+	if report.ManualTotal != 2262.37 {
+		t.Fatalf("manual total = %.2f, want 2262.37", report.ManualTotal)
 	}
 }
 

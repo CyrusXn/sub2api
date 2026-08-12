@@ -32,6 +32,32 @@ func TestParseImportConfigRequiresExecuteConfirmation(t *testing.T) {
 	}
 }
 
+func TestParseImportConfigRequiresManifestForExecute(t *testing.T) {
+	_, err := parseImportConfig([]string{
+		"--sqlite", "/tmp/sub2-web.sqlite",
+		"--target-dsn", "postgres://sub2api@example/sub2api?sslmode=disable",
+		"--execute",
+		"--confirm-import",
+	})
+	if err == nil || !strings.Contains(err.Error(), "manifest") {
+		t.Fatalf("--execute without --manifest should fail, got %v", err)
+	}
+}
+
+func TestParseImportConfigRejectsWritingManifestDuringExecute(t *testing.T) {
+	_, err := parseImportConfig([]string{
+		"--sqlite", "/tmp/sub2-web.sqlite",
+		"--target-dsn", "postgres://sub2api@example/sub2api?sslmode=disable",
+		"--manifest", "/tmp/import-manifest.json",
+		"--write-manifest", "/tmp/next-manifest.json",
+		"--execute",
+		"--confirm-import",
+	})
+	if err == nil {
+		t.Fatal("--write-manifest must be dry-run only")
+	}
+}
+
 func TestParseImportConfigRejectsMissingInputs(t *testing.T) {
 	if _, err := parseImportConfig([]string{"--target-dsn", "postgres://sub2api@example/sub2api"}); err == nil {
 		t.Fatal("missing --sqlite should fail")
@@ -48,5 +74,8 @@ func TestLegacySQLiteReadOnlyDSNUsesReadOnlyMode(t *testing.T) {
 	}
 	if !strings.Contains(dsn, "sub2%20web.sqlite") {
 		t.Fatalf("SQLite path must be URL escaped: %q", dsn)
+	}
+	if !strings.Contains(dsn, "immutable=1") {
+		t.Fatalf("SQLite import must require an immutable backup: %q", dsn)
 	}
 }
