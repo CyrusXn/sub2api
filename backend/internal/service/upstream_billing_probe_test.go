@@ -380,7 +380,7 @@ func (u *webAccountRateHTTPStub) Do(req *http.Request, _ string, _ int64, _ int)
 			return jsonResponse(http.StatusUnauthorized, "{\"code\":401}"), nil
 		}
 		return jsonResponse(http.StatusOK, "{\"code\":0,\"data\":{\"7\":0.09}}"), nil
-	case "/api/v1/auth/me":
+	case "/api/v1/auth/me", "/api/v1/user/profile":
 		if req.Header.Get("Authorization") != "Bearer web-token" {
 			return jsonResponse(http.StatusUnauthorized, "{\"code\":401}"), nil
 		}
@@ -692,12 +692,13 @@ func TestUpstreamBillingProbeUsesWebAccountRateForKnownHosts(t *testing.T) {
 func TestUpstreamBillingProbeNormalizesExactHBYHostBeforePersistingAndSyncing(t *testing.T) {
 	initialRate := 0.25
 	account := &Account{
-		ID:             52,
-		Platform:       PlatformOpenAI,
-		Type:           AccountTypeAPIKey,
-		Status:         StatusActive,
-		Concurrency:    1,
-		RateMultiplier: &initialRate,
+		ID:                    52,
+		Platform:              PlatformOpenAI,
+		Type:                  AccountTypeAPIKey,
+		Status:                StatusActive,
+		Concurrency:           1,
+		RateMultiplier:        &initialRate,
+		UpstreamRechargeScale: 0.1,
 		Credentials: map[string]any{
 			"api_key":  "sk-live",
 			"base_url": "https://hubway.cc/v1",
@@ -1051,12 +1052,13 @@ func TestUpstreamBillingProbeNewAPIKeepsBalanceWhenCurrentKeyCannotBeMatched(t *
 
 func TestUpstreamBillingProbeMatchesMaskedWebAccountKey(t *testing.T) {
 	account := &Account{
-		ID:          44,
-		Name:        "HBY-main-key",
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Status:      StatusActive,
-		Concurrency: 1,
+		ID:                    44,
+		Name:                  "HBY-main-key",
+		Platform:              PlatformOpenAI,
+		Type:                  AccountTypeAPIKey,
+		Status:                StatusActive,
+		Concurrency:           1,
+		UpstreamRechargeScale: 0.1,
 		Credentials: map[string]any{
 			"api_key":  "sk-abcdefgh12345678",
 			"base_url": "https://hubway.cc/v1",
@@ -1078,12 +1080,13 @@ func TestUpstreamBillingProbeMatchesMaskedWebAccountKey(t *testing.T) {
 
 func TestUpstreamBillingProbeMatchesUniqueWebAccountKeyName(t *testing.T) {
 	account := &Account{
-		ID:          45,
-		Name:        "HBY-main-key",
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Status:      StatusActive,
-		Concurrency: 1,
+		ID:                    45,
+		Name:                  "HBY-main-key",
+		Platform:              PlatformOpenAI,
+		Type:                  AccountTypeAPIKey,
+		Status:                StatusActive,
+		Concurrency:           1,
+		UpstreamRechargeScale: 0.1,
 		Credentials: map[string]any{
 			"api_key":  "sk-key-not-returned",
 			"base_url": "https://hubway.cc/v1",

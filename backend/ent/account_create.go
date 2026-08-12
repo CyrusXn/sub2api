@@ -209,6 +209,20 @@ func (_c *AccountCreate) SetNillableAdminUsageMultiplier(v *float64) *AccountCre
 	return _c
 }
 
+// SetUpstreamRechargeScale sets the "upstream_recharge_scale" field.
+func (_c *AccountCreate) SetUpstreamRechargeScale(v float64) *AccountCreate {
+	_c.mutation.SetUpstreamRechargeScale(v)
+	return _c
+}
+
+// SetNillableUpstreamRechargeScale sets the "upstream_recharge_scale" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableUpstreamRechargeScale(v *float64) *AccountCreate {
+	if v != nil {
+		_c.SetUpstreamRechargeScale(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *AccountCreate) SetStatus(v string) *AccountCreate {
 	_c.mutation.SetStatus(v)
@@ -583,6 +597,10 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultAdminUsageMultiplier
 		_c.mutation.SetAdminUsageMultiplier(v)
 	}
+	if _, ok := _c.mutation.UpstreamRechargeScale(); !ok {
+		v := account.DefaultUpstreamRechargeScale
+		_c.mutation.SetUpstreamRechargeScale(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := account.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -651,6 +669,9 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.AdminUsageMultiplier(); !ok {
 		return &ValidationError{Name: "admin_usage_multiplier", err: errors.New(`ent: missing required field "Account.admin_usage_multiplier"`)}
+	}
+	if _, ok := _c.mutation.UpstreamRechargeScale(); !ok {
+		return &ValidationError{Name: "upstream_recharge_scale", err: errors.New(`ent: missing required field "Account.upstream_recharge_scale"`)}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Account.status"`)}
@@ -765,6 +786,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AdminUsageMultiplier(); ok {
 		_spec.SetField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
 		_node.AdminUsageMultiplier = value
+	}
+	if value, ok := _c.mutation.UpstreamRechargeScale(); ok {
+		_spec.SetField(account.FieldUpstreamRechargeScale, field.TypeFloat64, value)
+		_node.UpstreamRechargeScale = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
@@ -1207,6 +1232,24 @@ func (u *AccountUpsert) UpdateAdminUsageMultiplier() *AccountUpsert {
 // AddAdminUsageMultiplier adds v to the "admin_usage_multiplier" field.
 func (u *AccountUpsert) AddAdminUsageMultiplier(v float64) *AccountUpsert {
 	u.Add(account.FieldAdminUsageMultiplier, v)
+	return u
+}
+
+// SetUpstreamRechargeScale sets the "upstream_recharge_scale" field.
+func (u *AccountUpsert) SetUpstreamRechargeScale(v float64) *AccountUpsert {
+	u.Set(account.FieldUpstreamRechargeScale, v)
+	return u
+}
+
+// UpdateUpstreamRechargeScale sets the "upstream_recharge_scale" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateUpstreamRechargeScale() *AccountUpsert {
+	u.SetExcluded(account.FieldUpstreamRechargeScale)
+	return u
+}
+
+// AddUpstreamRechargeScale adds v to the "upstream_recharge_scale" field.
+func (u *AccountUpsert) AddUpstreamRechargeScale(v float64) *AccountUpsert {
+	u.Add(account.FieldUpstreamRechargeScale, v)
 	return u
 }
 
@@ -1803,6 +1846,27 @@ func (u *AccountUpsertOne) AddAdminUsageMultiplier(v float64) *AccountUpsertOne 
 func (u *AccountUpsertOne) UpdateAdminUsageMultiplier() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateAdminUsageMultiplier()
+	})
+}
+
+// SetUpstreamRechargeScale sets the "upstream_recharge_scale" field.
+func (u *AccountUpsertOne) SetUpstreamRechargeScale(v float64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetUpstreamRechargeScale(v)
+	})
+}
+
+// AddUpstreamRechargeScale adds v to the "upstream_recharge_scale" field.
+func (u *AccountUpsertOne) AddUpstreamRechargeScale(v float64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddUpstreamRechargeScale(v)
+	})
+}
+
+// UpdateUpstreamRechargeScale sets the "upstream_recharge_scale" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateUpstreamRechargeScale() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateUpstreamRechargeScale()
 	})
 }
 
@@ -2609,6 +2673,27 @@ func (u *AccountUpsertBulk) AddAdminUsageMultiplier(v float64) *AccountUpsertBul
 func (u *AccountUpsertBulk) UpdateAdminUsageMultiplier() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateAdminUsageMultiplier()
+	})
+}
+
+// SetUpstreamRechargeScale sets the "upstream_recharge_scale" field.
+func (u *AccountUpsertBulk) SetUpstreamRechargeScale(v float64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetUpstreamRechargeScale(v)
+	})
+}
+
+// AddUpstreamRechargeScale adds v to the "upstream_recharge_scale" field.
+func (u *AccountUpsertBulk) AddUpstreamRechargeScale(v float64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddUpstreamRechargeScale(v)
+	})
+}
+
+// UpdateUpstreamRechargeScale sets the "upstream_recharge_scale" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateUpstreamRechargeScale() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateUpstreamRechargeScale()
 	})
 }
 

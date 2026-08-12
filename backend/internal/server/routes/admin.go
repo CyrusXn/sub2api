@@ -46,6 +46,9 @@ func RegisterAdminRoutes(
 		// 余额中心
 		registerBalanceCenterRoutes(admin, h)
 
+		// 管理端表格列设置
+		registerTablePreferenceRoutes(admin, h)
+
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
@@ -147,6 +150,14 @@ func registerBalanceCenterRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		balanceCenter.GET("/reconciliations", h.Admin.BalanceCenter.Reconciliations)
 		balanceCenter.POST("/reconciliations", h.Admin.BalanceCenter.CreateReconciliation)
 		balanceCenter.GET("/alerts", h.Admin.BalanceCenter.Alerts)
+	}
+}
+
+func registerTablePreferenceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	preferences := admin.Group("/table-preferences")
+	{
+		preferences.GET("/:table_key", h.Admin.TablePreference.Get)
+		preferences.PUT("/:table_key", h.Admin.TablePreference.Save)
 	}
 }
 

@@ -375,12 +375,13 @@ type CreateAccountInput struct {
 	Priority       int
 	RateMultiplier *float64 // 账号计费倍率（>=0，允许 0）
 	// AdminUsageMultiplier 仅管理端配置的账号结算附加倍率；nil 时默认 1。
-	AdminUsageMultiplier *float64
-	LoadFactor           *int
-	GroupIDs             []int64
-	ExpiresAt            *int64
-	AutoPauseOnExpired   *bool
-	ProbeEnabled         *bool
+	AdminUsageMultiplier  *float64
+	UpstreamRechargeScale *float64
+	LoadFactor            *int
+	GroupIDs              []int64
+	ExpiresAt             *int64
+	AutoPauseOnExpired    *bool
+	ProbeEnabled          *bool
 	// SkipDefaultGroupBind prevents auto-binding to platform default group when GroupIDs is empty.
 	SkipDefaultGroupBind bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
@@ -408,14 +409,15 @@ type UpdateAccountInput struct {
 	Priority       *int     // 使用指针区分"未提供"和"设置为0"
 	RateMultiplier *float64 // 账号计费倍率（>=0，允许 0）
 	// AdminUsageMultiplier 仅管理端配置的账号结算附加倍率；nil 表示本次不修改。
-	AdminUsageMultiplier *float64
-	LoadFactor           *int
-	Status               string
-	GroupIDs             *[]int64
-	ExpiresAt            *int64
-	AutoPauseOnExpired   *bool
-	ProbeEnabled         *bool
-	RateSyncEnabled      *bool
+	AdminUsageMultiplier  *float64
+	UpstreamRechargeScale *float64
+	LoadFactor            *int
+	Status                string
+	GroupIDs              *[]int64
+	ExpiresAt             *int64
+	AutoPauseOnExpired    *bool
+	ProbeEnabled          *bool
+	RateSyncEnabled       *bool
 	// UpstreamBillingManualRateMultiplierSet 区分字段缺失和显式 null。
 	UpstreamBillingManualRateMultiplierSet bool
 	UpstreamBillingManualRateMultiplier    *float64

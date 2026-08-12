@@ -178,6 +178,8 @@ func upstreamSiteProtocolForHost(host string) string {
 	switch strings.ToLower(strings.TrimSpace(host)) {
 	case "api.aigclink.xyz", "ai.pite.chat":
 		return "newapi"
+	case "hubway.cc", "mxamaxai.com", "ai.maok.shop":
+		return "innom"
 	}
 	return "innom"
 }

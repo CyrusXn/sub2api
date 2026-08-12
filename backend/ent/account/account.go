@@ -48,6 +48,8 @@ const (
 	FieldRateMultiplier = "rate_multiplier"
 	// FieldAdminUsageMultiplier holds the string denoting the admin_usage_multiplier field in the database.
 	FieldAdminUsageMultiplier = "admin_usage_multiplier"
+	// FieldUpstreamRechargeScale holds the string denoting the upstream_recharge_scale field in the database.
+	FieldUpstreamRechargeScale = "upstream_recharge_scale"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldErrorMessage holds the string denoting the error_message field in the database.
@@ -149,6 +151,7 @@ var Columns = []string{
 	FieldPriority,
 	FieldRateMultiplier,
 	FieldAdminUsageMultiplier,
+	FieldUpstreamRechargeScale,
 	FieldStatus,
 	FieldErrorMessage,
 	FieldLastUsedAt,
@@ -215,6 +218,8 @@ var (
 	DefaultRateMultiplier float64
 	// DefaultAdminUsageMultiplier holds the default value on creation for the "admin_usage_multiplier" field.
 	DefaultAdminUsageMultiplier float64
+	// DefaultUpstreamRechargeScale holds the default value on creation for the "upstream_recharge_scale" field.
+	DefaultUpstreamRechargeScale float64
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -329,6 +334,11 @@ func ByRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
 // ByAdminUsageMultiplier orders the results by the admin_usage_multiplier field.
 func ByAdminUsageMultiplier(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAdminUsageMultiplier, opts...).ToFunc()
+}
+
+// ByUpstreamRechargeScale orders the results by the upstream_recharge_scale field.
+func ByUpstreamRechargeScale(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamRechargeScale, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.

@@ -524,6 +524,11 @@ export default {
       total: '近30天',
       sortBy: '排序方式',
       sortCurrentPageOnly: '仅对本页数据排序',
+      concurrencySort: {
+        title: '选择并发排序指标',
+        total: '总并发数',
+        current: '当前使用并发数'
+      },
       noSubscription: '暂无订阅',
       publicGroupCount: '+{count} 公开',
       exclusiveLabel: '专属',
@@ -823,6 +828,11 @@ export default {
       },
       usageToday: '今日',
       usageTotal: '累计',
+      concurrencySort: {
+        title: '选择并发排序指标',
+        total: '总并发数',
+        current: '当前使用并发数'
+      },
       accountsAvailable: '可用:',
       accountsRateLimited: '限流:',
       accountsTotal: '总量:',

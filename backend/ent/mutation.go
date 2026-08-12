@@ -2306,6 +2306,8 @@ type AccountMutation struct {
 	addrate_multiplier          *float64
 	admin_usage_multiplier      *float64
 	addadmin_usage_multiplier   *float64
+	upstream_recharge_scale     *float64
+	addupstream_recharge_scale  *float64
 	status                      *string
 	error_message               *string
 	last_used_at                *time.Time
@@ -3199,6 +3201,62 @@ func (m *AccountMutation) AddedAdminUsageMultiplier() (r float64, exists bool) {
 func (m *AccountMutation) ResetAdminUsageMultiplier() {
 	m.admin_usage_multiplier = nil
 	m.addadmin_usage_multiplier = nil
+}
+
+// SetUpstreamRechargeScale sets the "upstream_recharge_scale" field.
+func (m *AccountMutation) SetUpstreamRechargeScale(f float64) {
+	m.upstream_recharge_scale = &f
+	m.addupstream_recharge_scale = nil
+}
+
+// UpstreamRechargeScale returns the value of the "upstream_recharge_scale" field in the mutation.
+func (m *AccountMutation) UpstreamRechargeScale() (r float64, exists bool) {
+	v := m.upstream_recharge_scale
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamRechargeScale returns the old "upstream_recharge_scale" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldUpstreamRechargeScale(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamRechargeScale is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamRechargeScale requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamRechargeScale: %w", err)
+	}
+	return oldValue.UpstreamRechargeScale, nil
+}
+
+// AddUpstreamRechargeScale adds f to the "upstream_recharge_scale" field.
+func (m *AccountMutation) AddUpstreamRechargeScale(f float64) {
+	if m.addupstream_recharge_scale != nil {
+		*m.addupstream_recharge_scale += f
+	} else {
+		m.addupstream_recharge_scale = &f
+	}
+}
+
+// AddedUpstreamRechargeScale returns the value that was added to the "upstream_recharge_scale" field in this mutation.
+func (m *AccountMutation) AddedUpstreamRechargeScale() (r float64, exists bool) {
+	v := m.addupstream_recharge_scale
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUpstreamRechargeScale resets all changes to the "upstream_recharge_scale" field.
+func (m *AccountMutation) ResetUpstreamRechargeScale() {
+	m.upstream_recharge_scale = nil
+	m.addupstream_recharge_scale = nil
 }
 
 // SetStatus sets the "status" field.
@@ -4196,7 +4254,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 32)
+	fields := make([]string, 0, 33)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4244,6 +4302,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.admin_usage_multiplier != nil {
 		fields = append(fields, account.FieldAdminUsageMultiplier)
+	}
+	if m.upstream_recharge_scale != nil {
+		fields = append(fields, account.FieldUpstreamRechargeScale)
 	}
 	if m.status != nil {
 		fields = append(fields, account.FieldStatus)
@@ -4333,6 +4394,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.RateMultiplier()
 	case account.FieldAdminUsageMultiplier:
 		return m.AdminUsageMultiplier()
+	case account.FieldUpstreamRechargeScale:
+		return m.UpstreamRechargeScale()
 	case account.FieldStatus:
 		return m.Status()
 	case account.FieldErrorMessage:
@@ -4406,6 +4469,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldRateMultiplier(ctx)
 	case account.FieldAdminUsageMultiplier:
 		return m.OldAdminUsageMultiplier(ctx)
+	case account.FieldUpstreamRechargeScale:
+		return m.OldUpstreamRechargeScale(ctx)
 	case account.FieldStatus:
 		return m.OldStatus(ctx)
 	case account.FieldErrorMessage:
@@ -4559,6 +4624,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAdminUsageMultiplier(v)
 		return nil
+	case account.FieldUpstreamRechargeScale:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamRechargeScale(v)
+		return nil
 	case account.FieldStatus:
 		v, ok := value.(string)
 		if !ok {
@@ -4697,6 +4769,9 @@ func (m *AccountMutation) AddedFields() []string {
 	if m.addadmin_usage_multiplier != nil {
 		fields = append(fields, account.FieldAdminUsageMultiplier)
 	}
+	if m.addupstream_recharge_scale != nil {
+		fields = append(fields, account.FieldUpstreamRechargeScale)
+	}
 	return fields
 }
 
@@ -4717,6 +4792,8 @@ func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedRateMultiplier()
 	case account.FieldAdminUsageMultiplier:
 		return m.AddedAdminUsageMultiplier()
+	case account.FieldUpstreamRechargeScale:
+		return m.AddedUpstreamRechargeScale()
 	}
 	return nil, false
 }
@@ -4767,6 +4844,13 @@ func (m *AccountMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAdminUsageMultiplier(v)
+		return nil
+	case account.FieldUpstreamRechargeScale:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUpstreamRechargeScale(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Account numeric field %s", name)
@@ -4947,6 +5031,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldAdminUsageMultiplier:
 		m.ResetAdminUsageMultiplier()
+		return nil
+	case account.FieldUpstreamRechargeScale:
+		m.ResetUpstreamRechargeScale()
 		return nil
 	case account.FieldStatus:
 		m.ResetStatus()

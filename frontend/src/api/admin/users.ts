@@ -75,6 +75,7 @@ export async function list(
     attributes?: Record<number, string>  // attributeId -> value
     include_subscriptions?: boolean
     sort_by?: string
+    concurrency_metric?: 'total' | 'current'
     sort_order?: 'asc' | 'desc'
   },
   options?: {
@@ -92,6 +93,7 @@ export async function list(
     api_key_group_id: filters?.api_key_group_id,
     include_subscriptions: filters?.include_subscriptions,
     sort_by: filters?.sort_by,
+    concurrency_metric: filters?.concurrency_metric,
     sort_order: filters?.sort_order
   }
 

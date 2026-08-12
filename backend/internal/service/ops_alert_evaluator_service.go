@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -22,6 +23,11 @@ const (
 	opsAlertEvaluatorLeaderLockKey   = "ops:alert:evaluator:leader"
 	opsAlertEvaluatorLeaderLockTTL   = 90 * time.Second
 	opsAlertEvaluatorSkipLogInterval = 1 * time.Minute
+
+	opsAccountRequestAlertRelayKey        = "ops:alert:account-request:relay"
+	opsAccountRequestAlertProcessingKey   = "ops:alert:account-request:processing"
+	opsAccountRequestAlertRelayMaxBatches = 4096
+	opsAccountRequestAlertRelayTimeout    = time.Second
 )
 
 var opsAlertEvaluatorReleaseScript = redis.NewScript(`
@@ -49,8 +55,10 @@ type OpsAlertEvaluatorService struct {
 	mu         sync.Mutex
 	ruleStates map[int64]*opsAlertRuleState
 
-	accountRequestAlertCh     chan []*opsAccountRequestAlertSignal
-	accountRequestAlertLastAt time.Time
+	accountRequestAlertCh      chan []*opsAccountRequestAlertSignal
+	accountRequestAlertBatchCh chan *opsAccountRequestAlertBatch
+	accountRequestAlertLastAt  time.Time
+	relayRequestAlerts         bool
 
 	emailLimiter *slidingWindowLimiter
 
@@ -65,6 +73,11 @@ type opsAlertRuleState struct {
 	ConsecutiveBreaches int
 }
 
+type opsAccountRequestAlertBatch struct {
+	signals []*opsAccountRequestAlertSignal
+	payload string
+}
+
 func NewOpsAlertEvaluatorService(
 	opsService *OpsService,
 	opsRepo OpsRepository,
@@ -74,16 +87,17 @@ func NewOpsAlertEvaluatorService(
 	proxyRepo ProxyRepository,
 ) *OpsAlertEvaluatorService {
 	return &OpsAlertEvaluatorService{
-		opsService:            opsService,
-		opsRepo:               opsRepo,
-		emailService:          emailService,
-		proxyRepo:             proxyRepo,
-		redisClient:           redisClient,
-		cfg:                   cfg,
-		instanceID:            uuid.NewString(),
-		ruleStates:            map[int64]*opsAlertRuleState{},
-		accountRequestAlertCh: make(chan []*opsAccountRequestAlertSignal, 256),
-		emailLimiter:          newSlidingWindowLimiter(0, time.Hour),
+		opsService:                 opsService,
+		opsRepo:                    opsRepo,
+		emailService:               emailService,
+		proxyRepo:                  proxyRepo,
+		redisClient:                redisClient,
+		cfg:                        cfg,
+		instanceID:                 uuid.NewString(),
+		ruleStates:                 map[int64]*opsAlertRuleState{},
+		accountRequestAlertCh:      make(chan []*opsAccountRequestAlertSignal, 256),
+		accountRequestAlertBatchCh: make(chan *opsAccountRequestAlertBatch),
+		emailLimiter:               newSlidingWindowLimiter(0, time.Hour),
 	}
 }
 
@@ -97,6 +111,25 @@ func (s *OpsAlertEvaluatorService) Start() {
 		}
 		s.wg.Add(1)
 		go s.run()
+		if s.redisClient != nil {
+			s.wg.Add(1)
+			go s.runAccountRequestAlertRelayConsumer()
+		}
+	})
+}
+
+// StartRequestAlertRelay 只转发当前节点的请求故障信号，不在本节点评估或发信。
+func (s *OpsAlertEvaluatorService) StartRequestAlertRelay() {
+	if s == nil {
+		return
+	}
+	s.startOnce.Do(func() {
+		if s.stopCh == nil {
+			s.stopCh = make(chan struct{})
+		}
+		s.relayRequestAlerts = true
+		s.wg.Add(1)
+		go s.runAccountRequestAlertRelayProducer()
 	})
 }
 
@@ -110,6 +143,122 @@ func (s *OpsAlertEvaluatorService) Stop() {
 		}
 	})
 	s.wg.Wait()
+}
+
+func (s *OpsAlertEvaluatorService) runAccountRequestAlertRelayProducer() {
+	defer s.wg.Done()
+	for {
+		select {
+		case signals := <-s.accountRequestAlertCh:
+			s.publishAccountRequestAlertSignals(signals)
+		case <-s.stopCh:
+			for {
+				select {
+				case signals := <-s.accountRequestAlertCh:
+					s.publishAccountRequestAlertSignals(signals)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *OpsAlertEvaluatorService) publishAccountRequestAlertSignals(signals []*opsAccountRequestAlertSignal) {
+	if s == nil || s.redisClient == nil || len(signals) == 0 {
+		return
+	}
+	payload, err := json.Marshal(signals)
+	if err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] encode account request relay failed: %v", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opsAccountRequestAlertRelayTimeout)
+	defer cancel()
+	pipe := s.redisClient.TxPipeline()
+	pipe.RPush(ctx, opsAccountRequestAlertRelayKey, payload)
+	pipe.LTrim(ctx, opsAccountRequestAlertRelayKey, -opsAccountRequestAlertRelayMaxBatches, -1)
+	if _, err := pipe.Exec(ctx); err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] publish account request relay failed: %v", err)
+	}
+}
+
+func (s *OpsAlertEvaluatorService) runAccountRequestAlertRelayConsumer() {
+	defer s.wg.Done()
+	s.recoverAccountRequestAlertRelayProcessing()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*opsAccountRequestAlertRelayTimeout)
+		payload, err := s.redisClient.BLMove(
+			ctx,
+			opsAccountRequestAlertRelayKey,
+			opsAccountRequestAlertProcessingKey,
+			"LEFT",
+			"RIGHT",
+			opsAccountRequestAlertRelayTimeout,
+		).Result()
+		cancel()
+		if err != nil {
+			if err != redis.Nil && err != context.DeadlineExceeded && err != context.Canceled {
+				logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] consume account request relay failed: %v", err)
+			}
+			continue
+		}
+		var signals []*opsAccountRequestAlertSignal
+		if err := json.Unmarshal([]byte(payload), &signals); err != nil {
+			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] decode account request relay failed: %v", err)
+			s.ackAccountRequestAlertRelay(payload)
+			continue
+		}
+		batch := &opsAccountRequestAlertBatch{signals: signals, payload: payload}
+		select {
+		case s.accountRequestAlertBatchCh <- batch:
+		case <-s.stopCh:
+			s.retryAccountRequestAlertRelay(payload)
+			return
+		}
+	}
+}
+
+func (s *OpsAlertEvaluatorService) recoverAccountRequestAlertRelayProcessing() {
+	ctx, cancel := context.WithTimeout(context.Background(), opsAccountRequestAlertRelayTimeout)
+	defer cancel()
+	for {
+		payload, err := s.redisClient.RPopLPush(ctx, opsAccountRequestAlertProcessingKey, opsAccountRequestAlertRelayKey).Result()
+		if err == redis.Nil {
+			return
+		}
+		if err != nil {
+			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] recover account request relay failed: %v", err)
+			return
+		}
+		if payload == "" {
+			return
+		}
+	}
+}
+
+func (s *OpsAlertEvaluatorService) ackAccountRequestAlertRelay(payload string) {
+	ctx, cancel := context.WithTimeout(context.Background(), opsAccountRequestAlertRelayTimeout)
+	defer cancel()
+	if err := s.redisClient.LRem(ctx, opsAccountRequestAlertProcessingKey, 1, payload).Err(); err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] ack account request relay failed: %v", err)
+	}
+}
+
+func (s *OpsAlertEvaluatorService) retryAccountRequestAlertRelay(payload string) {
+	ctx, cancel := context.WithTimeout(context.Background(), opsAccountRequestAlertRelayTimeout)
+	defer cancel()
+	pipe := s.redisClient.TxPipeline()
+	pipe.LRem(ctx, opsAccountRequestAlertProcessingKey, 1, payload)
+	pipe.RPush(ctx, opsAccountRequestAlertRelayKey, payload)
+	if _, err := pipe.Exec(ctx); err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] retry account request relay failed: %v", err)
+	}
 }
 
 func (s *OpsAlertEvaluatorService) run() {
@@ -130,6 +279,24 @@ func (s *OpsAlertEvaluatorService) run() {
 			timer.Reset(interval)
 		case signals := <-s.accountRequestAlertCh:
 			s.evaluateAccountRequestAlerts(signals)
+		case batch := <-s.accountRequestAlertBatchCh:
+			if batch == nil {
+				continue
+			}
+			if s.evaluateAccountRequestAlerts(batch.signals) {
+				s.ackAccountRequestAlertRelay(batch.payload)
+			} else {
+				s.retryAccountRequestAlertRelay(batch.payload)
+				timer := time.NewTimer(opsAccountRequestAlertRelayTimeout)
+				select {
+				case <-timer.C:
+				case <-s.stopCh:
+					if !timer.Stop() {
+						<-timer.C
+					}
+					return
+				}
+			}
 		case <-digestTimer.C:
 			s.sendQuietHoursDigestOnce()
 			digestTimer.Reset(durationUntilNextBeijingDigest(time.Now().UTC()))

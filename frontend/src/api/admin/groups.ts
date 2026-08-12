@@ -37,6 +37,7 @@ export async function list(
     is_exclusive?: boolean
     search?: string
     sort_by?: string
+    concurrency_metric?: 'total' | 'current'
     sort_order?: 'asc' | 'desc'
   },
   options?: {

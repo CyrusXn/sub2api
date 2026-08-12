@@ -69,7 +69,11 @@ vi.mock('@/api/admin', () => ({
       toggleSchedulable: vi.fn()
     },
     proxies: { getAll: getAllProxies },
-    groups: { getAll: getAllGroups }
+    groups: { getAll: getAllGroups },
+    tablePreferences: {
+      get: vi.fn().mockResolvedValue({ exists: false, hidden_columns: [], column_widths: {}, column_order: [], schema_version: 1 }),
+      save: vi.fn().mockResolvedValue({ exists: true, hidden_columns: [], column_widths: {}, column_order: [], schema_version: 1 })
+    }
   }
 }))
 

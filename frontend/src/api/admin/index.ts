@@ -34,6 +34,7 @@ import affiliatesAPI from './affiliates'
 import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
+import tablePreferencesAPI from './tablePreferences'
 import balanceCenterAPI from './balanceCenter'
 
 /**
@@ -71,6 +72,7 @@ export const adminAPI = {
   riskControl: riskControlAPI,
   compliance: adminComplianceAPI,
   audit: auditAPI,
+  tablePreferences: tablePreferencesAPI,
   balanceCenter: balanceCenterAPI
 }
 
@@ -106,6 +108,7 @@ export {
   riskControlAPI,
   adminComplianceAPI,
   auditAPI,
+  tablePreferencesAPI,
   balanceCenterAPI
 }
 
@@ -118,3 +121,4 @@ export type { ErrorPassthroughRule, CreateRuleRequest, UpdateRuleRequest } from 
 export type { BackupAgentHealth, DataManagementConfig } from './dataManagement'
 export type { TLSFingerprintProfile, CreateProfileRequest, UpdateProfileRequest } from './tlsFingerprintProfile'
 export type { ContentModerationConfig, ContentModerationLog, ModerationMode } from './riskControl'
+export type { AdminTableKey, TablePreference, SaveTablePreferenceRequest } from './tablePreferences'

@@ -1177,6 +1177,8 @@ export interface Account {
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
   // 仅管理端账号接口返回的结算附加倍率。
   admin_usage_multiplier?: number
+  // 上游充值口径换算系数；余额和声明倍率统一乘此值。
+  upstream_recharge_scale?: number
   status: 'active' | 'inactive' | 'error'
   error_message: string | null
   last_used_at: string | null
@@ -1450,6 +1452,7 @@ export interface CreateAccountRequest {
   priority?: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
   admin_usage_multiplier?: number
+  upstream_recharge_scale?: number
   group_ids?: number[]
   expires_at?: number | null
   auto_pause_on_expired?: boolean
@@ -1469,6 +1472,7 @@ export interface UpdateAccountRequest {
   priority?: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
   admin_usage_multiplier?: number
+  upstream_recharge_scale?: number
   schedulable?: boolean
   status?: 'active' | 'inactive' | 'error'
   group_ids?: number[]
@@ -1590,6 +1594,7 @@ export interface CodexSessionImportRequest {
   priority?: number
   rate_multiplier?: number
   admin_usage_multiplier?: number
+  upstream_recharge_scale?: number
   load_factor?: number | null
   expires_at?: number | null
   auto_pause_on_expired?: boolean
@@ -1610,6 +1615,7 @@ export interface OpenAICodexPATCreateRequest {
   priority?: number
   rate_multiplier?: number
   admin_usage_multiplier?: number
+  upstream_recharge_scale?: number
   load_factor?: number | null
   expires_at?: number | null
   auto_pause_on_expired?: boolean

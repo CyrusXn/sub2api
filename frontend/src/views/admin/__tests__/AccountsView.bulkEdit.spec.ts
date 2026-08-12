@@ -12,6 +12,8 @@ const {
   getAllGroups,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
+  getTablePreference,
+  saveTablePreference,
   showError,
   showSuccess
 } = vi.hoisted(() => ({
@@ -23,6 +25,8 @@ const {
   getAllGroups: vi.fn(),
   probeUpstreamBilling: vi.fn(),
   probeUpstreamBillingBatch: vi.fn(),
+  getTablePreference: vi.fn(),
+  saveTablePreference: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn()
 }))
@@ -46,6 +50,10 @@ vi.mock('@/api/admin', () => ({
     },
     groups: {
       getAll: getAllGroups
+    },
+    tablePreferences: {
+      get: getTablePreference,
+      save: saveTablePreference
     }
   }
 }))
@@ -224,6 +232,8 @@ describe('admin AccountsView bulk edit scope', () => {
     getAllGroups.mockReset()
     probeUpstreamBilling.mockReset()
     probeUpstreamBillingBatch.mockReset()
+    getTablePreference.mockReset()
+    saveTablePreference.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
 
@@ -245,6 +255,20 @@ describe('admin AccountsView bulk edit scope', () => {
     getAllGroups.mockResolvedValue([])
     probeUpstreamBilling.mockResolvedValue({})
     probeUpstreamBillingBatch.mockResolvedValue([])
+    getTablePreference.mockResolvedValue({
+      exists: false,
+      hidden_columns: [],
+      column_widths: {},
+      column_order: [],
+      schema_version: 1
+    })
+    saveTablePreference.mockResolvedValue({
+      exists: true,
+      hidden_columns: [],
+      column_widths: {},
+      column_order: [],
+      schema_version: 1
+    })
   })
 
   it('defaults the account list to upstream billing rate ascending', async () => {
@@ -421,7 +445,7 @@ describe('admin AccountsView bulk edit scope', () => {
     })
     expect(columns.some(column => column.key === 'select')).toBe(false)
     expect(columns.find(column => column.key === 'name')?.width).toBe(160)
-    expect(columns.find(column => column.key === 'actions')?.width).toBe(144)
+    expect(columns.find(column => column.key === 'actions')?.width).toBe(120)
     expect(columns.find(column => column.key === 'admin_usage_multiplier')?.sortable).toBe(true)
     expect(table.props('selectable')).toBe(true)
     expect(table.props('selectedKeys')).toEqual([])
@@ -591,7 +615,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([1, 2, 6])
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([1, 4, 6])
   })
 
   it('forces a fresh upstream billing probe for visible accounts on manual refresh', async () => {
@@ -838,7 +862,7 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([7, 11])
   })
 
-  it('refreshes the current page after a batch probe and displays the synced rate', async () => {
+  it('patches the current page after a batch probe without reloading the account list', async () => {
     const account = (id: number, rateMultiplier: number) => ({
       id,
       name: `account-${id}`,
@@ -860,6 +884,7 @@ describe('admin AccountsView bulk edit scope', () => {
         snapshot: {
           status: 'ok',
           data: { effective_rate_multiplier: 0.065 },
+          synced_rate_multiplier: 0.065,
           last_attempt_at: '2026-07-13T00:00:00Z',
           next_probe_at: '2026-07-13T00:30:00Z'
         }
@@ -909,12 +934,11 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([11])
-    expect(listAccounts).toHaveBeenCalledTimes(3)
-    expect(listAccounts.mock.calls[2]?.[0]).toBe(2)
+    expect(listAccounts).toHaveBeenCalledTimes(2)
     expect(wrapper.get('[data-test="account-rate"]').text()).toBe('0.065x')
   })
 
-  it('does not report a successful batch probe as failed when the list refresh fails', async () => {
+  it('does not reload the account list after a successful batch probe', async () => {
     const account = {
       id: 7,
       name: 'account-7',
@@ -935,6 +959,7 @@ describe('admin AccountsView bulk edit scope', () => {
         snapshot: {
           status: 'ok',
           data: { effective_rate_multiplier: 0.065 },
+          synced_rate_multiplier: 0.065,
           last_attempt_at: '2026-07-13T00:00:00Z',
           next_probe_at: '2026-07-13T00:30:00Z'
         }
@@ -984,7 +1009,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([7])
-    expect(listAccounts).toHaveBeenCalledTimes(listCallsBeforeProbe + 1)
+    expect(listAccounts).toHaveBeenCalledTimes(listCallsBeforeProbe)
     expect(showError).not.toHaveBeenCalled()
     expect(showSuccess).toHaveBeenCalledWith('admin.accounts.upstreamBilling.batchCompleted')
     consoleError.mockRestore()
@@ -1011,6 +1036,7 @@ describe('admin AccountsView bulk edit scope', () => {
       snapshot: {
         status: 'ok',
         data: { effective_rate_multiplier: 0.065 },
+        synced_rate_multiplier: 0.065,
         last_attempt_at: '2026-07-13T00:00:00Z',
         next_probe_at: '2026-07-13T00:30:00Z'
       }
@@ -1056,7 +1082,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(probeUpstreamBilling).toHaveBeenCalledWith(7)
-    expect(listAccounts).toHaveBeenCalledTimes(2)
+    expect(listAccounts).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[data-test="account-rate"]').text()).toBe('0.065x')
   })
 })

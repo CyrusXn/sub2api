@@ -297,18 +297,21 @@ func containsOpsAccountBalanceEvidence(values []string) bool {
 	return false
 }
 
-func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAccountRequestAlertSignal) {
-	if s == nil || s.opsRepo == nil || len(signals) == 0 {
-		return
+func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAccountRequestAlertSignal) bool {
+	if s == nil || len(signals) == 0 {
+		return true
+	}
+	if s.opsRepo == nil {
+		return false
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), opsAccountRequestAlertTimeout)
 	defer cancel()
 	if s.cfg != nil && !s.cfg.Ops.Enabled {
-		return
+		return true
 	}
 	if s.opsService != nil && !s.opsService.IsMonitoringEnabled(ctx) {
-		return
+		return true
 	}
 
 	runtimeCfg := defaultOpsAlertRuntimeSettings()
@@ -319,7 +322,7 @@ func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAc
 	}
 	release, ok := s.tryAcquireLeaderLock(ctx, runtimeCfg.DistributedLock)
 	if !ok {
-		return
+		return false
 	}
 	if release != nil {
 		defer release()
@@ -328,11 +331,11 @@ func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAc
 	rules, err := s.opsRepo.ListAlertRules(ctx)
 	if err != nil {
 		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] list account request alert rule failed: %v", err)
-		return
+		return false
 	}
 	rule := findAccountRequestAlertRule(rules)
 	if rule == nil {
-		return
+		return true
 	}
 
 	now := time.Now().UTC()
@@ -341,8 +344,9 @@ func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAc
 	dedupeRepo, ok := s.opsRepo.(OpsAlertDedupeRepository)
 	if !ok {
 		logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] account request dedupe repository unavailable")
-		return
+		return false
 	}
+	shouldRetry := false
 	seen := make(map[string]struct{}, len(signals))
 	for _, signal := range signals {
 		if signal == nil || signal.AccountID == nil || *signal.AccountID <= 0 {
@@ -369,6 +373,7 @@ func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAc
 
 		latestEvent, latestErr := dedupeRepo.GetLatestAlertEventByDedupeKey(ctx, rule.ID, dedupeKey)
 		if latestErr != nil {
+			shouldRetry = true
 			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] get account request dedupe event failed (rule=%d): %v", rule.ID, latestErr)
 			continue
 		}
@@ -399,6 +404,7 @@ func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAc
 		}
 		created, createErr := s.opsRepo.CreateAlertEvent(ctx, event)
 		if createErr != nil {
+			shouldRetry = true
 			logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] create account request alert failed (rule=%d account=%d): %v", rule.ID, detail.AccountID, createErr)
 			continue
 		}
@@ -413,6 +419,7 @@ func (s *OpsAlertEvaluatorService) evaluateAccountRequestAlerts(signals []*opsAc
 		}
 		s.maybeSendAlertEmail(ctx, runtimeCfg, rule, created, []*OpsAlertAccountDetail{detail}, []*opsAlertErrorSample{signal.ErrorSample})
 	}
+	return !shouldRetry
 }
 
 // hydrateOpsAccountRequestSignal 从已落库的脱敏错误记录补齐用户和 API Key 名称。

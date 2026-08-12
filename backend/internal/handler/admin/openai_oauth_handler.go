@@ -184,6 +184,7 @@ type OpenAICodexPATCreateRequest struct {
 	Priority                *int           `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
 	AdminUsageMultiplier    *float64       `json:"admin_usage_multiplier"`
+	UpstreamRechargeScale   *float64       `json:"upstream_recharge_scale"`
 	LoadFactor              *int           `json:"load_factor"`
 	ExpiresAt               *int64         `json:"expires_at"`
 	AutoPauseOnExpired      *bool          `json:"auto_pause_on_expired"`
@@ -392,6 +393,10 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if err := service.ValidateUpstreamRechargeScale(req.UpstreamRechargeScale); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	if req.LoadFactor != nil && *req.LoadFactor > 10000 {
 		response.BadRequest(c, "load_factor must be <= 10000")
 		return
@@ -451,6 +456,7 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 		Priority:              priority,
 		RateMultiplier:        req.RateMultiplier,
 		AdminUsageMultiplier:  req.AdminUsageMultiplier,
+		UpstreamRechargeScale: req.UpstreamRechargeScale,
 		LoadFactor:            req.LoadFactor,
 		GroupIDs:              req.GroupIDs,
 		ExpiresAt:             req.ExpiresAt,

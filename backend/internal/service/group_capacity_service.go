@@ -76,6 +76,14 @@ func (s *GroupCapacityService) GetAllGroupCapacity(ctx context.Context) ([]Group
 	return s.getGroupCapacitiesSequential(ctx, groupIDs), nil
 }
 
+// GetGroupCapacities 返回指定分组的容量，供包含停用分组的管理列表排序使用。
+func (s *GroupCapacityService) GetGroupCapacities(ctx context.Context, groupIDs []int64) ([]GroupCapacitySummary, error) {
+	if lister, ok := s.accountRepo.(groupCapacityAccountLister); ok {
+		return s.getGroupCapacitiesBatch(ctx, groupIDs, lister)
+	}
+	return s.getGroupCapacitiesSequential(ctx, groupIDs), nil
+}
+
 func (s *GroupCapacityService) listActiveGroupIDs(ctx context.Context) ([]int64, error) {
 	if lister, ok := s.groupRepo.(groupCapacityActiveGroupIDLister); ok {
 		return lister.ListActiveIDs(ctx)

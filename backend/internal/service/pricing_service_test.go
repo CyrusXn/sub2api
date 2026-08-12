@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,51 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+type countingPricingRemoteClient struct {
+	calls int
+}
+
+func (c *countingPricingRemoteClient) FetchPricingJSON(_ context.Context, _ string) ([]byte, error) {
+	c.calls++
+	return nil, os.ErrNotExist
+}
+
+func (c *countingPricingRemoteClient) FetchHashText(_ context.Context, _ string) (string, error) {
+	c.calls++
+	return "", os.ErrNotExist
+}
+
+func TestPricingServiceAPIOnlyInitializesWithoutRemoteFetch(t *testing.T) {
+	client := &countingPricingRemoteClient{}
+	dataDir := t.TempDir()
+	fallbackFile := filepath.Join(t.TempDir(), "fallback.json")
+	require.NoError(t, os.WriteFile(fallbackFile, []byte(`{"test-model":{"input_cost_per_token":0.000001}}`), 0600))
+	svc := NewPricingService(&config.Config{
+		DeploymentRole: config.DeploymentRoleAPIOnly,
+		Pricing: config.PricingConfig{
+			DataDir:      dataDir,
+			FallbackFile: fallbackFile,
+			RemoteURL:    "https://example.com/pricing.json",
+			HashURL:      "https://example.com/pricing.sha256",
+		},
+	}, client)
+	defer svc.Stop()
+
+	require.NoError(t, svc.Initialize())
+	require.Zero(t, client.calls)
+	require.NotEmpty(t, svc.pricingData)
+}
+
+func TestPricingServiceAPIOnlyRejectsForceUpdate(t *testing.T) {
+	client := &countingPricingRemoteClient{}
+	svc := NewPricingService(&config.Config{DeploymentRole: config.DeploymentRoleAPIOnly}, client)
+
+	err := svc.ForceUpdate()
+
+	require.ErrorContains(t, err, "api_only")
+	require.Zero(t, client.calls)
+}
 
 func TestPricingSchedulerBlankRemoteURLDoesNotStart(t *testing.T) {
 	svc := NewPricingService(&config.Config{Pricing: config.PricingConfig{RemoteURL: "  \t  "}}, nil)

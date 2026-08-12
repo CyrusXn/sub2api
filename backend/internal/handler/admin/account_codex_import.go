@@ -32,6 +32,7 @@ type CodexSessionImportRequest struct {
 	Priority                *int           `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
 	AdminUsageMultiplier    *float64       `json:"admin_usage_multiplier"`
+	UpstreamRechargeScale   *float64       `json:"upstream_recharge_scale"`
 	LoadFactor              *int           `json:"load_factor"`
 	ExpiresAt               *int64         `json:"expires_at"`
 	AutoPauseOnExpired      *bool          `json:"auto_pause_on_expired"`
@@ -139,6 +140,10 @@ func (h *AccountHandler) ImportCodexSession(c *gin.Context) {
 		return
 	}
 	if err := service.ValidateAdminUsageMultiplier(req.AdminUsageMultiplier); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if err := service.ValidateUpstreamRechargeScale(req.UpstreamRechargeScale); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -282,15 +287,16 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 			mergedCredentials := mergeCodexImportCredentials(existing.Credentials, credentials, item)
 			mergedExtra := mergeCodexImportMap(existing.Extra, extra)
 			updateInput := &service.UpdateAccountInput{
-				Credentials:          mergedCredentials,
-				Extra:                mergedExtra,
-				Concurrency:          req.Concurrency,
-				Priority:             req.Priority,
-				RateMultiplier:       req.RateMultiplier,
-				AdminUsageMultiplier: req.AdminUsageMultiplier,
-				LoadFactor:           req.LoadFactor,
-				ExpiresAt:            effectiveExpiresAt,
-				AutoPauseOnExpired:   autoPauseOnExpired,
+				Credentials:           mergedCredentials,
+				Extra:                 mergedExtra,
+				Concurrency:           req.Concurrency,
+				Priority:              req.Priority,
+				RateMultiplier:        req.RateMultiplier,
+				AdminUsageMultiplier:  req.AdminUsageMultiplier,
+				UpstreamRechargeScale: req.UpstreamRechargeScale,
+				LoadFactor:            req.LoadFactor,
+				ExpiresAt:             effectiveExpiresAt,
+				AutoPauseOnExpired:    autoPauseOnExpired,
 			}
 			if req.ProxyID != nil {
 				updateInput.ProxyID = req.ProxyID
@@ -346,6 +352,7 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 			Priority:              priority,
 			RateMultiplier:        req.RateMultiplier,
 			AdminUsageMultiplier:  req.AdminUsageMultiplier,
+			UpstreamRechargeScale: req.UpstreamRechargeScale,
 			LoadFactor:            req.LoadFactor,
 			GroupIDs:              req.GroupIDs,
 			ExpiresAt:             effectiveExpiresAt,

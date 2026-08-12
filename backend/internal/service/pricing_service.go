@@ -194,16 +194,23 @@ func (s *PricingService) Initialize() error {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to create data directory: %v", err)
 	}
 
-	// 首次加载价格数据
-	if err := s.checkAndUpdatePricing(); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Initial load failed, using fallback: %v", err)
-		if err := s.useFallbackPricing(); err != nil {
-			return fmt.Errorf("failed to load pricing data: %w", err)
+	// API-only 节点只读取本地或镜像内回退价格，避免多个节点独立更新本地文件。
+	if s.cfg.IsAPIOnly() {
+		if err := s.loadPricingData(s.getPricingFilePath()); err != nil {
+			logger.LegacyPrintf("service.pricing", "[Pricing] API-only local load failed, using fallback: %v", err)
+			if err := s.useFallbackPricing(); err != nil {
+				return fmt.Errorf("failed to load pricing data: %w", err)
+			}
 		}
+	} else {
+		if err := s.checkAndUpdatePricing(); err != nil {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Initial load failed, using fallback: %v", err)
+			if err := s.useFallbackPricing(); err != nil {
+				return fmt.Errorf("failed to load pricing data: %w", err)
+			}
+		}
+		s.startUpdateScheduler()
 	}
-
-	// 启动定时更新
-	s.startUpdateScheduler()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized with %d models", len(s.pricingData))
 	return nil
@@ -1095,6 +1102,12 @@ func (s *PricingService) GetStatus() map[string]any {
 
 // ForceUpdate 强制更新
 func (s *PricingService) ForceUpdate() error {
+	if s == nil || s.cfg == nil {
+		return fmt.Errorf("pricing service is not configured")
+	}
+	if s.cfg.IsAPIOnly() {
+		return fmt.Errorf("pricing remote update is disabled for api_only")
+	}
 	return s.downloadPricingData()
 }
 

@@ -253,6 +253,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		Priority:                a.Priority,
 		RateMultiplier:          a.BaseRateMultiplier(),
 		AdminUsageMultiplier:    a.AdminUsageRateMultiplier(),
+		UpstreamRechargeScale:   a.UpstreamRechargeConversionScale(),
 		Status:                  a.Status,
 		ErrorMessage:            a.ErrorMessage,
 		LastUsedAt:              a.LastUsedAt,

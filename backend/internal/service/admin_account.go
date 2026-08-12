@@ -300,6 +300,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		Priority:              source.Priority,
 		RateMultiplier:        cloneAccountValuePointer(source.RateMultiplier),
 		AdminUsageMultiplier:  cloneAccountValuePointer(source.AdminUsageMultiplier),
+		UpstreamRechargeScale: cloneAccountValuePointer(&source.UpstreamRechargeScale),
 		LoadFactor:            cloneAccountValuePointer(source.LoadFactor),
 		GroupIDs:              groupIDs,
 		ExpiresAt:             expiresAt,
@@ -375,7 +376,7 @@ func normalizeOpenAILongContextBillingExtra(platform string, extra map[string]an
 	}
 	_, exists := normalized[openAILongContextBillingEnabledKey]
 	if !exists {
-		normalized[openAILongContextBillingEnabledKey] = false
+		normalized[openAILongContextBillingEnabledKey] = true
 	}
 	return normalized, nil
 }
@@ -399,7 +400,7 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 // Grok media eligibility helpers live in account_grok_media_eligibility.go.
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
-	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
+	// 探测快照属于系统运行态；新建 OpenAI API Key 默认开启自动探测，调用方仍可显式关闭。
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingProbeExtraKey)
@@ -419,7 +420,11 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Status:      StatusActive,
 		Schedulable: true,
 	}
-	if input.ProbeEnabled != nil && *input.ProbeEnabled {
+	probeEnabled := input.Platform == PlatformOpenAI && input.Type == AccountTypeAPIKey
+	if input.ProbeEnabled != nil {
+		probeEnabled = *input.ProbeEnabled
+	}
+	if probeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
 			return nil, ErrUpstreamBillingProbeAccountInvalid
 		}
@@ -455,6 +460,13 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		return nil, err
 	}
 	account.AdminUsageMultiplier = input.AdminUsageMultiplier
+	if err := ValidateUpstreamRechargeScale(input.UpstreamRechargeScale); err != nil {
+		return nil, err
+	}
+	account.UpstreamRechargeScale = 1.0
+	if input.UpstreamRechargeScale != nil {
+		account.UpstreamRechargeScale = *input.UpstreamRechargeScale
+	}
 	if input.LoadFactor != nil && *input.LoadFactor > 0 {
 		if *input.LoadFactor > 10000 {
 			return nil, errors.New("load_factor must be <= 10000")
@@ -462,6 +474,17 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		account.LoadFactor = input.LoadFactor
 	}
 	return account, nil
+}
+
+// ValidateUpstreamRechargeScale 校验上游充值口径换算系数。
+func ValidateUpstreamRechargeScale(value *float64) error {
+	if value == nil {
+		return nil
+	}
+	if math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0.000001 || *value > 9999.999999 {
+		return errors.New("upstream_recharge_scale must be between 0.000001 and 9999.999999")
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
@@ -775,6 +798,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, err
 		}
 		account.AdminUsageMultiplier = input.AdminUsageMultiplier
+	}
+	if input.UpstreamRechargeScale != nil {
+		if err := ValidateUpstreamRechargeScale(input.UpstreamRechargeScale); err != nil {
+			return nil, err
+		}
+		account.UpstreamRechargeScale = *input.UpstreamRechargeScale
 	}
 	if input.LoadFactor != nil {
 		if *input.LoadFactor <= 0 {

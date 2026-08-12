@@ -904,6 +904,11 @@ export default {
       proxy: 'Proxy',
       noProxy: 'No Proxy',
       concurrency: 'Concurrency',
+      concurrencySort: {
+        title: 'Select concurrency sort metric',
+        total: 'Total concurrency',
+        current: 'Current concurrency usage'
+      },
       loadFactor: 'Load Factor',
       loadFactorHint: 'Higher load factor increases scheduling frequency',
       priority: 'Priority',
@@ -912,6 +917,8 @@ export default {
       billingRateMultiplierHint: '0 = free, affects account billing only',
       adminUsageMultiplier: 'Account Settlement Multiplier',
       adminUsageMultiplierHint: 'Multiplies the user/group settlement multiplier; admin-only, 0 makes settlement through this account free',
+      upstreamRechargeScale: 'Recharge Conversion Scale',
+      upstreamRechargeScaleHint: 'Multiplies upstream balance and declared rate; enter 0.1 for a 1:10 site',
       expiresAt: 'Expires At',
       expiresAtHint: 'Leave empty for no expiration',
       higherPriorityFirst: 'Lower value means higher priority',

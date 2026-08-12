@@ -11,6 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidateUpstreamRechargeScaleMatchesDatabasePrecision(t *testing.T) {
+	validMin := 0.000001
+	validMax := 9999.999999
+	belowPrecision := 0.0000001
+	overflow := 10000.0
+
+	require.NoError(t, ValidateUpstreamRechargeScale(&validMin))
+	require.NoError(t, ValidateUpstreamRechargeScale(&validMax))
+	require.Error(t, ValidateUpstreamRechargeScale(&belowPrecision))
+	require.Error(t, ValidateUpstreamRechargeScale(&overflow))
+}
+
 type upstreamBillingProbeAdminRepo struct {
 	*upstreamBillingProbeAccountRepo
 	manualRateUpdates []upstreamBillingManualRateUpdate
@@ -252,7 +264,8 @@ func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.NotContains(t, created.Extra, UpstreamBillingProbeEnabledExtraKey)
+	// 客户端 extra 中的系统字段先被清理，再由 OpenAI API Key 的专用默认逻辑开启探测。
+	require.Equal(t, true, created.Extra[UpstreamBillingProbeEnabledExtraKey])
 	require.NotContains(t, created.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, created.Extra, UpstreamBillingProbeExtraKey)
 }

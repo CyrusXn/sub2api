@@ -6,6 +6,7 @@ import (
 	"errors"
 	"hash/fnv"
 	"log/slog"
+	"math"
 	"net/url"
 	"reflect"
 	"sort"
@@ -37,14 +38,16 @@ type Account struct {
 	RateMultiplier *float64
 	// AdminUsageMultiplier 是仅管理端可配置的账号级附加倍率；nil 表示旧缓存缺字段，按 1.0 处理。
 	AdminUsageMultiplier *float64
-	LoadFactor           *int // 调度负载因子；nil 表示使用 Concurrency
-	Status               string
-	ErrorMessage         string
-	LastUsedAt           *time.Time
-	ExpiresAt            *time.Time
-	AutoPauseOnExpired   bool
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	// UpstreamRechargeScale 仅换算上游余额与声明倍率，默认按 1 处理。
+	UpstreamRechargeScale float64
+	LoadFactor            *int // 调度负载因子；nil 表示使用 Concurrency
+	Status                string
+	ErrorMessage          string
+	LastUsedAt            *time.Time
+	ExpiresAt             *time.Time
+	AutoPauseOnExpired    bool
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 
 	Schedulable bool
 
@@ -183,6 +186,14 @@ func (a *Account) AdminUsageRateMultiplier() float64 {
 		return 1.0
 	}
 	return *a.AdminUsageMultiplier
+}
+
+// UpstreamRechargeConversionScale 返回上游充值口径换算系数。
+func (a *Account) UpstreamRechargeConversionScale() float64 {
+	if a == nil || a.UpstreamRechargeScale <= 0 || math.IsNaN(a.UpstreamRechargeScale) || math.IsInf(a.UpstreamRechargeScale, 0) {
+		return 1.0
+	}
+	return a.UpstreamRechargeScale
 }
 
 func (a *Account) EffectiveLoadFactor() int {

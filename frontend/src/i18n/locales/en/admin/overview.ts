@@ -549,6 +549,11 @@ export default {
       total: 'Last 30d',
       sortBy: 'Sort By',
       sortCurrentPageOnly: 'Sorts current page only',
+      concurrencySort: {
+        title: 'Select concurrency sort metric',
+        total: 'Total concurrency',
+        current: 'Current concurrency usage'
+      },
       noSubscription: 'No subscription',
       publicGroupCount: '+{count} public',
       exclusiveLabel: 'exclusive',
@@ -830,6 +835,11 @@ export default {
       },
       usageToday: 'Today',
       usageTotal: 'Total',
+      concurrencySort: {
+        title: 'Select concurrency sort metric',
+        total: 'Total concurrency',
+        current: 'Current concurrency usage'
+      },
       accountsAvailable: 'Avail:',
       accountsRateLimited: 'Limited:',
       accountsTotal: 'Total:',

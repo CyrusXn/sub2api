@@ -125,6 +125,11 @@ func AdminUsageMultiplier(v float64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldAdminUsageMultiplier, v))
 }
 
+// UpstreamRechargeScale applies equality check predicate on the "upstream_recharge_scale" field. It's identical to UpstreamRechargeScaleEQ.
+func UpstreamRechargeScale(v float64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldUpstreamRechargeScale, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldStatus, v))
@@ -888,6 +893,46 @@ func AdminUsageMultiplierLT(v float64) predicate.Account {
 // AdminUsageMultiplierLTE applies the LTE predicate on the "admin_usage_multiplier" field.
 func AdminUsageMultiplierLTE(v float64) predicate.Account {
 	return predicate.Account(sql.FieldLTE(FieldAdminUsageMultiplier, v))
+}
+
+// UpstreamRechargeScaleEQ applies the EQ predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleEQ(v float64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldUpstreamRechargeScale, v))
+}
+
+// UpstreamRechargeScaleNEQ applies the NEQ predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleNEQ(v float64) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldUpstreamRechargeScale, v))
+}
+
+// UpstreamRechargeScaleIn applies the In predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleIn(vs ...float64) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldUpstreamRechargeScale, vs...))
+}
+
+// UpstreamRechargeScaleNotIn applies the NotIn predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleNotIn(vs ...float64) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldUpstreamRechargeScale, vs...))
+}
+
+// UpstreamRechargeScaleGT applies the GT predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleGT(v float64) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldUpstreamRechargeScale, v))
+}
+
+// UpstreamRechargeScaleGTE applies the GTE predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleGTE(v float64) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldUpstreamRechargeScale, v))
+}
+
+// UpstreamRechargeScaleLT applies the LT predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleLT(v float64) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldUpstreamRechargeScale, v))
+}
+
+// UpstreamRechargeScaleLTE applies the LTE predicate on the "upstream_recharge_scale" field.
+func UpstreamRechargeScaleLTE(v float64) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldUpstreamRechargeScale, v))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.

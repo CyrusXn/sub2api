@@ -2729,7 +2729,7 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
-      <div class="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div class="grid grid-cols-2 gap-4 lg:grid-cols-6">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
           <input v-model.number="form.concurrency" type="number" min="1" class="input"
@@ -2769,6 +2769,11 @@
             data-testid="account-admin-usage-multiplier"
           />
           <p class="input-hint">{{ t('admin.accounts.adminUsageMultiplierHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.upstreamRechargeScale') }}</label>
+          <input v-model.number="form.upstream_recharge_scale" type="number" min="0.000001" max="9999.999999" step="0.001" class="input" />
+          <p class="input-hint">{{ t('admin.accounts.upstreamRechargeScaleHint') }}</p>
         </div>
       </div>
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -3839,7 +3844,7 @@ const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
-const openAILongContextBillingEnabled = ref(false)
+const openAILongContextBillingEnabled = ref(true)
 const openAILongContextBillingTouched = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
@@ -4129,6 +4134,7 @@ const form = reactive({
   priority: 1,
   rate_multiplier: 1,
   admin_usage_multiplier: 1,
+  upstream_recharge_scale: 1,
   group_ids: [] as number[],
   expires_at: null as number | null
 })
@@ -4680,6 +4686,7 @@ const resetForm = () => {
   form.priority = 1
   form.rate_multiplier = 1
   form.admin_usage_multiplier = 1
+  form.upstream_recharge_scale = 1
   form.group_ids = []
   form.expires_at = null
   accountCategory.value = 'oauth-based'
@@ -4720,7 +4727,7 @@ const resetForm = () => {
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
-  openAILongContextBillingEnabled.value = false
+  openAILongContextBillingEnabled.value = true
   openAILongContextBillingTouched.value = false
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
@@ -5321,6 +5328,7 @@ const createAccountAndFinish = async (
     priority: form.priority,
     rate_multiplier: form.rate_multiplier,
     admin_usage_multiplier: form.admin_usage_multiplier,
+    upstream_recharge_scale: form.upstream_recharge_scale,
     group_ids: form.group_ids,
     expires_at: form.expires_at,
     // 上游倍率探测对全部 API-key 平台开放（antigravity upstream 走本 helper）；
@@ -5389,6 +5397,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           priority: form.priority,
           rate_multiplier: form.rate_multiplier,
           admin_usage_multiplier: form.admin_usage_multiplier,
+          upstream_recharge_scale: form.upstream_recharge_scale,
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
@@ -5458,6 +5467,7 @@ const handleGrokImportSSO = async (ssoInput: string) => {
       priority: form.priority,
       rate_multiplier: form.rate_multiplier,
       admin_usage_multiplier: form.admin_usage_multiplier,
+      upstream_recharge_scale: form.upstream_recharge_scale,
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value
     })
@@ -5567,6 +5577,8 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,
           rate_multiplier: form.rate_multiplier,
+          admin_usage_multiplier: form.admin_usage_multiplier,
+          upstream_recharge_scale: form.upstream_recharge_scale,
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
@@ -5667,6 +5679,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         priority: form.priority,
         rate_multiplier: form.rate_multiplier,
         admin_usage_multiplier: form.admin_usage_multiplier,
+        upstream_recharge_scale: form.upstream_recharge_scale,
         group_ids: form.group_ids,
         expires_at: form.expires_at,
         auto_pause_on_expired: autoPauseOnExpired.value
@@ -5773,6 +5786,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       priority: form.priority,
       rate_multiplier: form.rate_multiplier,
       admin_usage_multiplier: form.admin_usage_multiplier,
+      upstream_recharge_scale: form.upstream_recharge_scale,
       group_ids: form.group_ids,
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
@@ -5852,6 +5866,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
       priority: form.priority,
       rate_multiplier: form.rate_multiplier,
       admin_usage_multiplier: form.admin_usage_multiplier,
+      upstream_recharge_scale: form.upstream_recharge_scale,
       group_ids: form.group_ids,
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
@@ -5951,6 +5966,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             priority: form.priority,
             rate_multiplier: form.rate_multiplier,
             admin_usage_multiplier: form.admin_usage_multiplier,
+            upstream_recharge_scale: form.upstream_recharge_scale,
             group_ids: form.group_ids,
             expires_at: form.expires_at,
             auto_pause_on_expired: autoPauseOnExpired.value
@@ -6051,6 +6067,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           priority: form.priority,
           rate_multiplier: form.rate_multiplier,
           admin_usage_multiplier: form.admin_usage_multiplier,
+          upstream_recharge_scale: form.upstream_recharge_scale,
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
@@ -6433,6 +6450,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           priority: form.priority,
           rate_multiplier: form.rate_multiplier,
           admin_usage_multiplier: form.admin_usage_multiplier,
+          upstream_recharge_scale: form.upstream_recharge_scale,
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value

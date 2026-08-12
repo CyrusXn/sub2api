@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"time"
 
@@ -313,12 +314,20 @@ func ParseOpsUpstreamErrors(raw string) ([]*OpsUpstreamErrorEvent, error) {
 	return out, nil
 }
 
-// safeUpstreamURL returns scheme + host + path from a URL, stripping query/fragment
-// to avoid leaking sensitive query parameters (e.g. OAuth tokens).
+// safeUpstreamURL returns scheme + host + path from a URL, stripping userinfo,
+// query and fragment to avoid leaking embedded credentials or OAuth tokens.
 func safeUpstreamURL(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err == nil && parsed.Host != "" {
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.ForceQuery = false
+		parsed.Fragment = ""
+		return parsed.String()
 	}
 	if idx := strings.IndexByte(rawURL, '?'); idx >= 0 {
 		rawURL = rawURL[:idx]

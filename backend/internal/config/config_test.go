@@ -49,6 +49,72 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+func TestLoadDeploymentRoleFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DEPLOYMENT_ROLE", " API_ONLY ")
+	t.Setenv("TOTP_ENCRYPTION_KEY", strings.Repeat("a", 64))
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, DeploymentRoleAPIOnly, cfg.DeploymentRole)
+	require.True(t, cfg.IsAPIOnly())
+}
+
+func TestNormalizeDeploymentRole(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "空值使用主节点", value: "", want: DeploymentRolePrimary},
+		{name: "未知值保留给校验器拒绝", value: "worker", want: "worker"},
+		{name: "主节点忽略大小写和空格", value: " PRIMARY ", want: DeploymentRolePrimary},
+		{name: "API 节点忽略大小写和空格", value: " API_ONLY ", want: DeploymentRoleAPIOnly},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, NormalizeDeploymentRole(test.value))
+		})
+	}
+}
+
+func TestLoadAPIOnlyRequiresExplicitTOTPEncryptionKey(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DEPLOYMENT_ROLE", DeploymentRoleAPIOnly)
+	t.Setenv("TOTP_ENCRYPTION_KEY", "")
+
+	_, err := Load()
+	require.ErrorContains(t, err, "totp.encryption_key is required for api_only")
+}
+
+func TestLoadRejectsUnknownDeploymentRole(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DEPLOYMENT_ROLE", "api_onyl")
+
+	_, err := Load()
+	require.ErrorContains(t, err, "deployment_role must be one of: primary/api_only")
+}
+
+func TestDeploymentRoleBackgroundTaskPolicy(t *testing.T) {
+	primary := &Config{DeploymentRole: DeploymentRolePrimary}
+	apiOnly := &Config{DeploymentRole: DeploymentRoleAPIOnly}
+	invalid := &Config{DeploymentRole: "api_onyl"}
+
+	for _, task := range []BackgroundTask{
+		BackgroundTaskBackup,
+		BackgroundTaskScheduledTests,
+		BackgroundTaskChannelMonitor,
+		BackgroundTaskPeriodicSideEffect,
+	} {
+		require.True(t, primary.ShouldStartBackgroundTask(task), "primary 应启动 %s", task)
+		require.False(t, apiOnly.ShouldStartBackgroundTask(task), "api_only 不应启动 %s", task)
+		require.False(t, invalid.ShouldStartBackgroundTask(task), "非法角色不应启动 %s", task)
+	}
+	require.True(t, apiOnly.ShouldStartBackgroundTask(BackgroundTaskSchedulerSnapshot))
+	require.True(t, apiOnly.ShouldStartBackgroundTask(BackgroundTaskRuntimeSettings))
+}
+
 func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()

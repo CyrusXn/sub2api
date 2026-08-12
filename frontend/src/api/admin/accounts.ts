@@ -68,6 +68,7 @@ export async function list(
     lite?: string
     include_scheduler_score?: string
     sort_by?: string
+    concurrency_metric?: 'total' | 'current'
     sort_order?: 'asc' | 'desc'
   },
   options?: {
@@ -104,6 +105,7 @@ export async function listWithEtag(
     lite?: string
     include_scheduler_score?: string
     sort_by?: string
+    concurrency_metric?: 'total' | 'current'
     sort_order?: 'asc' | 'desc'
   },
   options?: {

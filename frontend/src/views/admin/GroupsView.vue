@@ -124,10 +124,31 @@
           :server-side-sort="true"
           default-sort-key="platform"
           default-sort-order="asc"
+          :active-sort-key="sortState.sort_by === 'concurrency' ? 'capacity' : sortState.sort_by"
+          :active-sort-order="sortState.sort_order"
           :column-width-storage-key="GROUP_COLUMN_WIDTH_STORAGE_KEY"
           :column-order-storage-key="GROUP_COLUMN_ORDER_STORAGE_KEY"
+          :persisted-column-widths="persistedColumnWidths"
+          :persisted-column-order="persistedColumnOrder"
           @sort="handleSort"
+          @column-widths-change="updateColumnWidths"
+          @column-order-change="updateColumnOrder"
         >
+          <template #header-capacity="{ column }">
+            <div class="relative flex items-center gap-1.5" data-concurrency-sort-menu>
+              <span>{{ column.label }}</span>
+              <button type="button" class="flex items-center gap-1 rounded px-1 py-0.5 text-gray-400 hover:bg-gray-200 dark:hover:bg-dark-700" :class="concurrencyMetricMenuOpen ? 'text-primary-600 dark:text-primary-400' : ''" :title="t('admin.groups.concurrencySort.title')" @click.stop="concurrencyMetricMenuOpen = !concurrencyMetricMenuOpen">
+                <span class="text-[10px] normal-case font-medium tracking-normal">{{ concurrencyMetric === 'current' ? t('admin.groups.concurrencySort.current') : t('admin.groups.concurrencySort.total') }}</span>
+                <Icon name="chevronDown" size="xs" />
+              </button>
+              <div v-if="concurrencyMetricMenuOpen" class="absolute left-0 top-full z-50 mt-1 min-w-[150px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800">
+                <button v-for="metric in (['total', 'current'] as const)" :key="metric" type="button" class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs normal-case tracking-normal hover:bg-gray-100 dark:hover:bg-dark-700" :class="concurrencyMetric === metric ? 'font-medium text-primary-600 dark:text-primary-400' : 'text-gray-700 dark:text-gray-300'" @click.stop="setConcurrencyMetric(metric)">
+                  <span>{{ metric === 'current' ? t('admin.groups.concurrencySort.current') : t('admin.groups.concurrencySort.total') }}</span>
+                  <Icon v-if="concurrencyMetric === metric" name="check" size="xs" />
+                </button>
+              </div>
+            </div>
+          </template>
           <template #cell-name="{ value }">
             <span class="font-medium text-gray-900 dark:text-white">{{
               value
@@ -4429,6 +4450,7 @@ import { createStableObjectKeyResolver } from "@/utils/stableObjectKey";
 import { extractApiErrorMessage } from "@/utils/apiError";
 import { useKeyedDebouncedSearch } from "@/composables/useKeyedDebouncedSearch";
 import { getPersistedPageSize } from "@/composables/usePersistedPageSize";
+import { useAdminTablePreference } from "@/composables/useAdminTablePreference";
 import {
   createDefaultMessagesDispatchFormState,
   messagesDispatchConfigToFormState,
@@ -4535,7 +4557,7 @@ const allColumns = computed<Column[]>(() => [
   {
     key: "capacity",
     label: t("admin.groups.columns.capacity"),
-    sortable: false,
+    sortable: true,
   },
   { key: "usage", label: t("admin.groups.columns.usage"), sortable: false },
   { key: "status", label: t("admin.groups.columns.status"), sortable: true },
@@ -4548,6 +4570,14 @@ const toggleableColumns = computed(() =>
 const hiddenColumns = reactive<Set<string>>(new Set());
 const showColumnDropdown = ref(false);
 const columnDropdownRef = ref<HTMLElement | null>(null);
+const {
+  persistedColumnWidths,
+  persistedColumnOrder,
+  load: loadTablePreference,
+  updateHiddenColumns,
+  updateColumnWidths,
+  updateColumnOrder,
+} = useAdminTablePreference("groups");
 
 const getValidHiddenColumnKeys = () =>
   new Set(toggleableColumns.value.map((col) => col.key));
@@ -4635,6 +4665,7 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key);
   }
   saveColumnsToStorage();
+  updateHiddenColumns([...hiddenColumns]);
 
   if (wasHidden && (key === "usage" || key === "billing_type")) {
     loadUsageSummary();
@@ -4884,6 +4915,16 @@ const sortState = reactive({
   sort_by: "platform",
   sort_order: "asc" as "asc" | "desc",
 });
+type ConcurrencyMetric = "total" | "current";
+const concurrencyMetric = ref<ConcurrencyMetric>("total");
+const concurrencyMetricMenuOpen = ref(false);
+const setConcurrencyMetric = (metric: ConcurrencyMetric) => {
+  concurrencyMetric.value = metric;
+  concurrencyMetricMenuOpen.value = false;
+  sortState.sort_by = "concurrency";
+  pagination.page = 1;
+  loadGroups();
+};
 
 let abortController: AbortController | null = null;
 
@@ -5627,6 +5668,10 @@ const loadGroups = async () => {
           : undefined,
         search: searchQuery.value.trim() || undefined,
         sort_by: sortState.sort_by,
+        concurrency_metric:
+          sortState.sort_by === "concurrency"
+            ? concurrencyMetric.value
+            : undefined,
         sort_order: sortState.sort_order,
       },
       { signal },
@@ -5764,7 +5809,7 @@ const handlePageSizeChange = (pageSize: number) => {
 };
 
 const handleSort = (key: string, order: 'asc' | 'desc') => {
-  sortState.sort_by = key;
+  sortState.sort_by = key === "capacity" ? "concurrency" : key;
   sortState.sort_order = order;
   pagination.page = 1;
   loadGroups();
@@ -6700,6 +6745,9 @@ const handleClickOutside = (event: MouseEvent) => {
   if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
     showColumnDropdown.value = false;
   }
+  if (!target.closest('[data-concurrency-sort-menu]')) {
+    concurrencyMetricMenuOpen.value = false;
+  }
 };
 
 // 打开排序弹窗
@@ -6757,7 +6805,22 @@ const saveSortOrder = async () => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
+  const restoredHiddenColumns = await loadTablePreference({
+    hiddenColumns: [...hiddenColumns],
+    columnWidths: {},
+    columnOrder: [],
+  }, {
+    columnWidthStorageKey: GROUP_COLUMN_WIDTH_STORAGE_KEY,
+    columnOrderStorageKey: GROUP_COLUMN_ORDER_STORAGE_KEY,
+  });
+  if (restoredHiddenColumns) {
+    hiddenColumns.clear();
+    restoredHiddenColumns.forEach((key) => hiddenColumns.add(key));
+    saveColumnsToStorage();
+  } else {
+    updateHiddenColumns([...hiddenColumns]);
+  }
   loadGroups();
   void loadLiveCapability();
   loadModelsListCandidates("create", 0, createForm.platform);

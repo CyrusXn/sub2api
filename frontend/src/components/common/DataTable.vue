@@ -357,6 +357,8 @@ const emit = defineEmits<{
   rowClick: [row: any]
   'update:selectedKeys': [keys: Array<string | number>]
   selectionChange: [keys: Array<string | number>]
+  columnWidthsChange: [widths: Record<string, number>]
+  columnOrderChange: [order: string[]]
 }>()
 
 // 表格容器引用
@@ -525,6 +527,9 @@ interface Props {
    */
   defaultSortKey?: string
   defaultSortOrder?: 'asc' | 'desc'
+  /** 页面受控的当前排序状态，用于自定义复合表头同步排序箭头。 */
+  activeSortKey?: string
+  activeSortOrder?: 'asc' | 'desc'
   /**
    * Persist sort state (key + order) to localStorage using this key.
    * If provided, DataTable will load the stored sort state on mount.
@@ -537,6 +542,10 @@ interface Props {
   columnWidthStorageKey?: string
   /** Persist user-dragged column order to localStorage using this key. */
   columnOrderStorageKey?: string
+  /** 数据库恢复的列宽；提供后覆盖本地缓存。 */
+  persistedColumnWidths?: Record<string, number>
+  /** 数据库恢复的列顺序；提供后覆盖本地缓存。 */
+  persistedColumnOrder?: string[]
   /** 是否允许拖拽调整列顺序，默认开启；只有提供 columnOrderStorageKey 时才会生效 */
   reorderableColumns?: boolean
   /** 是否允许拖拽调整列宽，默认开启 */
@@ -701,7 +710,7 @@ const getColumnWidthStyle = (column: Column) => {
 }
 
 const syncColumnWidthsFromProps = () => {
-  const persisted = readPersistedColumnWidths()
+  const persisted = props.persistedColumnWidths ?? readPersistedColumnWidths()
   const next: Record<string, number> = {}
   for (const column of props.columns) {
     const width = persisted[column.key]
@@ -749,7 +758,7 @@ const writePersistedColumnOrder = (keys: string[]) => {
 }
 
 const syncColumnOrderFromProps = () => {
-  orderedColumnKeys.value = normalizeColumnOrder(readPersistedColumnOrder())
+  orderedColumnKeys.value = normalizeColumnOrder(props.persistedColumnOrder ?? readPersistedColumnOrder())
 }
 
 const orderedColumns = computed(() => {
@@ -810,6 +819,7 @@ const dropColumn = (event: DragEvent, column: Column) => {
   next.splice(toIndex, 0, moved)
   orderedColumnKeys.value = normalizeColumnOrder(next)
   writePersistedColumnOrder(orderedColumnKeys.value)
+  emit('columnOrderChange', orderedColumnKeys.value)
   suppressSortUntil = Date.now() + 120
   endColumnDrag()
   nextTick(() => {
@@ -869,6 +879,7 @@ const finishColumnResize = (event?: PointerEvent) => {
   if (!isResizing.value) return
   if (event && resizePointerID !== null && event.pointerId !== resizePointerID) return
   writePersistedColumnWidths(columnWidths.value)
+  emit('columnWidthsChange', { ...columnWidths.value })
   cleanupColumnResizeListeners()
   resizingColumnKey.value = null
   // 避免松手时误触发排序。
@@ -887,6 +898,7 @@ const resetColumnWidth = (columnKey: string) => {
   delete next[columnKey]
   columnWidths.value = next
   writePersistedColumnWidths(next)
+  emit('columnWidthsChange', { ...next })
   nextTick(() => checkScrollable())
 }
 
@@ -993,6 +1005,11 @@ const writePersistedSortState = (state: PersistedSortState) => {
 }
 
 const resolveInitialSortState = (): PersistedSortState | null => {
+  // 页面传入的排序是受控状态时，优先于本地缓存和默认值。
+  if (props.activeSortKey) {
+    const key = normalizeSortKey(props.activeSortKey)
+    if (key) return { key, order: normalizeSortOrder(props.activeSortOrder) }
+  }
   const persisted = readPersistedSortState()
   if (persisted) return persisted
 
@@ -1128,6 +1145,30 @@ watch(
   () => {
     syncColumnOrderFromProps()
   }
+)
+
+watch(
+  () => [props.activeSortKey, props.activeSortOrder] as const,
+  ([key, order]) => {
+    if (!key) return
+    const normalized = normalizeSortKey(key)
+    if (!normalized) return
+    sortKey.value = normalized
+    sortOrder.value = normalizeSortOrder(order)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.persistedColumnWidths,
+  () => syncColumnWidthsFromProps(),
+  { deep: true }
+)
+
+watch(
+  () => props.persistedColumnOrder,
+  () => syncColumnOrderFromProps(),
+  { deep: true }
 )
 
 // 单独监听展开状态变化，只更新滚动状态
@@ -1382,6 +1423,14 @@ onMounted(() => {
 watch(
   columnsSignature,
   () => {
+    if (props.activeSortKey) {
+      const key = normalizeSortKey(props.activeSortKey)
+      if (key) {
+        sortKey.value = key
+        sortOrder.value = normalizeSortOrder(props.activeSortOrder)
+        return
+      }
+    }
     // If current sort key is no longer sortable/visible, fall back to default/persisted.
     const normalized = normalizeSortKey(sortKey.value)
     if (!sortKey.value) {

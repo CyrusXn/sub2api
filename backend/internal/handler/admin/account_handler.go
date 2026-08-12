@@ -128,6 +128,7 @@ type CreateAccountRequest struct {
 	Priority                int            `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
 	AdminUsageMultiplier    *float64       `json:"admin_usage_multiplier"`
+	UpstreamRechargeScale   *float64       `json:"upstream_recharge_scale"`
 	LoadFactor              *int           `json:"load_factor"`
 	GroupIDs                []int64        `json:"group_ids"`
 	ExpiresAt               *int64         `json:"expires_at"`
@@ -169,6 +170,7 @@ type UpdateAccountRequest struct {
 	Priority                            *int                 `json:"priority"`
 	RateMultiplier                      *float64             `json:"rate_multiplier"`
 	AdminUsageMultiplier                *float64             `json:"admin_usage_multiplier"`
+	UpstreamRechargeScale               *float64             `json:"upstream_recharge_scale"`
 	LoadFactor                          *int                 `json:"load_factor"`
 	Status                              string               `json:"status" binding:"omitempty,oneof=active inactive error"`
 	GroupIDs                            *[]int64             `json:"group_ids"`
@@ -562,7 +564,41 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	concurrencyMetric := normalizeConcurrencyMetric(c.Query("concurrency_metric"))
+	concurrencyCounts := make(map[int64]int)
+	var accounts []service.Account
+	var total int64
+	var err error
+	if sortBy == "concurrency" {
+		accounts, err = h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
+		if err == nil {
+			accountIDs := make([]int64, len(accounts))
+			for i := range accounts {
+				accountIDs[i] = accounts[i].ID
+			}
+			if h.concurrencyService == nil {
+				err = errors.New("account concurrency service is unavailable")
+			} else {
+				concurrencyCounts, err = h.concurrencyService.GetAccountConcurrencyBatch(c.Request.Context(), accountIDs)
+			}
+		}
+		if err == nil {
+			sort.SliceStable(accounts, func(i, j int) bool {
+				left, right := accounts[i].Concurrency, accounts[j].Concurrency
+				if concurrencyMetric == "current" {
+					left, right = concurrencyCounts[accounts[i].ID], concurrencyCounts[accounts[j].ID]
+				}
+				if left == right {
+					return compareConcurrencyTie(accounts[i].ID, accounts[j].ID, sortOrder)
+				}
+				return compareConcurrencyValue(left, right, sortOrder)
+			})
+			total = int64(len(accounts))
+			accounts = paginateSlice(accounts, page, pageSize)
+		}
+	} else {
+		accounts, total, err = h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -584,7 +620,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 		accountIDs[i] = acc.ID
 	}
 
-	concurrencyCounts := make(map[int64]int)
 	var windowCosts map[int64]float64
 	var activeSessions map[int64]int
 	var rpmCounts map[int64]int
@@ -604,7 +639,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	}
 
 	// 始终获取并发数（Redis ZCARD，极低开销）
-	if h.concurrencyService != nil {
+	if sortBy != "concurrency" && h.concurrencyService != nil {
 		if cc, ccErr := h.concurrencyService.GetAccountConcurrencyBatch(c.Request.Context(), accountIDs); ccErr == nil && cc != nil {
 			concurrencyCounts = cc
 		}
@@ -868,6 +903,10 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if err := service.ValidateUpstreamRechargeScale(req.UpstreamRechargeScale); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
@@ -891,6 +930,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 			Priority:              req.Priority,
 			RateMultiplier:        req.RateMultiplier,
 			AdminUsageMultiplier:  req.AdminUsageMultiplier,
+			UpstreamRechargeScale: req.UpstreamRechargeScale,
 			LoadFactor:            req.LoadFactor,
 			GroupIDs:              req.GroupIDs,
 			ExpiresAt:             req.ExpiresAt,
@@ -1009,6 +1049,10 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if err := service.ValidateUpstreamRechargeScale(req.UpstreamRechargeScale); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
@@ -1026,6 +1070,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		Priority:                               req.Priority,    // 指针类型，nil 表示未提供
 		RateMultiplier:                         req.RateMultiplier,
 		AdminUsageMultiplier:                   req.AdminUsageMultiplier,
+		UpstreamRechargeScale:                  req.UpstreamRechargeScale,
 		LoadFactor:                             req.LoadFactor,
 		Status:                                 req.Status,
 		GroupIDs:                               req.GroupIDs,

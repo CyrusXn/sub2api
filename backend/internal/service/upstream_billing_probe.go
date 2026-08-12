@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -344,13 +345,16 @@ func ProvideUpstreamBillingProbeService(
 	balanceCenterService *BalanceCenterService,
 	lockCache LeaderLockCache,
 	db *sql.DB,
+	cfg *config.Config,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetUpstreamSiteCredentialService(upstreamSites)
 	svc.SetBalanceCenterEventService(balanceCenterEvents)
 	svc.SetBalanceCenterRepository(balanceCenterService)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -793,6 +797,8 @@ func upstreamBillingSupportsWebAccount(baseURL string) bool {
 		"ai.pite.chat",
 		"tsyjzzz.com",
 		"hubway.cc",
+		"mxamaxai.com",
+		"ai.maok.shop",
 		"pool.chaozhiyuanai.com",
 		"onebool.com",
 		"sub.anzhiyu.com",
@@ -817,7 +823,7 @@ func (s *UpstreamBillingProbeService) persistProbeSuccess(
 	data map[string]any,
 	balance *UpstreamAccountBalanceSnapshot,
 ) (*UpstreamBillingProbeSnapshot, error) {
-	normalizeHBYBillingProbeResult(account, data, balance)
+	applyUpstreamRechargeScale(account, data, balance)
 	snapshot := &UpstreamBillingProbeSnapshot{
 		Status:        UpstreamBillingProbeStatusOK,
 		Data:          data,
@@ -864,7 +870,7 @@ func (s *UpstreamBillingProbeService) persistProbeSuccess(
 	return snapshot, nil
 }
 
-func normalizeHBYBillingProbeResult(
+func applyUpstreamRechargeScale(
 	account *Account,
 	data map[string]any,
 	balance *UpstreamAccountBalanceSnapshot,
@@ -872,12 +878,11 @@ func normalizeHBYBillingProbeResult(
 	if account == nil {
 		return
 	}
-	parsed, err := url.Parse(strings.TrimSpace(account.GetCredential("base_url")))
-	if err != nil || strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".") != "hubway.cc" {
+	scale := account.UpstreamRechargeConversionScale()
+	if scale == 1 {
 		return
 	}
-	// HBY 的站内金额单位为充值金额的 10 倍；在落快照前统一换算，
-	// 让展示、自动倍率同步、排序和调度始终消费同一份真实数值。
+	// 统一换算后，展示、自动倍率同步和排序始终消费真实充值口径。
 	for _, key := range []string{
 		"group_rate_multiplier",
 		"user_rate_multiplier",
@@ -885,11 +890,11 @@ func normalizeHBYBillingProbeResult(
 		"effective_rate_multiplier",
 	} {
 		if value, ok := resolveAccountExtraNumber(data, key); ok {
-			data[key] = value / 10
+			data[key] = value * scale
 		}
 	}
 	if balance != nil && balance.Amount != nil {
-		amount := *balance.Amount / 10
+		amount := *balance.Amount * scale
 		balance.Amount = &amount
 	}
 }
@@ -1441,7 +1446,15 @@ func (s *UpstreamBillingProbeService) fetchInnomAccountBalance(
 	tlsProfile *tlsfingerprint.Profile,
 	now time.Time,
 ) *UpstreamAccountBalanceSnapshot {
-	req, cancel, err := s.newWebAccountRequest(ctx, http.MethodGet, baseURL, "/api/v1/auth/me", nil, nil)
+	profilePath := "/api/v1/auth/me"
+	if parsed, err := url.Parse(baseURL); err == nil {
+		switch strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".") {
+		case "hubway.cc", "mxamaxai.com", "ai.maok.shop":
+			// 这些站点的当前登录态资料接口使用 user/profile，旧 auth/me 不返回余额。
+			profilePath = "/api/v1/user/profile"
+		}
+	}
+	req, cancel, err := s.newWebAccountRequest(ctx, http.MethodGet, baseURL, profilePath, nil, nil)
 	if err != nil {
 		return failedUpstreamAccountBalance(now, 0, "request_build_failed")
 	}

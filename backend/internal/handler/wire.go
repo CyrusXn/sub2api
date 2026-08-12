@@ -18,6 +18,7 @@ func ProvideAdminHandlers(
 	groupHandler *admin.GroupHandler,
 	accountHandler *admin.AccountHandler,
 	balanceCenterHandler *admin.BalanceCenterHandler,
+	tablePreferenceHandler *admin.TablePreferenceHandler,
 	announcementHandler *admin.AnnouncementHandler,
 	dataManagementHandler *admin.DataManagementHandler,
 	backupHandler *admin.BackupHandler,
@@ -61,6 +62,7 @@ func ProvideAdminHandlers(
 		Group:                  groupHandler,
 		Account:                accountHandler,
 		BalanceCenter:          balanceCenterHandler,
+		TablePreference:        tablePreferenceHandler,
 		Announcement:           announcementHandler,
 		DataManagement:         dataManagementHandler,
 		Backup:                 backupHandler,
@@ -249,6 +251,7 @@ var ProviderSet = wire.NewSet(
 	NewModelPlazaHandler,
 	NewAsyncImageHandler,
 	ProvideBatchImageHandler,
+	admin.NewTablePreferenceHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

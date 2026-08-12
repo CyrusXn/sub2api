@@ -289,7 +289,15 @@
           default-sort-key="created_at"
           default-sort-order="desc"
           :sort-storage-key="USER_SORT_STORAGE_KEY"
+          :active-sort-key="sortState.sort_by"
+          :active-sort-order="sortState.sort_order"
+          :column-width-storage-key="USER_COLUMN_WIDTH_STORAGE_KEY"
+          :column-order-storage-key="USER_COLUMN_ORDER_STORAGE_KEY"
+          :persisted-column-widths="persistedColumnWidths"
+          :persisted-column-order="persistedColumnOrder"
           @sort="handleSort"
+          @column-widths-change="updateColumnWidths"
+          @column-order-change="updateColumnOrder"
           @update:selected-keys="handleSelectedKeysUpdate"
         >
           <template #cell-email="{ value }">
@@ -563,6 +571,28 @@
             </div>
           </template>
 
+          <template #header-concurrency="{ column }">
+            <div class="relative flex items-center gap-1.5" data-concurrency-sort-menu>
+              <span>{{ column.label }}</span>
+              <button
+                type="button"
+                class="flex items-center gap-1 rounded px-1 py-0.5 text-gray-400 hover:bg-gray-200 dark:hover:bg-dark-700"
+                :class="concurrencyMetricMenuOpen ? 'text-primary-600 dark:text-primary-400' : ''"
+                :title="t('admin.users.concurrencySort.title')"
+                @click.stop="concurrencyMetricMenuOpen = !concurrencyMetricMenuOpen"
+              >
+                <span class="text-[10px] normal-case font-medium tracking-normal">{{ concurrencyMetric === 'current' ? t('admin.users.concurrencySort.current') : t('admin.users.concurrencySort.total') }}</span>
+                <Icon name="chevronDown" size="xs" />
+              </button>
+              <div v-if="concurrencyMetricMenuOpen" class="absolute left-0 top-full z-50 mt-1 min-w-[150px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800">
+                <button v-for="metric in (['total', 'current'] as const)" :key="metric" type="button" class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs normal-case tracking-normal hover:bg-gray-100 dark:hover:bg-dark-700" :class="concurrencyMetric === metric ? 'font-medium text-primary-600 dark:text-primary-400' : 'text-gray-700 dark:text-gray-300'" @click.stop="setConcurrencyMetric(metric)">
+                  <span>{{ metric === 'current' ? t('admin.users.concurrencySort.current') : t('admin.users.concurrencySort.total') }}</span>
+                  <Icon v-if="concurrencyMetric === metric" name="check" size="xs" />
+                </button>
+              </div>
+            </div>
+          </template>
+
           <template #cell-usage="{ row }">
             <PlatformUsageBreakdown
               :today="usageStats[row.id]?.today_actual_cost ?? 0"
@@ -801,6 +831,7 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useAdminTablePreference } from '@/composables/useAdminTablePreference'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDateTime } from '@/utils/format'
 import Icon from '@/components/icons/Icon.vue'
@@ -933,6 +964,8 @@ const FORCED_VISIBLE_COLUMNS = new Set<string>()
 
 // localStorage keys for column settings
 const HIDDEN_COLUMNS_KEY = 'user-hidden-columns'
+const USER_COLUMN_WIDTH_STORAGE_KEY = 'user-table-column-widths:v1'
+const USER_COLUMN_ORDER_STORAGE_KEY = 'user-table-column-order:v1'
 // 列设置 schema 版本号。每次给 DEFAULT_HIDDEN_COLUMNS 新增列时 bump 一次，
 // 并在 VERSION_NEW_HIDDEN_COLUMNS 中登记该版本新增的 key。
 // 这样老用户升级后这些新列会被自动隐藏一次，而不会影响他们对其它老列的偏好。
@@ -1003,6 +1036,7 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   saveColumnsToStorage()
+  updateHiddenColumns([...hiddenColumns])
   if (wasHidden && (key === 'usage' || key.startsWith('usage_') || key.startsWith('attr_') || key === 'balance_platform_quota')) {
     refreshCurrentPageSecondaryData()
   }
@@ -1067,6 +1101,25 @@ const loadInitialSortState = (): { sort_by: string; sort_order: 'asc' | 'desc' }
   }
 }
 const sortState = reactive(loadInitialSortState())
+type ConcurrencyMetric = 'total' | 'current'
+const concurrencyMetric = ref<ConcurrencyMetric>('total')
+const concurrencyMetricMenuOpen = ref(false)
+const setConcurrencyMetric = (metric: ConcurrencyMetric) => {
+  concurrencyMetric.value = metric
+  concurrencyMetricMenuOpen.value = false
+  clearUsageSort()
+  sortState.sort_by = 'concurrency'
+  pagination.page = 1
+  loadUsers()
+}
+const {
+  persistedColumnWidths,
+  persistedColumnOrder,
+  load: loadTablePreference,
+  updateHiddenColumns,
+  updateColumnWidths,
+  updateColumnOrder
+} = useAdminTablePreference('users')
 
 // Groups data for the groups column and the existing "authorised group" filter (active only)
 const allGroups = ref<AdminGroup[]>([])
@@ -1513,6 +1566,9 @@ const handleClickOutside = (event: MouseEvent) => {
   if (openUsageSortMenu.value !== null && !target.closest('.usage-sort-trigger')) {
     openUsageSortMenu.value = null
   }
+  if (!target.closest('[data-concurrency-sort-menu]')) {
+    concurrencyMetricMenuOpen.value = false
+  }
   // Close expanded group dropdown when clicking outside
   if (expandedGroupUserId.value !== null) {
     expandedGroupUserId.value = null
@@ -1594,6 +1650,7 @@ const loadUsers = async () => {
         // 始终请求 subscriptions：列隐藏时仍需用于 UserPlatformQuotaModal 的 active-subscription 警示 banner
         include_subscriptions: true,
         sort_by: sortState.sort_by,
+        concurrency_metric: sortState.sort_by === 'concurrency' ? concurrencyMetric.value : undefined,
         sort_order: sortState.sort_order
       },
       { signal }
@@ -1842,6 +1899,21 @@ onMounted(async () => {
   await loadAttributeDefinitions()
   loadSavedFilters()
   loadSavedColumns()
+  const restoredHiddenColumns = await loadTablePreference({
+    hiddenColumns: [...hiddenColumns],
+    columnWidths: {},
+    columnOrder: []
+  }, {
+    columnWidthStorageKey: USER_COLUMN_WIDTH_STORAGE_KEY,
+    columnOrderStorageKey: USER_COLUMN_ORDER_STORAGE_KEY
+  })
+  if (restoredHiddenColumns) {
+    hiddenColumns.clear()
+    restoredHiddenColumns.forEach((key) => hiddenColumns.add(key))
+    saveColumnsToStorage()
+  } else {
+    updateHiddenColumns([...hiddenColumns])
+  }
   loadUsers()
   if (hasVisibleGroupsColumn.value || visibleFilters.has('group')) {
     loadAllGroups()

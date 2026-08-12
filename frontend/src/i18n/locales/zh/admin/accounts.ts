@@ -968,6 +968,11 @@ export default {
       proxy: '代理',
       noProxy: '无代理',
       concurrency: '并发数',
+      concurrencySort: {
+        title: '选择并发排序指标',
+        total: '总并发数',
+        current: '当前使用并发数'
+      },
       loadFactor: '负载因子',
       loadFactorHint: '提高负载因子可以提高对账号的调度频率',
       priority: '优先级',
@@ -976,6 +981,8 @@ export default {
       billingRateMultiplierHint: '0 表示不计费，仅影响账号计费',
       adminUsageMultiplier: '账号结算附加倍率',
       adminUsageMultiplierHint: '用户/分组附加倍率会再乘以此值；仅管理端可见，0 表示该账号结算免费',
+      upstreamRechargeScale: '充值换算系数',
+      upstreamRechargeScaleHint: '余额和上游声明倍率统一乘此值；1:10 的站点填写 0.1',
       expiresAt: '过期时间',
       expiresAtHint: '留空表示不过期',
       higherPriorityFirst: '数值越小优先级越高',

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"html"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -35,6 +37,11 @@ const (
 	dailyLowBalanceReminderLockKey      = "balance:daily-low-reminder"
 	insufficientBalanceNotifyCooldown   = 3 * time.Minute
 	insufficientBalanceNotifyLockPrefix = "balance:insufficient-notify:"
+
+	balanceNotifyRelayKey           = "balance:notify:relay"
+	balanceNotifyRelayProcessingKey = "balance:notify:processing"
+	balanceNotifyRelayMaxBatches    = 4096
+	balanceNotifyRelayTimeout       = time.Second
 )
 
 // quotaDimLabels maps dimension names to display labels.
@@ -63,22 +70,64 @@ type BalanceNotifyService struct {
 	dailyReminderRepo        LowBalanceReminderRepository
 	leaderLockCache          LeaderLockCache
 	leaderLockDB             *sql.DB
+	redisClient              *redis.Client
 	instanceID               string
 	dailyStartOnce           sync.Once
+	relayStartOnce           sync.Once
+	relayStopOnce            sync.Once
+	relayStopCh              chan struct{}
+	relayWG                  sync.WaitGroup
+	relayEventCh             chan *balanceNotifyRelayEvent
 	insufficientNotifyGroup  singleflight.Group
 	insufficientNotifyMu     sync.Mutex
 	insufficientNotifyUntil  map[int64]time.Time
 	now                      func() time.Time
+	deliveryEnabled          bool
+	relayOnly                bool
+}
+
+type balanceNotifyRelayEvent struct {
+	ID             string                       `json:"id"`
+	Type           string                       `json:"type"`
+	User           *balanceNotifyRelayUser      `json:"user,omitempty"`
+	AccountID      int64                        `json:"account_id,omitempty"`
+	AccountName    string                       `json:"account_name,omitempty"`
+	Platform       string                       `json:"platform,omitempty"`
+	OldBalance     float64                      `json:"old_balance,omitempty"`
+	CurrentBalance float64                      `json:"current_balance,omitempty"`
+	Cost           float64                      `json:"cost,omitempty"`
+	QuotaDims      []balanceNotifyRelayQuotaDim `json:"quota_dims,omitempty"`
+}
+
+type balanceNotifyRelayUser struct {
+	ID             int64              `json:"id"`
+	Email          string             `json:"email"`
+	Username       string             `json:"username"`
+	NotifyEnabled  bool               `json:"notify_enabled"`
+	ThresholdType  string             `json:"threshold_type"`
+	Threshold      *float64           `json:"threshold,omitempty"`
+	ExtraEmails    []NotifyEmailEntry `json:"extra_emails,omitempty"`
+	TotalRecharged float64            `json:"total_recharged"`
+}
+
+type balanceNotifyRelayQuotaDim struct {
+	Name          string  `json:"name"`
+	Enabled       bool    `json:"enabled"`
+	Threshold     float64 `json:"threshold"`
+	ThresholdType string  `json:"threshold_type"`
+	CurrentUsed   float64 `json:"current_used"`
+	Limit         float64 `json:"limit"`
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
 func NewBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountQuotaReader) *BalanceNotifyService {
 	return &BalanceNotifyService{
-		emailService: emailService,
-		settingRepo:  settingRepo,
-		accountRepo:  accountRepo,
-		instanceID:   uuid.NewString(),
-		now:          time.Now,
+		emailService:    emailService,
+		settingRepo:     settingRepo,
+		accountRepo:     accountRepo,
+		instanceID:      uuid.NewString(),
+		now:             time.Now,
+		deliveryEnabled: true,
 	}
 }
 
@@ -91,6 +140,302 @@ func (s *BalanceNotifyService) SetDailyReminderDependencies(repo LowBalanceRemin
 	s.dailyReminderRepo = repo
 	s.leaderLockCache = lockCache
 	s.leaderLockDB = db
+}
+
+// ConfigureRelay 配置跨节点通知中继；api_only 仅生产，primary 仅消费。
+func (s *BalanceNotifyService) ConfigureRelay(redisClient *redis.Client, relayOnly bool) {
+	if s == nil {
+		return
+	}
+	s.redisClient = redisClient
+	s.relayOnly = relayOnly
+	s.deliveryEnabled = !relayOnly
+	if redisClient == nil {
+		return
+	}
+	s.relayStartOnce.Do(func() {
+		s.relayStopCh = make(chan struct{})
+		s.relayEventCh = make(chan *balanceNotifyRelayEvent, 256)
+		s.relayWG.Add(1)
+		if relayOnly {
+			go s.runBalanceNotifyRelayProducer()
+		} else {
+			go s.runBalanceNotifyRelayConsumer()
+		}
+	})
+}
+
+func (s *BalanceNotifyService) Stop() {
+	if s == nil {
+		return
+	}
+	s.relayStopOnce.Do(func() {
+		if s.relayStopCh != nil {
+			close(s.relayStopCh)
+		}
+	})
+	s.relayWG.Wait()
+}
+
+func (s *BalanceNotifyService) enqueueRelayEvent(event *balanceNotifyRelayEvent) {
+	if s == nil || !s.relayOnly || event == nil || s.relayEventCh == nil {
+		return
+	}
+	if event.ID == "" {
+		event.ID = uuid.NewString()
+	}
+	select {
+	case s.relayEventCh <- event:
+	default:
+		slog.Warn("余额通知中继队列已满，丢弃本次通知", "event_type", event.Type)
+	}
+}
+
+func (s *BalanceNotifyService) runBalanceNotifyRelayProducer() {
+	defer s.relayWG.Done()
+	for {
+		select {
+		case event := <-s.relayEventCh:
+			s.publishBalanceNotifyRelayEvent(event)
+		case <-s.relayStopCh:
+			for {
+				select {
+				case event := <-s.relayEventCh:
+					s.publishBalanceNotifyRelayEvent(event)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *BalanceNotifyService) publishBalanceNotifyRelayEvent(event *balanceNotifyRelayEvent) {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		slog.Error("编码余额通知中继事件失败", "event_type", event.Type, "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), balanceNotifyRelayTimeout)
+	defer cancel()
+	pipe := s.redisClient.TxPipeline()
+	pipe.RPush(ctx, balanceNotifyRelayKey, payload)
+	pipe.LTrim(ctx, balanceNotifyRelayKey, -balanceNotifyRelayMaxBatches, -1)
+	if _, err := pipe.Exec(ctx); err != nil {
+		slog.Error("发布余额通知中继事件失败", "event_type", event.Type, "error", err)
+	}
+}
+
+func (s *BalanceNotifyService) runBalanceNotifyRelayConsumer() {
+	defer s.relayWG.Done()
+	s.recoverBalanceNotifyRelayProcessing()
+	for {
+		select {
+		case <-s.relayStopCh:
+			return
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*balanceNotifyRelayTimeout)
+		payload, err := s.redisClient.BLMove(
+			ctx, balanceNotifyRelayKey, balanceNotifyRelayProcessingKey,
+			"LEFT", "RIGHT", balanceNotifyRelayTimeout,
+		).Result()
+		cancel()
+		if err != nil {
+			if err != redis.Nil && err != context.DeadlineExceeded && err != context.Canceled {
+				slog.Error("消费余额通知中继事件失败", "error", err)
+			}
+			continue
+		}
+		select {
+		case <-s.relayStopCh:
+			s.retryBalanceNotifyRelay(payload)
+			return
+		default:
+		}
+		var event balanceNotifyRelayEvent
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			slog.Error("解码余额通知中继事件失败", "error", err)
+			s.ackBalanceNotifyRelay(payload)
+			continue
+		}
+		if s.handleBalanceNotifyRelayEvent(&event) {
+			s.ackBalanceNotifyRelay(payload)
+			continue
+		}
+		s.retryBalanceNotifyRelay(payload)
+		timer := time.NewTimer(balanceNotifyRelayTimeout)
+		select {
+		case <-timer.C:
+		case <-s.relayStopCh:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		}
+	}
+}
+
+func (s *BalanceNotifyService) recoverBalanceNotifyRelayProcessing() {
+	ctx, cancel := context.WithTimeout(context.Background(), balanceNotifyRelayTimeout)
+	defer cancel()
+	for {
+		payload, err := s.redisClient.RPopLPush(ctx, balanceNotifyRelayProcessingKey, balanceNotifyRelayKey).Result()
+		if err == redis.Nil {
+			return
+		}
+		if err != nil {
+			slog.Error("恢复余额通知中继事件失败", "error", err)
+			return
+		}
+		if payload == "" {
+			return
+		}
+	}
+}
+
+func (s *BalanceNotifyService) ackBalanceNotifyRelay(payload string) {
+	ctx, cancel := context.WithTimeout(context.Background(), balanceNotifyRelayTimeout)
+	defer cancel()
+	if err := s.redisClient.LRem(ctx, balanceNotifyRelayProcessingKey, 1, payload).Err(); err != nil {
+		slog.Error("确认余额通知中继事件失败", "error", err)
+	}
+}
+
+func (s *BalanceNotifyService) retryBalanceNotifyRelay(payload string) {
+	ctx, cancel := context.WithTimeout(context.Background(), balanceNotifyRelayTimeout)
+	defer cancel()
+	pipe := s.redisClient.TxPipeline()
+	pipe.LRem(ctx, balanceNotifyRelayProcessingKey, 1, payload)
+	pipe.RPush(ctx, balanceNotifyRelayKey, payload)
+	if _, err := pipe.Exec(ctx); err != nil {
+		slog.Error("重试余额通知中继事件失败", "error", err)
+	}
+}
+
+func (s *BalanceNotifyService) handleBalanceNotifyRelayEvent(event *balanceNotifyRelayEvent) bool {
+	if event == nil {
+		return true
+	}
+	switch event.Type {
+	case "balance_low":
+		return s.handleRelayedBalanceLow(event)
+	case "insufficient_balance":
+		return s.handleRelayedInsufficientBalance(event)
+	case "account_quota":
+		return s.handleRelayedAccountQuota(event)
+	default:
+		return true
+	}
+}
+
+func (s *BalanceNotifyService) handleRelayedBalanceLow(event *balanceNotifyRelayEvent) bool {
+	user := event.User.toUser()
+	if user == nil || !s.canNotifyBalance(user) {
+		return true
+	}
+	ctx := context.Background()
+	effectiveThreshold, rechargeURL, ok := s.resolveUserEffectiveThreshold(ctx, user)
+	if !ok {
+		return true
+	}
+	newBalance := event.OldBalance - event.Cost
+	if !crossedDownward(event.OldBalance, newBalance, effectiveThreshold) {
+		return true
+	}
+	return s.sendBalanceLowEmails(
+		s.collectBalanceNotifyRecipients(user), user.ID, user.Username, user.Email,
+		newBalance, effectiveThreshold, s.getSiteName(ctx), rechargeURL,
+	)
+}
+
+func (s *BalanceNotifyService) handleRelayedInsufficientBalance(event *balanceNotifyRelayEvent) bool {
+	user := event.User.toUser()
+	if user == nil || s.emailService == nil || strings.TrimSpace(user.Email) == "" {
+		return false
+	}
+	release, acquired := s.acquireInsufficientBalanceNotifyCooldown(user.ID)
+	if !acquired {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+	defer cancel()
+	handled := s.sendInsufficientBalanceEmail(
+		ctx, user.ID, user.Username, user.Email, event.CurrentBalance,
+		s.getSiteName(ctx), s.getInsufficientBalanceRechargeURL(ctx),
+	)
+	if !handled {
+		release()
+	}
+	return handled
+}
+
+func (s *BalanceNotifyService) handleRelayedAccountQuota(event *balanceNotifyRelayEvent) bool {
+	ctx := context.Background()
+	if !s.isAccountQuotaNotifyEnabled(ctx) {
+		return true
+	}
+	adminEmails := s.getAccountQuotaNotifyEmails(ctx)
+	if len(adminEmails) == 0 {
+		return true
+	}
+	dims := make([]quotaDim, 0, len(event.QuotaDims))
+	for _, dim := range event.QuotaDims {
+		dims = append(dims, quotaDim{
+			name: dim.Name, enabled: dim.Enabled, threshold: dim.Threshold,
+			thresholdType: dim.ThresholdType, currentUsed: dim.CurrentUsed, limit: dim.Limit,
+		})
+	}
+	account := &Account{ID: event.AccountID, Name: event.AccountName, Platform: event.Platform}
+	siteName := s.getSiteName(ctx)
+	for _, dim := range dims {
+		if !dim.enabled || dim.threshold <= 0 {
+			continue
+		}
+		effectiveThreshold := dim.resolvedThreshold()
+		if effectiveThreshold <= 0 {
+			continue
+		}
+		oldUsed := dim.currentUsed - event.Cost
+		if oldUsed < effectiveThreshold && dim.currentUsed >= effectiveThreshold {
+			if !s.sendQuotaAlertEmails(adminEmails, account.ID, account.Name, account.Platform, dim, dim.currentUsed, siteName) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (u *balanceNotifyRelayUser) toUser() *User {
+	if u == nil {
+		return nil
+	}
+	return &User{
+		ID:                         u.ID,
+		Email:                      u.Email,
+		Username:                   u.Username,
+		BalanceNotifyEnabled:       u.NotifyEnabled,
+		BalanceNotifyThresholdType: u.ThresholdType,
+		BalanceNotifyThreshold:     u.Threshold,
+		BalanceNotifyExtraEmails:   u.ExtraEmails,
+		TotalRecharged:             u.TotalRecharged,
+	}
+}
+
+func balanceNotifyRelayUserFrom(user *User) *balanceNotifyRelayUser {
+	if user == nil {
+		return nil
+	}
+	return &balanceNotifyRelayUser{
+		ID:             user.ID,
+		Email:          user.Email,
+		Username:       user.Username,
+		NotifyEnabled:  user.BalanceNotifyEnabled,
+		ThresholdType:  user.BalanceNotifyThresholdType,
+		Threshold:      user.BalanceNotifyThreshold,
+		ExtraEmails:    user.BalanceNotifyExtraEmails,
+		TotalRecharged: user.TotalRecharged,
+	}
 }
 
 // Start 启动北京时间每天 09:00 的低余额提醒任务。
@@ -115,7 +460,19 @@ func resolveBalanceThreshold(threshold float64, thresholdType string, totalRecha
 // CheckBalanceAfterDeduction checks if balance crossed below threshold after deduction.
 // Notification is sent only on first crossing: oldBalance >= threshold && newBalance < threshold.
 func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, user *User, oldBalance, cost float64) {
-	if !s.canNotifyBalance(user) {
+	if s == nil || user == nil {
+		return
+	}
+	if s.relayOnly {
+		s.enqueueRelayEvent(&balanceNotifyRelayEvent{
+			Type:       "balance_low",
+			User:       balanceNotifyRelayUserFrom(user),
+			OldBalance: oldBalance,
+			Cost:       cost,
+		})
+		return
+	}
+	if !s.deliveryEnabled || !s.canNotifyBalance(user) {
 		return
 	}
 	effectiveThreshold, rechargeURL, ok := s.resolveUserEffectiveThreshold(ctx, user)
@@ -132,7 +489,18 @@ func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, u
 // NotifyUserInsufficientBalance 在请求因用户自身余额不足而被拒绝时通知该用户。
 // 同一用户三分钟内的连续重试合并为一封，避免客户端自动重试造成邮件轰炸。
 func (s *BalanceNotifyService) NotifyUserInsufficientBalance(_ context.Context, user *User, currentBalance float64) {
-	if s == nil || s.emailService == nil || user == nil || strings.TrimSpace(user.Email) == "" {
+	if s == nil || user == nil || strings.TrimSpace(user.Email) == "" {
+		return
+	}
+	if s.relayOnly {
+		s.enqueueRelayEvent(&balanceNotifyRelayEvent{
+			Type:           "insufficient_balance",
+			User:           balanceNotifyRelayUserFrom(user),
+			CurrentBalance: currentBalance,
+		})
+		return
+	}
+	if !s.deliveryEnabled || s.emailService == nil {
 		return
 	}
 
@@ -406,7 +774,28 @@ func buildQuotaDimsFromState(account *Account, state *AccountQuotaState) []quota
 // When quotaState is non-nil (from DB transaction RETURNING), it is used directly for threshold
 // checking, avoiding a separate DB read. Otherwise it falls back to fetching fresh account data.
 func (s *BalanceNotifyService) CheckAccountQuotaAfterIncrement(ctx context.Context, account *Account, cost float64, quotaState *AccountQuotaState) {
-	if account == nil || s.emailService == nil || s.settingRepo == nil || cost <= 0 {
+	if s == nil || account == nil || cost <= 0 {
+		return
+	}
+	if s.relayOnly {
+		dims := buildQuotaDims(account)
+		if quotaState != nil {
+			dims = buildQuotaDimsFromState(account, quotaState)
+		}
+		relayDims := make([]balanceNotifyRelayQuotaDim, 0, len(dims))
+		for _, dim := range dims {
+			relayDims = append(relayDims, balanceNotifyRelayQuotaDim{
+				Name: dim.name, Enabled: dim.enabled, Threshold: dim.threshold,
+				ThresholdType: dim.thresholdType, CurrentUsed: dim.currentUsed, Limit: dim.limit,
+			})
+		}
+		s.enqueueRelayEvent(&balanceNotifyRelayEvent{
+			Type: "account_quota", AccountID: account.ID, AccountName: account.Name,
+			Platform: account.Platform, Cost: cost, QuotaDims: relayDims,
+		})
+		return
+	}
+	if !s.deliveryEnabled || s.emailService == nil || s.settingRepo == nil {
 		return
 	}
 	if !s.isAccountQuotaNotifyEnabled(ctx) {
@@ -557,31 +946,38 @@ func (s *BalanceNotifyService) collectBalanceNotifyRecipients(user *User) []stri
 }
 
 // sendEmails sends an email to all recipients with shared timeout and error logging.
-func (s *BalanceNotifyService) sendEmails(recipients []string, subject, body string, logAttrs ...any) {
+func (s *BalanceNotifyService) sendEmails(recipients []string, subject, body string, logAttrs ...any) bool {
 	if len(recipients) == 0 {
 		slog.Warn("sendEmails: no recipients", "subject", subject)
-		return
+		return true
 	}
+	if s.emailService == nil {
+		return false
+	}
+	allSucceeded := true
 	for _, to := range recipients {
 		ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
 		if err := s.emailService.SendEmail(ctx, to, subject, body); err != nil {
 			attrs := append([]any{"to", to, "error", err}, logAttrs...)
 			slog.Error("failed to send notification", attrs...)
+			allSucceeded = false
 		} else {
 			slog.Info("notification email sent successfully", "to", to, "subject", subject)
 		}
 		cancel()
 	}
+	return allSucceeded
 }
 
 // sendBalanceLowEmails sends balance low notification to all recipients.
-func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID int64, userName, userEmail string, balance, threshold float64, siteName, rechargeURL string) {
+func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID int64, userName, userEmail string, balance, threshold float64, siteName, rechargeURL string) bool {
 	displayName := userName
 	if displayName == "" {
 		displayName = userEmail
 	}
 	if s.notificationEmailService != nil {
 		fallbackRecipients := make([]string, 0, len(recipients))
+		deliveryFailed := false
 		for _, to := range recipients {
 			ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
 			err := s.notificationEmailService.Send(ctx, NotificationEmailSendInput{
@@ -600,33 +996,41 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 				},
 			})
 			cancel()
-			if err != nil {
-				if shouldFallbackNotificationEmail(err) {
-					slog.Warn("template balance low notification failed; falling back to built-in body", "to", to, "err", err.Error())
-					fallbackRecipients = append(fallbackRecipients, to)
-				} else {
-					slog.Warn("template balance low notification delivery failed; not sending fallback to avoid duplicates", "to", to, "err", err.Error())
-				}
+			if err == nil {
+				continue
+			}
+			if shouldFallbackNotificationEmail(err) {
+				slog.Warn("template balance low notification failed; falling back to built-in body", "to", to, "err", err.Error())
+				fallbackRecipients = append(fallbackRecipients, to)
+			} else {
+				slog.Warn("template balance low notification delivery failed; not sending fallback to avoid duplicates", "to", to, "err", err.Error())
+				deliveryFailed = true
 			}
 		}
 		if len(fallbackRecipients) == 0 {
-			return
+			return !deliveryFailed
 		}
-		recipients = fallbackRecipients
+		if !s.sendBuiltInBalanceLowEmails(fallbackRecipients, displayName, userEmail, balance, threshold, siteName, rechargeURL) {
+			return false
+		}
+		return !deliveryFailed
 	}
+	return s.sendBuiltInBalanceLowEmails(recipients, displayName, userEmail, balance, threshold, siteName, rechargeURL)
+}
+
+func (s *BalanceNotifyService) sendBuiltInBalanceLowEmails(recipients []string, displayName, userEmail string, balance, threshold float64, siteName, rechargeURL string) bool {
 	subject := fmt.Sprintf("[%s] 余额不足提醒", sanitizeEmailHeader(siteName))
 	body := s.buildBalanceLowEmailBody(html.EscapeString(displayName), balance, threshold, html.EscapeString(siteName), rechargeURL)
-	s.sendEmails(recipients, subject, body, "user_email", userEmail, "balance", balance)
+	return s.sendEmails(recipients, subject, body, "user_email", userEmail, "balance", balance)
 }
 
 // sendQuotaAlertEmails sends quota alert notification to admin emails.
-func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, used float64, siteName string) {
+func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, used float64, siteName string) bool {
 	dimLabel := quotaDimLabels[dim.name]
 	if dimLabel == "" {
 		dimLabel = dim.name
 	}
 
-	// Format the remaining-based threshold for display
 	thresholdDisplay := fmt.Sprintf("$%.2f", dim.threshold)
 	if dim.thresholdType == thresholdTypePercentage {
 		thresholdDisplay = fmt.Sprintf("%.0f%%", dim.threshold)
@@ -638,6 +1042,7 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 
 	if s.notificationEmailService != nil {
 		fallbackRecipients := make([]string, 0, len(adminEmails))
+		deliveryFailed := false
 		for _, to := range adminEmails {
 			ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
 			err := s.notificationEmailService.Send(ctx, NotificationEmailSendInput{
@@ -660,24 +1065,32 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 				},
 			})
 			cancel()
-			if err != nil {
-				if shouldFallbackNotificationEmail(err) {
-					slog.Warn("template account quota alert failed; falling back to built-in body", "to", to, "account_id", accountID, "dimension", dim.name, "err", err.Error())
-					fallbackRecipients = append(fallbackRecipients, to)
-				} else {
-					slog.Warn("template account quota alert delivery failed; not sending fallback to avoid duplicates", "to", to, "account_id", accountID, "dimension", dim.name, "err", err.Error())
-				}
+			if err == nil {
+				continue
+			}
+			if shouldFallbackNotificationEmail(err) {
+				slog.Warn("template account quota alert failed; falling back to built-in body", "to", to, "account_id", accountID, "dimension", dim.name, "err", err.Error())
+				fallbackRecipients = append(fallbackRecipients, to)
+			} else {
+				slog.Warn("template account quota alert delivery failed; not sending fallback to avoid duplicates", "to", to, "account_id", accountID, "dimension", dim.name, "err", err.Error())
+				deliveryFailed = true
 			}
 		}
 		if len(fallbackRecipients) == 0 {
-			return
+			return !deliveryFailed
 		}
-		adminEmails = fallbackRecipients
+		if !s.sendBuiltInQuotaAlertEmails(fallbackRecipients, accountID, accountName, platform, dim, used, siteName, dimLabel, remaining, thresholdDisplay) {
+			return false
+		}
+		return !deliveryFailed
 	}
+	return s.sendBuiltInQuotaAlertEmails(adminEmails, accountID, accountName, platform, dim, used, siteName, dimLabel, remaining, thresholdDisplay)
+}
 
+func (s *BalanceNotifyService) sendBuiltInQuotaAlertEmails(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, used float64, siteName, dimLabel string, remaining float64, thresholdDisplay string) bool {
 	subject := fmt.Sprintf("[%s] 账号限额告警 - %s", sanitizeEmailHeader(siteName), sanitizeEmailHeader(accountName))
 	body := s.buildQuotaAlertEmailBody(accountID, html.EscapeString(accountName), html.EscapeString(platform), html.EscapeString(dimLabel), used, dim.limit, remaining, thresholdDisplay, html.EscapeString(siteName))
-	s.sendEmails(adminEmails, subject, body, "account", accountName, "dimension", dim.name)
+	return s.sendEmails(adminEmails, subject, body, "account", accountName, "dimension", dim.name)
 }
 
 // sanitizeEmailHeader removes CR/LF characters to prevent SMTP header injection.

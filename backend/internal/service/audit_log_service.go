@@ -58,6 +58,15 @@ func (s *AuditLogService) Start() {
 	go s.runRetentionLoop()
 }
 
+// StartWriter 仅启动请求路径依赖的异步审计写入，不启动保留期清理。
+func (s *AuditLogService) StartWriter() {
+	if s == nil || s.repo == nil {
+		return
+	}
+	s.wg.Add(1)
+	go s.runWriter()
+}
+
 // Stop 停止服务并尽量落盘队列中剩余记录。
 func (s *AuditLogService) Stop() {
 	if s == nil {

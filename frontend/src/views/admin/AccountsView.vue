@@ -203,8 +203,14 @@
           :default-sort-key="sortState.sort_by"
           :default-sort-order="sortState.sort_order"
           :sort-storage-key="ACCOUNT_SORT_STORAGE_KEY"
+          :active-sort-key="sortState.sort_by === 'concurrency' ? 'capacity' : sortState.sort_by"
+          :active-sort-order="sortState.sort_order"
           :column-width-storage-key="ACCOUNT_COLUMN_WIDTH_STORAGE_KEY"
           :column-order-storage-key="ACCOUNT_COLUMN_ORDER_STORAGE_KEY"
+          :persisted-column-widths="persistedColumnWidths"
+          :persisted-column-order="persistedColumnOrder"
+          @column-widths-change="updateColumnWidths"
+          @column-order-change="updateColumnOrder"
           :estimate-row-height="156"
           :overscan="5"
           :virtualize-threshold="50"
@@ -278,6 +284,21 @@
           </template>
           <template #cell-capacity="{ row }">
             <AccountCapacityCell :account="row" />
+          </template>
+          <template #header-capacity="{ column }">
+            <div class="relative flex items-center gap-1.5" data-concurrency-sort-menu>
+              <span>{{ column.label }}</span>
+              <button type="button" class="flex items-center gap-1 rounded px-1 py-0.5 text-gray-400 hover:bg-gray-200 dark:hover:bg-dark-700" :class="concurrencyMetricMenuOpen ? 'text-primary-600 dark:text-primary-400' : ''" :title="t('admin.accounts.concurrencySort.title')" @click.stop="concurrencyMetricMenuOpen = !concurrencyMetricMenuOpen">
+                <span class="text-[10px] normal-case font-medium tracking-normal">{{ concurrencyMetric === 'current' ? t('admin.accounts.concurrencySort.current') : t('admin.accounts.concurrencySort.total') }}</span>
+                <Icon name="chevronDown" size="xs" />
+              </button>
+              <div v-if="concurrencyMetricMenuOpen" class="absolute left-0 top-full z-50 mt-1 min-w-[150px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800">
+                <button v-for="metric in (['total', 'current'] as const)" :key="metric" type="button" class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs normal-case tracking-normal hover:bg-gray-100 dark:hover:bg-dark-700" :class="concurrencyMetric === metric ? 'font-medium text-primary-600 dark:text-primary-400' : 'text-gray-700 dark:text-gray-300'" @click.stop="setConcurrencyMetric(metric)">
+                  <span>{{ metric === 'current' ? t('admin.accounts.concurrencySort.current') : t('admin.accounts.concurrencySort.total') }}</span>
+                  <Icon v-if="concurrencyMetric === metric" name="check" size="xs" />
+                </button>
+              </div>
+            </div>
           </template>
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
@@ -501,6 +522,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useTableLoader } from '@/composables/useTableLoader'
+import { useAdminTablePreference } from '@/composables/useAdminTablePreference'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
@@ -622,9 +644,10 @@ const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
 const upstreamBillingRefreshInFlight = ref(false)
 const upstreamBillingChangeDirections = reactive(new Map<number, 'up' | 'down'>())
+// 同一页面会话中，每个已过期快照只静默探测一次，失败也不循环打上游。
+const attemptedExpiredUpstreamBilling = new Set<number>()
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
 const upstreamBillingNow = ref(Date.now())
-let lastUpstreamBillingSortRefreshMinute = -1
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 
 // Account tools dropdown
@@ -645,6 +668,14 @@ const accountToolsDropdownStyle = computed(() => ({
   width: `${accountToolsDropdownPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
+const {
+  persistedColumnWidths,
+  persistedColumnOrder,
+  load: loadTablePreference,
+  updateHiddenColumns,
+  updateColumnWidths,
+  updateColumnOrder
+} = useAdminTablePreference('accounts')
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score but keep dispatch priority visible so cost columns have a stable anchor.
@@ -673,6 +704,8 @@ const ACCOUNT_SORTABLE_KEYS = new Set([
   'rate_multiplier',
   'admin_usage_multiplier',
   'upstream_billing_rate',
+  'capacity',
+  'concurrency',
   'last_used_at',
   'created_at',
   'expires_at'
@@ -686,7 +719,8 @@ const loadInitialAccountSortState = (): AccountSortState => {
       return fallback
     }
     const parsed = JSON.parse(raw) as { key?: string; order?: string }
-    const key = typeof parsed.key === 'string' ? parsed.key : ''
+    const storedKey = typeof parsed.key === 'string' ? parsed.key : ''
+    const key = storedKey === 'capacity' ? 'concurrency' : storedKey
     if (!ACCOUNT_SORTABLE_KEYS.has(key)) return fallback
     const stored: AccountSortState = {
       sort_by: key,
@@ -709,6 +743,19 @@ const loadInitialAccountSortState = (): AccountSortState => {
   }
 }
 const sortState = reactive<AccountSortState>(loadInitialAccountSortState())
+type ConcurrencyMetric = 'total' | 'current'
+const concurrencyMetric = ref<ConcurrencyMetric>('total')
+const concurrencyMetricMenuOpen = ref(false)
+const setConcurrencyMetric = (metric: ConcurrencyMetric) => {
+  concurrencyMetric.value = metric
+  concurrencyMetricMenuOpen.value = false
+  sortState.sort_by = 'concurrency'
+  const requestParams = params as any
+  requestParams.sort_by = 'concurrency'
+  requestParams.concurrency_metric = metric
+  pagination.page = 1
+  load()
+}
 
 // Auto refresh settings
 const showAutoRefreshDropdown = ref(false)
@@ -1098,6 +1145,7 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   saveColumnsToStorage()
+  updateHiddenColumns([...hiddenColumns])
   if ((key === 'today_stats' || key === 'usage') && wasHidden) {
     refreshTodayStatsBatch().catch((error) => {
       console.error('Failed to load account today stats after showing column:', error)
@@ -1141,6 +1189,7 @@ const {
     search: '',
     include_scheduler_score: shouldIncludeSchedulerScore() ? '1' : '0',
     sort_by: sortState.sort_by,
+    concurrency_metric: sortState.sort_by === 'concurrency' ? concurrencyMetric.value : undefined,
     sort_order: sortState.sort_order
   }
 })
@@ -1215,12 +1264,11 @@ const visibleUpstreamBillingAccountIDs = (options: { force?: boolean } = {}) => 
       if (account.type !== 'apikey') return false
       if (options.force === true) return true
       const probeEnabled = account.extra?.upstream_billing_probe_enabled === true
+      if (!probeEnabled || attemptedExpiredUpstreamBilling.has(account.id)) return false
       const snapshot = account.extra?.upstream_billing_probe
-      // 旧快照即使账号级自动探测开关关闭，也要在刷新列表时重新探测；
-      // 否则 HBY 这类已修正口径的旧 0.5x 快照会一直留在页面和调度依据里。
-      if (!probeEnabled && !snapshot) return false
       if (!snapshot) return true
-      return probeTimestampIsDue(snapshot.fresh_until, now) && probeTimestampIsDue(snapshot.next_probe_at, now)
+      // fresh_until 已过期就立即探测；旧 next_probe_at 不能阻止页面会话内的首次刷新。
+      return probeTimestampIsDue(snapshot.fresh_until, now)
     })
     .map(account => account.id)
 }
@@ -1238,6 +1286,7 @@ const refreshVisibleUpstreamBillingRates = async (options: { force?: boolean } =
     // 后端批量接口单次最多接收 20 个账号；串行分批可避免刷新时同时压满上游站点。
     for (let index = 0; index < accountIDs.length; index += 20) {
       const batch = accountIDs.slice(index, index + 20)
+      if (options.force !== true) batch.forEach(id => attemptedExpiredUpstreamBilling.add(id))
       batch.forEach(id => probingUpstreamBilling.add(id))
       try {
         const results = await adminAPI.accounts.probeUpstreamBillingBatch(batch)
@@ -1259,15 +1308,8 @@ const refreshVisibleUpstreamBillingRates = async (options: { force?: boolean } =
   return patched
 }
 
-function markUpstreamBillingSortRefresh() {
-  if (sortState.sort_by === 'upstream_billing_rate') {
-    lastUpstreamBillingSortRefreshMinute = Math.floor(Date.now() / 60_000)
-  }
-}
-
 const load = async (options: { refreshUpstreamBilling?: boolean; forceUpstreamBillingRefresh?: boolean } = {}) => {
   const requestParams = params as any
-  markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
   hasPendingListSync.value = false
   resetAutoRefreshCache()
@@ -1282,13 +1324,11 @@ const load = async (options: { refreshUpstreamBilling?: boolean; forceUpstreamBi
   }
   await refreshTodayStatsBatch()
   if (options.refreshUpstreamBilling !== false) {
-    const patched = await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
-    if (patched) await refreshUpstreamBillingSortedList(true)
+    await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
   }
 }
 
 const reload = async (options: { refreshUpstreamBilling?: boolean; forceUpstreamBillingRefresh?: boolean } = {}) => {
-  markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
   hasPendingListSync.value = false
   resetAutoRefreshCache()
@@ -1296,22 +1336,23 @@ const reload = async (options: { refreshUpstreamBilling?: boolean; forceUpstream
   await baseReload()
   await refreshTodayStatsBatch()
   if (options.refreshUpstreamBilling !== false) {
-    const patched = await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
-    if (patched) await refreshUpstreamBillingSortedList(true)
+    await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
   }
 }
 
-const refreshUpstreamBillingSortedList = async (force = false) => {
+const refreshUpstreamBillingSortedList = () => {
   if (sortState.sort_by !== 'upstream_billing_rate') return
-
-  const minute = Math.floor(upstreamBillingNow.value / 60_000)
-  if (!force && lastUpstreamBillingSortRefreshMinute === minute) return
-  lastUpstreamBillingSortRefreshMinute = minute
-  try {
-    await reload({ refreshUpstreamBilling: false })
-  } catch (error) {
-    console.error('Failed to refresh upstream billing sort:', error)
-  }
+  const direction = sortState.sort_order === 'desc' ? -1 : 1
+  accounts.value = [...accounts.value]
+    .map((account, index) => ({ account, index, rate: effectiveUpstreamBillingRate(account.extra?.upstream_billing_probe) }))
+    .sort((left, right) => {
+      if (left.rate == null && right.rate == null) return left.index - right.index
+      if (left.rate == null) return 1
+      if (right.rate == null) return -1
+      if (left.rate !== right.rate) return (left.rate - right.rate) * direction
+      return left.index - right.index
+    })
+    .map(({ account }) => account)
 }
 
 const debouncedReload = () => {
@@ -1343,10 +1384,12 @@ const handlePageSizeChange = (size: number) => {
 }
 
 const handleSort = (key: string, order: AccountSortOrder) => {
-  sortState.sort_by = key
+  const sortKey = key === 'capacity' ? 'concurrency' : key
+  sortState.sort_by = sortKey
   sortState.sort_order = order
   const requestParams = params as any
-  requestParams.sort_by = key
+  requestParams.sort_by = sortKey
+  requestParams.concurrency_metric = sortKey === 'concurrency' ? concurrencyMetric.value : undefined
   requestParams.sort_order = order
   syncAccountListDerivedParams()
   pagination.page = 1
@@ -1369,9 +1412,7 @@ watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && pendingUpstreamBillingRefresh.value) {
     pendingUpstreamBillingRefresh.value = false
     refreshVisibleUpstreamBillingRates()
-      .then((patched) => {
-        if (patched) return refreshUpstreamBillingSortedList(true)
-      })
+      .then(() => refreshUpstreamBillingSortedList())
       .catch((error) => {
         console.error('Failed to refresh upstream billing rates after table load:', error)
       })
@@ -1395,9 +1436,9 @@ watch(accounts, (rows) => {
 })
 
 watch(upstreamBillingNow, () => {
-  if (sortState.sort_by !== 'upstream_billing_rate' || loading.value) return
+  if (loading.value) return
   if (typeof document !== 'undefined' && document.hidden) return
-  void refreshUpstreamBillingSortedList()
+  void refreshVisibleUpstreamBillingRates().then(() => refreshUpstreamBillingSortedList())
 })
 
 const isAnyModalOpen = computed(() => {
@@ -1511,13 +1552,12 @@ const refreshAccountsIncrementally = async () => {
       pagination.pages = result.data.pages || 0
       mergeAccountsIncrementally(result.data.items || [])
       hasPendingListSync.value = false
-      markUpstreamBillingSortRefresh()
     }
     upstreamBillingNow.value = Date.now()
 
     await refreshTodayStatsBatch()
-    const patched = await refreshVisibleUpstreamBillingRates()
-    if (patched) await refreshUpstreamBillingSortedList(true)
+    await refreshVisibleUpstreamBillingRates()
+    refreshUpstreamBillingSortedList()
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
@@ -1747,7 +1787,7 @@ function getAntigravityTierClass(row: any): string {
 const allColumns = computed(() => {
   const c = [
     { key: 'name', label: t('admin.accounts.columns.name'), sortable: true, width: 160 },
-    { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false, width: 130 },
+    { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: true, width: 130 },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true, width: 116 },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true, width: 116 },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, width: 176 },
@@ -1770,7 +1810,7 @@ const allColumns = computed(() => {
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true, width: 154 },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true, width: 154 },
     { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false, width: 220 },
-    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false, width: 144 }
+    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false, width: 120 }
   )
   return c
 })
@@ -1923,7 +1963,7 @@ const handleBulkProbeUpstreamBilling = async () => {
         patched = true
       }
     })
-    if (patched) await refreshAccountsAfterUpstreamBillingProbe()
+    if (patched) refreshUpstreamBillingSortedList()
     const failed = results.filter(result => result.error).length
     if (failed > 0) {
       appStore.showError(t('admin.accounts.upstreamBilling.batchPartial', { success: results.length - failed, failed }))
@@ -2226,19 +2266,17 @@ const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBilli
   } else {
     upstreamBillingChangeDirections.delete(accountID)
   }
-  markUpstreamBillingSortRefresh()
   upstreamBillingNow.value = Date.now()
+  // 仅使用后端确认已写入账号表的同步倍率，避免把只读探测值误当成结算倍率。
+  const syncedRate = snapshot.synced_rate_multiplier
+  const rateMultiplier = typeof syncedRate === 'number' && Number.isFinite(syncedRate) && syncedRate >= 0
+    ? syncedRate
+    : account.rate_multiplier
   patchAccountInList({
     ...account,
+    rate_multiplier: rateMultiplier,
     extra: { ...account.extra, upstream_billing_probe: snapshot }
   })
-}
-const refreshAccountsAfterUpstreamBillingProbe = async () => {
-  try {
-    await load()
-  } catch (error) {
-    console.error('Failed to refresh accounts after upstream billing probe:', error)
-  }
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
   if (isReadOnlyPreview()) {
@@ -2251,7 +2289,7 @@ const handleProbeUpstreamBilling = async (account: Account) => {
     const result = await adminAPI.accounts.probeUpstreamBilling(account.id)
     if (result.snapshot) {
       patchUpstreamBillingSnapshot(account.id, result.snapshot)
-      await refreshAccountsAfterUpstreamBillingProbe()
+      refreshUpstreamBillingSortedList()
     }
   } catch (error) {
     console.error('Failed to probe upstream billing:', error)
@@ -2516,6 +2554,9 @@ const handleClickOutside = (event: MouseEvent) => {
   if (autoRefreshDropdownRef.value && !autoRefreshDropdownRef.value.contains(target)) {
     showAutoRefreshDropdown.value = false
   }
+  if (!target.closest('[data-concurrency-sort-menu]')) {
+    concurrencyMetricMenuOpen.value = false
+  }
 }
 
 onMounted(async () => {
@@ -2530,6 +2571,22 @@ onMounted(async () => {
     } else {
       desktopViewportMediaQuery.addListener(desktopViewportListener)
     }
+  }
+
+  const restoredHiddenColumns = await loadTablePreference({
+    hiddenColumns: [...hiddenColumns],
+    columnWidths: {},
+    columnOrder: []
+  }, {
+    columnWidthStorageKey: ACCOUNT_COLUMN_WIDTH_STORAGE_KEY,
+    columnOrderStorageKey: ACCOUNT_COLUMN_ORDER_STORAGE_KEY
+  })
+  if (restoredHiddenColumns) {
+    hiddenColumns.clear()
+    restoredHiddenColumns.forEach((key) => hiddenColumns.add(key))
+    saveColumnsToStorage()
+  } else {
+    updateHiddenColumns([...hiddenColumns])
   }
 
   // 全局开关先于列表加载，避免页面刚打开时误触发已禁用的上游探测。

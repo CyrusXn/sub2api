@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -262,6 +263,7 @@ func (h *GroupHandler) List(c *gin.Context) {
 	isExclusiveStr := c.Query("is_exclusive")
 	sortBy := c.DefaultQuery("sort_by", "platform")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
+	concurrencyMetric := normalizeConcurrencyMetric(c.Query("concurrency_metric"))
 
 	var isExclusive *bool
 	if isExclusiveStr != "" {
@@ -269,10 +271,51 @@ func (h *GroupHandler) List(c *gin.Context) {
 		isExclusive = &val
 	}
 
-	groups, total, err := h.adminService.ListGroups(c.Request.Context(), page, pageSize, platform, status, search, isExclusive, sortBy, sortOrder)
+	queryPage, queryPageSize := page, pageSize
+	if sortBy == "concurrency" {
+		queryPage, queryPageSize = 1, 1000
+	}
+	groups, total, err := h.adminService.ListGroups(c.Request.Context(), queryPage, queryPageSize, platform, status, search, isExclusive, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if sortBy == "concurrency" {
+		for nextPage := 2; int64(len(groups)) < total; nextPage++ {
+			chunk, _, chunkErr := h.adminService.ListGroups(c.Request.Context(), nextPage, 1000, platform, status, search, isExclusive, sortBy, sortOrder)
+			if chunkErr != nil {
+				response.ErrorFrom(c, chunkErr)
+				return
+			}
+			if len(chunk) == 0 {
+				break
+			}
+			groups = append(groups, chunk...)
+		}
+		groupIDs := make([]int64, len(groups))
+		for index := range groups {
+			groupIDs[index] = groups[index].ID
+		}
+		capacities, capacityErr := h.groupCapacityService.GetGroupCapacities(c.Request.Context(), groupIDs)
+		if capacityErr != nil {
+			response.ErrorFrom(c, fmt.Errorf("load group concurrency: %w", capacityErr))
+			return
+		}
+		capacityByGroup := make(map[int64]service.GroupCapacitySummary, len(capacities))
+		for _, capacity := range capacities {
+			capacityByGroup[capacity.GroupID] = capacity
+		}
+		sort.SliceStable(groups, func(i, j int) bool {
+			left, right := capacityByGroup[groups[i].ID].ConcurrencyMax, capacityByGroup[groups[j].ID].ConcurrencyMax
+			if concurrencyMetric == "current" {
+				left, right = capacityByGroup[groups[i].ID].ConcurrencyUsed, capacityByGroup[groups[j].ID].ConcurrencyUsed
+			}
+			if left == right {
+				return compareConcurrencyTie(groups[i].ID, groups[j].ID, sortOrder)
+			}
+			return compareConcurrencyValue(left, right, sortOrder)
+		})
+		groups = paginateSlice(groups, page, pageSize)
 	}
 
 	outGroups := make([]dto.AdminGroup, 0, len(groups))

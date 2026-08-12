@@ -116,6 +116,11 @@ func (Account) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0).
 			Comment("仅管理端配置的账号结算附加倍率，按请求固化到用量和费用"),
+		// upstream_recharge_scale 仅用于把上游站内金额和声明倍率换算为真实充值口径。
+		field.Float("upstream_recharge_scale").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(10,6)"}).
+			Default(1.0).
+			Comment("上游充值换算系数，1:10 的站点填写 0.1"),
 
 		// status: 账户状态，如 "active", "error", "disabled"
 		field.String("status").

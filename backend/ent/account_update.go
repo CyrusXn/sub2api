@@ -289,6 +289,27 @@ func (_u *AccountUpdate) AddAdminUsageMultiplier(v float64) *AccountUpdate {
 	return _u
 }
 
+// SetUpstreamRechargeScale sets the "upstream_recharge_scale" field.
+func (_u *AccountUpdate) SetUpstreamRechargeScale(v float64) *AccountUpdate {
+	_u.mutation.ResetUpstreamRechargeScale()
+	_u.mutation.SetUpstreamRechargeScale(v)
+	return _u
+}
+
+// SetNillableUpstreamRechargeScale sets the "upstream_recharge_scale" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableUpstreamRechargeScale(v *float64) *AccountUpdate {
+	if v != nil {
+		_u.SetUpstreamRechargeScale(*v)
+	}
+	return _u
+}
+
+// AddUpstreamRechargeScale adds value to the "upstream_recharge_scale" field.
+func (_u *AccountUpdate) AddUpstreamRechargeScale(v float64) *AccountUpdate {
+	_u.mutation.AddUpstreamRechargeScale(v)
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *AccountUpdate) SetStatus(v string) *AccountUpdate {
 	_u.mutation.SetStatus(v)
@@ -895,6 +916,12 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedAdminUsageMultiplier(); ok {
 		_spec.AddField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.UpstreamRechargeScale(); ok {
+		_spec.SetField(account.FieldUpstreamRechargeScale, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamRechargeScale(); ok {
+		_spec.AddField(account.FieldUpstreamRechargeScale, field.TypeFloat64, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
 	}
@@ -1453,6 +1480,27 @@ func (_u *AccountUpdateOne) SetNillableAdminUsageMultiplier(v *float64) *Account
 // AddAdminUsageMultiplier adds value to the "admin_usage_multiplier" field.
 func (_u *AccountUpdateOne) AddAdminUsageMultiplier(v float64) *AccountUpdateOne {
 	_u.mutation.AddAdminUsageMultiplier(v)
+	return _u
+}
+
+// SetUpstreamRechargeScale sets the "upstream_recharge_scale" field.
+func (_u *AccountUpdateOne) SetUpstreamRechargeScale(v float64) *AccountUpdateOne {
+	_u.mutation.ResetUpstreamRechargeScale()
+	_u.mutation.SetUpstreamRechargeScale(v)
+	return _u
+}
+
+// SetNillableUpstreamRechargeScale sets the "upstream_recharge_scale" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableUpstreamRechargeScale(v *float64) *AccountUpdateOne {
+	if v != nil {
+		_u.SetUpstreamRechargeScale(*v)
+	}
+	return _u
+}
+
+// AddUpstreamRechargeScale adds value to the "upstream_recharge_scale" field.
+func (_u *AccountUpdateOne) AddUpstreamRechargeScale(v float64) *AccountUpdateOne {
+	_u.mutation.AddUpstreamRechargeScale(v)
 	return _u
 }
 
@@ -2091,6 +2139,12 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.AddedAdminUsageMultiplier(); ok {
 		_spec.AddField(account.FieldAdminUsageMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.UpstreamRechargeScale(); ok {
+		_spec.SetField(account.FieldUpstreamRechargeScale, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamRechargeScale(); ok {
+		_spec.AddField(account.FieldUpstreamRechargeScale, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)

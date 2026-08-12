@@ -125,6 +125,7 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	if account.AdminUsageMultiplier != nil {
 		builder.SetAdminUsageMultiplier(*account.AdminUsageMultiplier)
 	}
+	builder.SetUpstreamRechargeScale(account.UpstreamRechargeConversionScale())
 	if account.LoadFactor != nil {
 		builder.SetLoadFactor(*account.LoadFactor)
 	}
@@ -517,6 +518,7 @@ func (r *accountRepository) updateLockedAccount(
 	if account.AdminUsageMultiplier != nil {
 		builder.SetAdminUsageMultiplier(*account.AdminUsageMultiplier)
 	}
+	builder.SetUpstreamRechargeScale(account.UpstreamRechargeConversionScale())
 	if account.LoadFactor != nil {
 		builder.SetLoadFactor(*account.LoadFactor)
 	} else {
@@ -3448,6 +3450,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		Priority:                m.Priority,
 		RateMultiplier:          &rateMultiplier,
 		AdminUsageMultiplier:    &adminUsageMultiplier,
+		UpstreamRechargeScale:   m.UpstreamRechargeScale,
 		LoadFactor:              m.LoadFactor,
 		Status:                  m.Status,
 		ErrorMessage:            derefString(m.ErrorMessage),

@@ -51,6 +51,8 @@ type Account struct {
 	RateMultiplier float64 `json:"rate_multiplier,omitempty"`
 	// 仅管理端配置的账号结算附加倍率，按请求固化到用量和费用
 	AdminUsageMultiplier float64 `json:"admin_usage_multiplier,omitempty"`
+	// 上游充值换算系数，1:10 的站点填写 0.1
+	UpstreamRechargeScale float64 `json:"upstream_recharge_scale,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
 	// ErrorMessage holds the value of the "error_message" field.
@@ -175,7 +177,7 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case account.FieldAutoPauseOnExpired, account.FieldSchedulable:
 			values[i] = new(sql.NullBool)
-		case account.FieldRateMultiplier, account.FieldAdminUsageMultiplier:
+		case account.FieldRateMultiplier, account.FieldAdminUsageMultiplier, account.FieldUpstreamRechargeScale:
 			values[i] = new(sql.NullFloat64)
 		case account.FieldID, account.FieldProxyID, account.FieldProxyFallbackOriginID, account.FieldConcurrency, account.FieldLoadFactor, account.FieldPriority, account.FieldParentAccountID:
 			values[i] = new(sql.NullInt64)
@@ -308,6 +310,12 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field admin_usage_multiplier", values[i])
 			} else if value.Valid {
 				_m.AdminUsageMultiplier = value.Float64
+			}
+		case account.FieldUpstreamRechargeScale:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field upstream_recharge_scale", values[i])
+			} else if value.Valid {
+				_m.UpstreamRechargeScale = value.Float64
 			}
 		case account.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -540,6 +548,9 @@ func (_m *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("admin_usage_multiplier=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AdminUsageMultiplier))
+	builder.WriteString(", ")
+	builder.WriteString("upstream_recharge_scale=")
+	builder.WriteString(fmt.Sprintf("%v", _m.UpstreamRechargeScale))
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)

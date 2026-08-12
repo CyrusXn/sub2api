@@ -21,6 +21,21 @@ import (
 const (
 	RunModeStandard = "standard"
 	RunModeSimple   = "simple"
+
+	DeploymentRolePrimary = "primary"
+	DeploymentRoleAPIOnly = "api_only"
+)
+
+// BackgroundTask 标识由部署角色控制的进程级后台任务。
+type BackgroundTask string
+
+const (
+	BackgroundTaskBackup             BackgroundTask = "backup"
+	BackgroundTaskScheduledTests     BackgroundTask = "scheduled_tests"
+	BackgroundTaskChannelMonitor     BackgroundTask = "channel_monitor"
+	BackgroundTaskSchedulerSnapshot  BackgroundTask = "scheduler_snapshot"
+	BackgroundTaskRuntimeSettings    BackgroundTask = "runtime_settings"
+	BackgroundTaskPeriodicSideEffect BackgroundTask = "periodic_side_effect"
 )
 
 // 使用量记录队列溢出策略
@@ -93,6 +108,7 @@ type Config struct {
 	Concurrency             ConcurrencyConfig             `mapstructure:"concurrency"`
 	TokenRefresh            TokenRefreshConfig            `mapstructure:"token_refresh"`
 	RunMode                 string                        `mapstructure:"run_mode" yaml:"run_mode"`
+	DeploymentRole          string                        `mapstructure:"deployment_role" yaml:"deployment_role"`
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
@@ -1683,6 +1699,34 @@ func NormalizeRunMode(value string) string {
 	}
 }
 
+// NormalizeDeploymentRole 仅将空值回退为主节点，未知角色保留给 Validate 拒绝。
+func NormalizeDeploymentRole(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return DeploymentRolePrimary
+	}
+	return normalized
+}
+
+func (c *Config) IsAPIOnly() bool {
+	return c != nil && NormalizeDeploymentRole(c.DeploymentRole) == DeploymentRoleAPIOnly
+}
+
+// ShouldStartBackgroundTask 集中定义部署角色允许启动的后台任务。
+func (c *Config) ShouldStartBackgroundTask(task BackgroundTask) bool {
+	role := DeploymentRolePrimary
+	if c != nil {
+		role = NormalizeDeploymentRole(c.DeploymentRole)
+	}
+	if role == DeploymentRolePrimary {
+		return true
+	}
+	if role != DeploymentRoleAPIOnly {
+		return false
+	}
+	return task == BackgroundTaskSchedulerSnapshot || task == BackgroundTaskRuntimeSettings
+}
+
 // Load 读取并校验完整配置（要求 jwt.secret 已显式提供）。
 func Load() (*Config, error) {
 	return load(false)
@@ -1746,6 +1790,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
+	cfg.DeploymentRole = NormalizeDeploymentRole(cfg.DeploymentRole)
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	if cfg.Server.Mode == "" {
 		cfg.Server.Mode = "debug"
@@ -1832,8 +1877,12 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Gateway.UserMessageQueue.Mode = ""
 	}
 
-	// Auto-generate TOTP encryption key if not set (32 bytes = 64 hex chars for AES-256)
+	// 多节点必须共享持久化密文的加密密钥，API-only 禁止使用进程级随机值。
 	cfg.Totp.EncryptionKey = strings.TrimSpace(cfg.Totp.EncryptionKey)
+	if cfg.IsAPIOnly() && cfg.Totp.EncryptionKey == "" {
+		return nil, fmt.Errorf("totp.encryption_key is required for api_only")
+	}
+	// Auto-generate TOTP encryption key if not set (32 bytes = 64 hex chars for AES-256)
 	if cfg.Totp.EncryptionKey == "" {
 		key, err := generateJWTSecret(32) // Reuse the same random generation function
 		if err != nil {
@@ -1897,6 +1946,7 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 }
 
 func setDefaults() {
+	viper.SetDefault("deployment_role", DeploymentRolePrimary)
 	viper.SetDefault("run_mode", RunModeStandard)
 
 	// Server
@@ -2539,6 +2589,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.DeploymentRole != DeploymentRolePrimary && c.DeploymentRole != DeploymentRoleAPIOnly {
+		return fmt.Errorf("deployment_role must be one of: primary/api_only")
+	}
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)

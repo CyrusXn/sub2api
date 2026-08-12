@@ -24,7 +24,7 @@ type stepUpUserReader interface {
 
 // stepUpSettingReader 抽象 step-up 功能开关读取能力（由 SettingService 实现）。
 type stepUpSettingReader interface {
-	IsStepUpEnabled(ctx context.Context) bool
+	IsStepUpEnabled(ctx context.Context) (bool, error)
 }
 
 // StepUpSessionKey 计算 step-up 授权的会话键：
@@ -97,8 +97,15 @@ func EnforceStepUpAlways(
 func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settings stepUpSettingReader) bool {
 	// 功能开关关闭时直接放行（含 admin API key），恢复门控引入前的行为。
 	// settings 为 nil 时保持门控（fail-closed）：正常装配不会出现 nil。
-	if settings != nil && !settings.IsStepUpEnabled(c.Request.Context()) {
-		return true
+	if settings != nil {
+		enabled, err := settings.IsStepUpEnabled(c.Request.Context())
+		if err != nil {
+			AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+			return false
+		}
+		if !enabled {
+			return true
+		}
 	}
 
 	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {

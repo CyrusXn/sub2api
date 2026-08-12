@@ -12,6 +12,7 @@ type AdminHandlers struct {
 	Group                  *admin.GroupHandler
 	Account                *admin.AccountHandler
 	BalanceCenter          *admin.BalanceCenterHandler
+	TablePreference        *admin.TablePreferenceHandler
 	Announcement           *admin.AnnouncementHandler
 	DataManagement         *admin.DataManagementHandler
 	Backup                 *admin.BackupHandler

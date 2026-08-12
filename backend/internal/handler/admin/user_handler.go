@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -153,15 +154,33 @@ func (h *UserHandler) List(c *gin.Context) {
 	}
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
+	concurrencyMetric := normalizeConcurrencyMetric(c.Query("concurrency_metric"))
 	if raw, ok := c.GetQuery("include_subscriptions"); ok {
 		includeSubscriptions := parseBoolQueryWithDefault(raw, true)
 		filters.IncludeSubscriptions = &includeSubscriptions
 	}
 
-	users, total, err := h.adminService.ListUsers(c.Request.Context(), page, pageSize, filters, sortBy, sortOrder)
+	queryPage, queryPageSize := page, pageSize
+	if sortBy == "concurrency" {
+		queryPage, queryPageSize = 1, 1000
+	}
+	users, total, err := h.adminService.ListUsers(c.Request.Context(), queryPage, queryPageSize, filters, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if sortBy == "concurrency" {
+		for nextPage := 2; int64(len(users)) < total; nextPage++ {
+			chunk, _, chunkErr := h.adminService.ListUsers(c.Request.Context(), nextPage, 1000, filters, sortBy, sortOrder)
+			if chunkErr != nil {
+				response.ErrorFrom(c, chunkErr)
+				return
+			}
+			if len(chunk) == 0 {
+				break
+			}
+			users = append(users, chunk...)
+		}
 	}
 
 	// Batch get current concurrency (nil map if unavailable)
@@ -174,7 +193,25 @@ func (h *UserHandler) List(c *gin.Context) {
 				MaxConcurrency: users[i].Concurrency,
 			}
 		}
-		loadInfo, _ = h.concurrencyService.GetUsersLoadBatch(c.Request.Context(), usersConcurrency)
+		loadInfo, err = h.concurrencyService.GetUsersLoadBatch(c.Request.Context(), usersConcurrency)
+		if err != nil {
+			response.ErrorFrom(c, fmt.Errorf("load user concurrency: %w", err))
+			return
+		}
+	}
+	if sortBy == "concurrency" {
+		sort.SliceStable(users, func(i, j int) bool {
+			left, right := users[i].Concurrency, users[j].Concurrency
+			if concurrencyMetric == "current" {
+				left = currentUserConcurrency(loadInfo, users[i].ID)
+				right = currentUserConcurrency(loadInfo, users[j].ID)
+			}
+			if left == right {
+				return compareConcurrencyTie(users[i].ID, users[j].ID, sortOrder)
+			}
+			return compareConcurrencyValue(left, right, sortOrder)
+		})
+		users = paginateSlice(users, page, pageSize)
 	}
 
 	// Build response with concurrency info
@@ -189,6 +226,46 @@ func (h *UserHandler) List(c *gin.Context) {
 	}
 
 	response.Paginated(c, out, total, page, pageSize)
+}
+
+func normalizeConcurrencyMetric(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "current") {
+		return "current"
+	}
+	return "total"
+}
+
+func compareConcurrencyValue(left, right int, order string) bool {
+	if strings.EqualFold(order, "desc") {
+		return left > right
+	}
+	return left < right
+}
+
+func compareConcurrencyTie(leftID, rightID int64, order string) bool {
+	if strings.EqualFold(order, "desc") {
+		return leftID > rightID
+	}
+	return leftID < rightID
+}
+
+func currentUserConcurrency(loadInfo map[int64]*service.UserLoadInfo, userID int64) int {
+	if info := loadInfo[userID]; info != nil {
+		return info.CurrentConcurrency
+	}
+	return 0
+}
+
+func paginateSlice[T any](items []T, page, pageSize int) []T {
+	start := (page - 1) * pageSize
+	if start < 0 || start >= len(items) {
+		return []T{}
+	}
+	end := start + pageSize
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
 }
 
 // parseAttributeFilters extracts attribute filters from query params

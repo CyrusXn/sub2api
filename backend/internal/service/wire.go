@@ -60,6 +60,11 @@ func ProvideBalanceCenterEventService(queue BalanceCenterEventQueue, settingRepo
 	return NewBalanceCenterEventService(queue, settingRepo)
 }
 
+// ProvideUsageIPAttributionServices 适配 Wire 对可变参数依赖的切片注入要求。
+func ProvideUsageIPAttributionServices(svc *UsageIPAttributionService) []*UsageIPAttributionService {
+	return []*UsageIPAttributionService{svc}
+}
+
 // ProvideAuthService wires the optional captcha providers into AuthService while
 // keeping NewAuthService's public constructor compatible with existing tests.
 func ProvideAuthService(
@@ -110,7 +115,9 @@ func ProvideBatchImageModelPricingResolver(resolver *ModelPricingResolver) *Batc
 
 func ProvideBatchImageCleanupService(repo BatchImageRepository, accountRepo AccountRepository, cfg *config.Config) *BatchImageCleanupService {
 	svc := NewBatchImageCleanupService(repo, accountRepo, cfg)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -150,7 +157,9 @@ func ProvideTokenRefreshService(
 	// 调用侧显式注入后台刷新策略，避免策略漂移
 	svc.SetRefreshPolicy(DefaultBackgroundRefreshPolicy())
 	svc.SetAccountRuntimeBlocker(runtimeBlocker)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -319,21 +328,27 @@ func ProvideGrokTokenProvider(
 func ProvideDashboardAggregationService(repo DashboardAggregationRepository, timingWheel *TimingWheelService, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config) *DashboardAggregationService {
 	svc := NewDashboardAggregationService(repo, timingWheel, cfg)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
 // ProvideUsageCleanupService 创建并启动使用记录清理任务服务
 func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *TimingWheelService, dashboardAgg *DashboardAggregationService, cfg *config.Config) *UsageCleanupService {
 	svc := NewUsageCleanupService(repo, timingWheel, dashboardAgg, cfg)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
-func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
+func ProvideAccountExpiryService(accountRepo AccountRepository, cfg *config.Config) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -343,26 +358,33 @@ func ProvideOpenAICodexVersionSyncService(
 	settingRepo SettingRepository,
 	settingService *SettingService,
 	githubClient GitHubReleaseClient,
+	cfg *config.Config,
 ) *OpenAICodexVersionSyncService {
 	svc := NewOpenAICodexVersionSyncService(settingRepo, settingService, githubClient, openAICodexVersionSyncInterval)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
 // ProvideProxyExpiryService creates and starts ProxyExpiryService.
-func ProvideProxyExpiryService(proxyRepo ProxyRepository) *ProxyExpiryService {
+func ProvideProxyExpiryService(proxyRepo ProxyRepository, cfg *config.Config) *ProxyExpiryService {
 	svc := NewProxyExpiryService(proxyRepo, time.Minute)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
 // ProvideSubscriptionExpiryService creates and starts SubscriptionExpiryService.
-func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, settingRepo SettingRepository, notificationEmailService *NotificationEmailService, lockCache LeaderLockCache, db *sql.DB) *SubscriptionExpiryService {
+func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, settingRepo SettingRepository, notificationEmailService *NotificationEmailService, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config) *SubscriptionExpiryService {
 	svc := NewSubscriptionExpiryService(userSubRepo, time.Minute)
 	svc.SetSettingRepository(settingRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -449,7 +471,9 @@ func ProvideOpsMetricsCollector(
 	cfg *config.Config,
 ) *OpsMetricsCollector {
 	collector := NewOpsMetricsCollector(opsRepo, settingRepo, accountRepo, concurrencyService, db, redisClient, cfg)
-	collector.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		collector.Start()
+	}
 	return collector
 }
 
@@ -462,7 +486,9 @@ func ProvideOpsAggregationService(
 	cfg *config.Config,
 ) *OpsAggregationService {
 	svc := NewOpsAggregationService(opsRepo, settingRepo, db, redisClient, cfg)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -479,7 +505,11 @@ func ProvideOpsAlertEvaluatorService(
 	if opsService != nil {
 		opsService.SetAccountRequestAlertSink(svc.NotifyAccountRequestErrors)
 	}
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	} else if cfg.IsAPIOnly() {
+		svc.StartRequestAlertRelay()
+	}
 	return svc
 }
 
@@ -498,25 +528,33 @@ func ProvideOpsCleanupService(
 	opsService *OpsService,
 ) *OpsCleanupService {
 	svc := NewOpsCleanupService(opsRepo, db, redisClient, cfg, channelMonitorSvc, settingRepo)
-	svc.Start()
-	if opsService != nil {
-		opsService.SetCleanupReloader(svc)
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+		if opsService != nil {
+			opsService.SetCleanupReloader(svc)
+		}
 	}
 	return svc
 }
 
-func ProvideOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
+func ProvideOpsSystemLogSink(opsRepo OpsRepository, cfg *config.Config) *OpsSystemLogSink {
 	sink := NewOpsSystemLogSink(opsRepo)
-	sink.Start()
-	logger.SetSink(sink)
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		sink.Start()
+		logger.SetSink(sink)
+	}
 	return sink
 }
 
 // ProvideAuditLogService 创建操作审计日志服务并启动异步写入与保留期清理协程。
 // 停止逻辑挂在 cmd/server 的 provideCleanup。
-func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingService) *AuditLogService {
+func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingService, cfg *config.Config) *AuditLogService {
 	svc := NewAuditLogService(repo, settingService)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	} else {
+		svc.StartWriter()
+	}
 	return svc
 }
 
@@ -555,7 +593,9 @@ func ProvideSystemOperationLockService(repo IdempotencyRepository, cfg *config.C
 
 func ProvideIdempotencyCleanupService(repo IdempotencyRepository, cfg *config.Config) *IdempotencyCleanupService {
 	svc := NewIdempotencyCleanupService(repo, cfg)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -576,7 +616,9 @@ func ProvideScheduledTestRunnerService(
 	cfg *config.Config,
 ) *ScheduledTestRunnerService {
 	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskScheduledTests) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -589,7 +631,9 @@ func ProvideOpsScheduledReportService(
 	cfg *config.Config,
 ) *OpsScheduledReportService {
 	svc := NewOpsScheduledReportService(opsService, userService, emailService, redisClient, cfg)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -638,7 +682,9 @@ func ProvideBackupService(
 	dumper DBDumper,
 ) *BackupService {
 	svc := NewBackupService(settingRepo, cfg, encryptor, storeFactory, dumper)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskBackup) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -683,20 +729,24 @@ func ProvideOpsService(
 	}
 	svc.authCacheInvalidationWorker = authCacheInvalidationWorker
 	svc.apiKeyService = apiKeyService
-	svc.StartRuntimeSettingsRefresh(context.Background())
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskRuntimeSettings) {
+		svc.StartRuntimeSettingsRefresh(context.Background())
+	}
 	return svc
 }
 
 // ProvideOpsIngressRejectAggregator starts the bounded security aggregation
 // runtime and attaches it to OpsService, which is the middleware recorder.
-func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsService) *OpsIngressRejectAggregator {
+func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsService, cfg *config.Config) *OpsIngressRejectAggregator {
 	repo, ok := opsRepo.(OpsIngressRejectRepository)
 	if !ok {
 		return nil
 	}
 	aggregator := NewOpsIngressRejectAggregator(repo)
-	aggregator.Start()
-	opsService.SetIngressRejectAggregator(aggregator)
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		aggregator.Start()
+		opsService.SetIngressRejectAggregator(aggregator)
+	}
 	return aggregator
 }
 
@@ -761,6 +811,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAuthService,
 	NewPasskeyService,
 	NewUserService,
+	NewTablePreferenceService,
 	ProvideAPIKeyService,
 	ProvideAPIKeyAuthCacheInvalidator,
 	ProvideAuthCacheInvalidationWorker,
@@ -772,6 +823,7 @@ var ProviderSet = wire.NewSet(
 	NewPromoService,
 	NewUsageService,
 	NewUsageIPAttributionService,
+	ProvideUsageIPAttributionServices,
 	ProvideBalanceCenterEventService,
 	ProvideBalanceCenterService,
 	wire.Bind(new(BalanceCenterUsageEventPublisher), new(*BalanceCenterEventService)),
@@ -886,7 +938,9 @@ var ProviderSet = wire.NewSet(
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。
 func ProvideUserPlatformQuotaUsageFlusher(cfg *config.Config, cache BillingCache, quotaRepo UserPlatformQuotaRepository, tw *TimingWheelService) *UserPlatformQuotaUsageFlusher {
 	svc := NewUserPlatformQuotaUsageFlusher(cfg, cache, quotaRepo, tw)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -906,6 +960,8 @@ func ProvideBalanceNotifyService(
 	leaderLockCache LeaderLockCache,
 	db *sql.DB,
 	billingCacheService *BillingCacheService,
+	redisClient *redis.Client,
+	cfg *config.Config,
 ) *BalanceNotifyService {
 	svc := NewBalanceNotifyService(emailService, settingRepo, accountRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
@@ -913,7 +969,11 @@ func ProvideBalanceNotifyService(
 	if billingCacheService != nil {
 		billingCacheService.SetBalanceNotifyService(svc)
 	}
-	svc.Start()
+	// 所有发送和冷却依赖就绪后再启动中继，避免启动积压消息使用未完成装配的服务。
+	svc.ConfigureRelay(redisClient, cfg.IsAPIOnly())
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -925,10 +985,12 @@ func ProvidePaymentService(entClient *dbent.Client, registry *payment.Registry, 
 }
 
 // ProvidePaymentOrderExpiryService creates and starts PaymentOrderExpiryService.
-func ProvidePaymentOrderExpiryService(paymentSvc *PaymentService, lockCache LeaderLockCache, db *sql.DB) *PaymentOrderExpiryService {
+func ProvidePaymentOrderExpiryService(paymentSvc *PaymentService, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config) *PaymentOrderExpiryService {
 	svc := NewPaymentOrderExpiryService(paymentSvc, 60*time.Second)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
 	return svc
 }
 
@@ -949,15 +1011,18 @@ func ProvideChannelMonitorService(
 // 通过 SetScheduler 注入回 service 后再 Start，确保启动时加载所有 enabled monitor，
 // 后续 CRUD 也能即时同步任务表。Runner.Stop 由 cleanup function 调用。
 // settingService 用于 runner 每次 fire 读取功能开关。
-func ProvideChannelMonitorRunner(svc *ChannelMonitorService, settingService *SettingService) *ChannelMonitorRunner {
+func ProvideChannelMonitorRunner(svc *ChannelMonitorService, settingService *SettingService, cfg *config.Config) *ChannelMonitorRunner {
 	r := NewChannelMonitorRunner(svc, settingService)
 	if svc != nil {
-		// Ensure runtime reader is set even if ProvideChannelMonitorService
-		// was constructed without settings (tests / alternate providers).
+		// 即使 api_only 不启动调度器，也保留请求路径所需的运行时设置读取能力。
 		svc.SetRuntimeReader(settingService)
-		svc.SetScheduler(r)
+		if cfg.ShouldStartBackgroundTask(config.BackgroundTaskChannelMonitor) {
+			svc.SetScheduler(r)
+		}
 	}
-	r.Start()
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskChannelMonitor) {
+		r.Start()
+	}
 	return r
 }
 
@@ -972,9 +1037,9 @@ func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingServ
 // ProvideChannelMonitorV2Aggregator starts the passive minute-rollup worker.
 // Aggregation only runs when channel_monitor_enabled=true and mode=v2 (and V2 config enabled).
 // Set CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR=1 to skip Start (local demo with seeded facts).
-func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService) *ChannelMonitorV2Aggregator {
+func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService, cfg *config.Config) *ChannelMonitorV2Aggregator {
 	aggregator := NewChannelMonitorV2Aggregator(repo, db, settingService)
-	if os.Getenv("CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR") == "1" {
+	if !cfg.ShouldStartBackgroundTask(config.BackgroundTaskChannelMonitor) || os.Getenv("CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR") == "1" {
 		return aggregator
 	}
 	aggregator.Start()
