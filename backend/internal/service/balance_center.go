@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,9 +54,11 @@ type BalanceCenterAlertDecision struct {
 }
 
 type BalanceCenterService struct {
-	repository  BalanceCenterRepository
-	settingRepo SettingRepository
-	emailSender BalanceCenterEmailSender
+	repository        BalanceCenterRepository
+	settingRepo       SettingRepository
+	emailSender       BalanceCenterEmailSender
+	liandongEncryptor SecretEncryptor
+	liandongClient    *http.Client
 }
 
 type BalanceCenterEmailSender interface {
@@ -115,9 +118,10 @@ func NewBalanceCenterService(repository BalanceCenterRepository, settingRepo Set
 	return &BalanceCenterService{repository: repository, settingRepo: settingRepo}
 }
 
-func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository, emailService *EmailService) *BalanceCenterService {
+func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository, emailService *EmailService, encryptor SecretEncryptor) *BalanceCenterService {
 	service := NewBalanceCenterService(repository, settingRepo)
 	service.SetEmailSender(emailService)
+	service.SetLiandongDependencies(encryptor, nil)
 	return service
 }
 

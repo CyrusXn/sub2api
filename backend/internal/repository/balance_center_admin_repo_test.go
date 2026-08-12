@@ -94,3 +94,54 @@ func TestBalanceCenterAdminRechargeUpsertIsIdempotent(t *testing.T) {
 	require.Equal(t, int64(9), item.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestBalanceCenterLiandongSessionStoresEncryptedPayloadOnly(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO balance_center_liandong_sessions")).
+		WithArgs("opaque-ciphertext").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterLiandongRepository)
+	require.NoError(t, repo.SaveBalanceCenterLiandongSession(context.Background(), "opaque-ciphertext"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterLiandongOrdersUpsertByTransactionNumber(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	paidAt := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("ON CONFLICT (transaction_no) DO UPDATE")).
+		WithArgs("trade-1", 55.5, paidAt, "paid", `{"goods_name":"Yigpt 60元兑换码","quantity":1}`).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterLiandongRepository)
+	synced, err := repo.UpsertBalanceCenterLiandongOrders(context.Background(), []service.BalanceCenterLiandongOrder{{
+		TransactionNo: "trade-1", GoodsName: "Yigpt 60元兑换码", PaidAmount: 55.5,
+		Quantity: 1, Status: "paid", PaidAt: paidAt,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, 1, synced)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterAutomaticRecordsSyncUsesPaidLiandongOrders(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectExec("INSERT INTO balance_center_automatic_records[\\s\\S]+FROM balance_center_liandong_orders[\\s\\S]+WHERE status = 'paid'").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterLiandongRepository)
+	synced, err := repo.SyncBalanceCenterAutomaticRecords(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 3, synced)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

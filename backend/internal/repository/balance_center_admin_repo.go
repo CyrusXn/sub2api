@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -275,6 +276,89 @@ FROM balance_center_alert_deliveries s`+where+` ORDER BY created_at DESC, id DES
 		items = append(items, item)
 	}
 	return &service.BalanceCenterPage[service.BalanceCenterAlertDelivery]{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize}, rows.Err()
+}
+
+func (r *balanceCenterRepository) SaveBalanceCenterLiandongSession(ctx context.Context, ciphertext string) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO balance_center_liandong_sessions (id, request_encrypted)
+VALUES (1, $1)
+ON CONFLICT (id) DO UPDATE SET request_encrypted=EXCLUDED.request_encrypted, updated_at=NOW()`, ciphertext)
+	return err
+}
+
+func (r *balanceCenterRepository) GetBalanceCenterLiandongSession(ctx context.Context) (string, error) {
+	var ciphertext string
+	err := r.db.QueryRowContext(ctx, `SELECT request_encrypted FROM balance_center_liandong_sessions WHERE id=1`).Scan(&ciphertext)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", service.ErrBalanceCenterLiandongSessionNotFound
+	}
+	return ciphertext, err
+}
+
+func (r *balanceCenterRepository) UpsertBalanceCenterLiandongOrders(ctx context.Context, orders []service.BalanceCenterLiandongOrder) (synced int, err error) {
+	if len(orders) == 0 {
+		return 0, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, order := range orders {
+		payload, marshalErr := json.Marshal(map[string]any{
+			"goods_name": order.GoodsName,
+			"quantity":   order.Quantity,
+		})
+		if marshalErr != nil {
+			return synced, marshalErr
+		}
+		result, execErr := tx.ExecContext(ctx, `
+INSERT INTO balance_center_liandong_orders
+    (source, source_key, transaction_no, paid_amount, currency, paid_at, status, payload)
+VALUES ('liandong',$1,$1,$2,'CNY',$3,$4,$5::jsonb)
+ON CONFLICT (transaction_no) DO UPDATE SET
+    paid_amount=EXCLUDED.paid_amount,
+    paid_at=EXCLUDED.paid_at,
+    status=EXCLUDED.status,
+    payload=EXCLUDED.payload,
+    updated_at=NOW()`, order.TransactionNo, order.PaidAmount, order.PaidAt, order.Status, string(payload))
+		if execErr != nil {
+			return synced, execErr
+		}
+		if affected, rowsErr := result.RowsAffected(); rowsErr == nil {
+			synced += int(affected)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return synced, err
+	}
+	return synced, nil
+}
+
+func (r *balanceCenterRepository) SyncBalanceCenterAutomaticRecords(ctx context.Context) (int, error) {
+	result, err := r.db.ExecContext(ctx, `
+INSERT INTO balance_center_automatic_records
+    (source, source_key, site_id, amount, currency, occurred_at, record_type, metadata)
+SELECT 'liandong', transaction_no, site_id, paid_amount, currency,
+       COALESCE(paid_at, created_at), 'recharge', payload
+FROM balance_center_liandong_orders
+WHERE status = 'paid'
+ON CONFLICT (source, source_key) DO UPDATE SET
+    site_id=EXCLUDED.site_id,
+    amount=EXCLUDED.amount,
+    currency=EXCLUDED.currency,
+    occurred_at=EXCLUDED.occurred_at,
+    record_type=EXCLUDED.record_type,
+    metadata=EXCLUDED.metadata`)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	return int(affected), err
 }
 
 func balanceCenterFilterSQL(filter service.BalanceCenterListFilter, includeTime bool) (string, []any) {

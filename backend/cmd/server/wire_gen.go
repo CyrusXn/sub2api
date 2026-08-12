@@ -107,7 +107,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	balanceCenterEventQueue := repository.NewBalanceCenterEventQueue(redisClient)
 	balanceCenterEventService := service.ProvideBalanceCenterEventService(balanceCenterEventQueue, settingRepository)
 	balanceCenterRepository := repository.NewBalanceCenterRepository(db)
-	balanceCenterService := service.ProvideBalanceCenterService(balanceCenterRepository, settingRepository, emailService)
+	balanceCenterService := service.ProvideBalanceCenterService(balanceCenterRepository, settingRepository, emailService, secretEncryptor)
 	opsRepository := repository.NewOpsRepository(db)
 	usageBillingRepository := repository.ProvideUsageBillingRepository(client, db, balanceCenterEventService)
 	gatewayCache := repository.NewGatewayCache(redisClient)

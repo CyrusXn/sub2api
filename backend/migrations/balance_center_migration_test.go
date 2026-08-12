@@ -33,3 +33,14 @@ func TestBalanceCenterMigrationDefinesIndependentHistoryAndCurrentState(t *testi
 	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_balance_center_snapshots_account_time")
 	require.Contains(t, sql, "CHECK (status IN ('ok', 'unsupported', 'failed', 'unknown'))")
 }
+
+func TestBalanceCenterLiandongSessionMigrationStoresCiphertextOnly(t *testing.T) {
+	content, err := FS.ReadFile("227_add_balance_center_liandong_session.sql")
+	require.NoError(t, err)
+
+	sql := strings.Join(strings.Fields(string(content)), " ")
+	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS balance_center_liandong_sessions")
+	require.Contains(t, sql, "request_encrypted TEXT NOT NULL")
+	require.NotContains(t, sql, "cookie")
+	require.NotContains(t, sql, "request_headers")
+}

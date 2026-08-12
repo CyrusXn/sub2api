@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +26,9 @@ type balanceCenterAdminService interface {
 	ListReconciliations(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterReconciliation], error)
 	CreateReconciliation(context.Context, *service.BalanceCenterReconciliation) (*service.BalanceCenterReconciliation, error)
 	ListAlerts(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterAlertDelivery], error)
+	SaveLiandongSession(context.Context, string) (*service.BalanceCenterLiandongSessionResult, error)
+	SyncLiandong(context.Context) (*service.BalanceCenterLiandongSyncResult, error)
+	SyncAutomaticRecords(context.Context) (*service.BalanceCenterLiandongSyncResult, error)
 }
 
 type balanceCenterAccountProber interface {
@@ -235,6 +237,28 @@ func parseBalanceCenterFilter(c *gin.Context, includeTime bool) (service.Balance
 	return filter, nil
 }
 
-func (h *BalanceCenterHandler) SyncUnavailable(c *gin.Context) {
-	response.Error(c, http.StatusServiceUnavailable, "余额数据同步服务尚未初始化")
+func (h *BalanceCenterHandler) SaveLiandongSession(c *gin.Context) {
+	var input struct {
+		Curl string `json:"curl" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil || strings.TrimSpace(input.Curl) == "" {
+		response.BadRequest(c, "请粘贴联动小铺 curl 请求")
+		return
+	}
+	result, err := h.service.SaveLiandongSession(c.Request.Context(), input.Curl)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *BalanceCenterHandler) SyncLiandong(c *gin.Context) {
+	result, err := h.service.SyncLiandong(c.Request.Context())
+	h.respond(c, result, err)
+}
+
+func (h *BalanceCenterHandler) SyncAutomaticRecords(c *gin.Context) {
+	result, err := h.service.SyncAutomaticRecords(c.Request.Context())
+	h.respond(c, result, err)
 }
