@@ -78,5 +78,6 @@ deploy/redis_data/
 
 # Claude files
 .claude/
+.zcode/
 issues/
 CLAUDE.md
