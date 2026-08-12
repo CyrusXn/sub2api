@@ -179,6 +179,7 @@ export default {
     subscriptions: '订阅管理',
     accounts: '账号管理',
     upstreamSites: '上游站点账号',
+    balanceCenter: '余额中心',
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',

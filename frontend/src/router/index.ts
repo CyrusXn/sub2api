@@ -549,6 +549,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/balance-center',
+    name: 'AdminBalanceCenter',
+    component: () => import('@/views/admin/BalanceCenterView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Balance Center',
+      titleKey: 'admin.balanceCenter.title',
+      descriptionKey: 'admin.balanceCenter.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),

@@ -179,6 +179,7 @@ export default {
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     upstreamSites: 'Upstream Site Accounts',
+    balanceCenter: 'Balance Center',
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',

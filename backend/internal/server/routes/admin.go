@@ -43,6 +43,9 @@ func RegisterAdminRoutes(
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
 
+		// 余额中心
+		registerBalanceCenterRoutes(admin, h)
+
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
@@ -121,6 +124,29 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerBalanceCenterRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	balanceCenter := admin.Group("/balance-center")
+	{
+		balanceCenter.GET("/overview", h.Admin.BalanceCenter.Overview)
+		balanceCenter.GET("/sites", h.Admin.BalanceCenter.Sites)
+		balanceCenter.GET("/snapshots", h.Admin.BalanceCenter.Snapshots)
+		balanceCenter.GET("/settings", h.Admin.BalanceCenter.GetSettings)
+		balanceCenter.PUT("/settings", h.Admin.BalanceCenter.UpdateSettings)
+		balanceCenter.POST("/accounts/probe", h.Admin.BalanceCenter.ProbeAccounts)
+		balanceCenter.GET("/manual-rows", h.Admin.BalanceCenter.ManualRows)
+		balanceCenter.PUT("/manual-rows", h.Admin.BalanceCenter.ReplaceManualRows)
+		balanceCenter.GET("/recharge-events", h.Admin.BalanceCenter.RechargeEvents)
+		balanceCenter.POST("/recharge-events", h.Admin.BalanceCenter.CreateRechargeEvent)
+		balanceCenter.DELETE("/recharge-events/:id", h.Admin.BalanceCenter.DeleteRechargeEvent)
+		balanceCenter.POST("/automatic-records/sync", h.Admin.BalanceCenter.SyncUnavailable)
+		balanceCenter.POST("/liandong/session", h.Admin.BalanceCenter.SyncUnavailable)
+		balanceCenter.POST("/liandong/sync", h.Admin.BalanceCenter.SyncUnavailable)
+		balanceCenter.GET("/reconciliations", h.Admin.BalanceCenter.Reconciliations)
+		balanceCenter.POST("/reconciliations", h.Admin.BalanceCenter.CreateReconciliation)
+		balanceCenter.GET("/alerts", h.Admin.BalanceCenter.Alerts)
 	}
 }
 
