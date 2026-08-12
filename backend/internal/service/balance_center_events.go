@@ -10,6 +10,8 @@ import (
 const (
 	balanceCenterEventMergeWindow = time.Minute
 	balanceCenterEventBatchSize   = int64(20)
+	// 余额事件属于请求主链路的旁路观察；Redis 异常时最多等待一个很短的固定窗口。
+	balanceCenterEventPublishTimeout = 200 * time.Millisecond
 )
 
 type BalanceCenterEventQueue interface {
@@ -33,8 +35,19 @@ type BalanceCenterEventService struct {
 	now         func() time.Time
 }
 
-func NewBalanceCenterEventService(queue BalanceCenterEventQueue, settingRepo SettingRepository, prober BalanceCenterAccountProber) *BalanceCenterEventService {
+func NewBalanceCenterEventService(queue BalanceCenterEventQueue, settingRepo SettingRepository, probers ...BalanceCenterAccountProber) *BalanceCenterEventService {
+	var prober BalanceCenterAccountProber
+	if len(probers) > 0 {
+		prober = probers[0]
+	}
 	return &BalanceCenterEventService{queue: queue, settingRepo: settingRepo, prober: prober, now: time.Now}
+}
+
+func (s *BalanceCenterEventService) SetProber(prober BalanceCenterAccountProber) {
+	if s == nil {
+		return
+	}
+	s.prober = prober
 }
 
 func (s *BalanceCenterEventService) RefreshSettings(ctx context.Context) error {
@@ -56,7 +69,12 @@ func (s *BalanceCenterEventService) PublishAccountUsed(ctx context.Context, acco
 	if s == nil || s.queue == nil || accountID <= 0 || !s.enabled.Load() {
 		return
 	}
-	if err := s.queue.Schedule(ctx, accountID, s.now().Add(balanceCenterEventMergeWindow)); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), balanceCenterEventPublishTimeout)
+	defer cancel()
+	if err := s.queue.Schedule(publishCtx, accountID, s.now().Add(balanceCenterEventMergeWindow)); err != nil {
 		slog.Warn("余额中心事件投递失败", "account_id", accountID, "error", err)
 	}
 }

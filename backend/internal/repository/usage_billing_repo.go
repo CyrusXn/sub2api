@@ -12,11 +12,16 @@ import (
 )
 
 type usageBillingRepository struct {
-	db *sql.DB
+	db                     *sql.DB
+	balanceCenterPublisher service.BalanceCenterUsageEventPublisher
 }
 
-func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
-	return &usageBillingRepository{db: sqlDB}
+func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, publishers ...service.BalanceCenterUsageEventPublisher) service.UsageBillingRepository {
+	var publisher service.BalanceCenterUsageEventPublisher
+	if len(publishers) > 0 {
+		publisher = publishers[0]
+	}
+	return &usageBillingRepository{db: sqlDB, balanceCenterPublisher: publisher}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -59,7 +64,16 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		return nil, err
 	}
 	tx = nil
+	r.publishBalanceCenterUsageEvent(ctx, cmd)
 	return result, nil
+}
+
+func (r *usageBillingRepository) publishBalanceCenterUsageEvent(ctx context.Context, cmd *service.UsageBillingCommand) {
+	// 只有用量结算事务成功提交后才投递余额中心事件，确保探测依据的是已落库的真实使用。
+	if r == nil || r.balanceCenterPublisher == nil || cmd == nil || cmd.AccountID <= 0 {
+		return
+	}
+	r.balanceCenterPublisher.PublishAccountUsed(ctx, cmd.AccountID)
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {

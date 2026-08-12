@@ -55,6 +55,11 @@ func ProvideEmailQueueService(emailService *EmailService) *EmailQueueService {
 	return NewEmailQueueService(emailService, 3)
 }
 
+// ProvideBalanceCenterEventService 创建结算发布与定时消费共享的事件服务实例。
+func ProvideBalanceCenterEventService(queue BalanceCenterEventQueue, settingRepo SettingRepository) *BalanceCenterEventService {
+	return NewBalanceCenterEventService(queue, settingRepo)
+}
+
 // ProvideAuthService wires the optional captcha providers into AuthService while
 // keeping NewAuthService's public constructor compatible with existing tests.
 func ProvideAuthService(
@@ -767,6 +772,8 @@ var ProviderSet = wire.NewSet(
 	NewPromoService,
 	NewUsageService,
 	NewUsageIPAttributionService,
+	ProvideBalanceCenterEventService,
+	wire.Bind(new(BalanceCenterUsageEventPublisher), new(*BalanceCenterEventService)),
 	NewDashboardService,
 	ProvidePricingService,
 	NewBillingService,

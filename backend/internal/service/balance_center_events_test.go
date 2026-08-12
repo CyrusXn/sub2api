@@ -27,6 +27,25 @@ func TestBalanceCenterEventPublisherRespectsSwitchAndNeverReturnsQueueError(t *t
 	require.Equal(t, []int64{17}, queue.published)
 }
 
+func TestBalanceCenterEventPublisherUsesShortIndependentTimeout(t *testing.T) {
+	queue := &balanceCenterEventQueueStub{}
+	settings := &balanceCenterSettingRepoStub{values: map[string]string{
+		SettingKeyBalanceCenterEnabled:           "true",
+		SettingKeyBalanceCenterEventProbeEnabled: "true",
+	}}
+	svc := NewBalanceCenterEventService(queue, settings)
+	require.NoError(t, svc.RefreshSettings(context.Background()))
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.PublishAccountUsed(canceled, 17)
+
+	require.Len(t, queue.scheduleContextErrors, 1)
+	require.NoError(t, queue.scheduleContextErrors[0], "事件投递不得继承已取消的请求上下文")
+	require.Len(t, queue.scheduleDeadlines, 1)
+	require.WithinDuration(t, time.Now().Add(balanceCenterEventPublishTimeout), queue.scheduleDeadlines[0], 100*time.Millisecond)
+}
+
 func TestBalanceCenterEventConsumerOnlyProbesDueAccounts(t *testing.T) {
 	queue := &balanceCenterEventQueueStub{due: []int64{17, 23}}
 	prober := &balanceCenterAccountProberStub{}
@@ -43,13 +62,19 @@ func TestBalanceCenterEventConsumerOnlyProbesDueAccounts(t *testing.T) {
 }
 
 type balanceCenterEventQueueStub struct {
-	published []int64
-	due       []int64
-	err       error
+	published             []int64
+	due                   []int64
+	err                   error
+	scheduleContextErrors []error
+	scheduleDeadlines     []time.Time
 }
 
-func (q *balanceCenterEventQueueStub) Schedule(_ context.Context, accountID int64, _ time.Time) error {
+func (q *balanceCenterEventQueueStub) Schedule(ctx context.Context, accountID int64, _ time.Time) error {
 	q.published = append(q.published, accountID)
+	q.scheduleContextErrors = append(q.scheduleContextErrors, ctx.Err())
+	if deadline, ok := ctx.Deadline(); ok {
+		q.scheduleDeadlines = append(q.scheduleDeadlines, deadline)
+	}
 	return q.err
 }
 

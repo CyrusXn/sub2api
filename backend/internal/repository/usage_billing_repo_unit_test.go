@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -97,6 +98,187 @@ func TestApplyUsageBillingEffects_FlagsBalanceOverdraft(t *testing.T) {
 	require.True(t, result.BalanceOverdrafted)
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingRepositoryApply_PublishesBalanceCenterEventAfterCommit(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	publisher := &balanceCenterUsageEventPublisherSpy{}
+	repo := &usageBillingRepository{db: db, balanceCenterPublisher: publisher}
+	cmd := &service.UsageBillingCommand{
+		RequestID:   "req-balance-center-success",
+		APIKeyID:    7,
+		UserID:      42,
+		AccountID:   17,
+		BalanceCost: 1.25,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO usage_billing_dedup`).
+		WithArgs(cmd.RequestID, cmd.APIKeyID, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
+	mock.ExpectQuery(`SELECT request_fingerprint\s+FROM usage_billing_dedup_archive`).
+		WithArgs(cmd.RequestID, cmd.APIKeyID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(1.25, cmd.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+	mock.ExpectCommit()
+
+	result, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Equal(t, []int64{17}, publisher.accountIDs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingRepositoryApply_DoesNotPublishBalanceCenterEventForDuplicateOrFailedTransaction(t *testing.T) {
+	t.Run("duplicate", func(t *testing.T) {
+		ctx := context.Background()
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		publisher := &balanceCenterUsageEventPublisherSpy{}
+		repo := &usageBillingRepository{db: db, balanceCenterPublisher: publisher}
+		cmd := &service.UsageBillingCommand{
+			RequestID:          "req-balance-center-duplicate",
+			APIKeyID:           7,
+			UserID:             42,
+			AccountID:          17,
+			BalanceCost:        1.25,
+			RequestFingerprint: "stable-fingerprint",
+		}
+
+		mock.ExpectBegin()
+		mock.ExpectQuery(`INSERT INTO usage_billing_dedup`).
+			WithArgs(cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(`SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id`).
+			WithArgs(cmd.RequestID, cmd.APIKeyID).
+			WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow(cmd.RequestFingerprint))
+		mock.ExpectRollback()
+
+		result, err := repo.Apply(ctx, cmd)
+		require.NoError(t, err)
+		require.False(t, result.Applied)
+		require.Empty(t, publisher.accountIDs)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("effect_failure", func(t *testing.T) {
+		ctx := context.Background()
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		publisher := &balanceCenterUsageEventPublisherSpy{}
+		repo := &usageBillingRepository{db: db, balanceCenterPublisher: publisher}
+		cmd := &service.UsageBillingCommand{
+			RequestID:   "req-balance-center-failure",
+			APIKeyID:    7,
+			UserID:      42,
+			AccountID:   17,
+			BalanceCost: 1.25,
+		}
+
+		mock.ExpectBegin()
+		mock.ExpectQuery(`INSERT INTO usage_billing_dedup`).
+			WithArgs(cmd.RequestID, cmd.APIKeyID, sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
+		mock.ExpectQuery(`SELECT request_fingerprint\s+FROM usage_billing_dedup_archive`).
+			WithArgs(cmd.RequestID, cmd.APIKeyID).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(conditionalBalanceDeductSQL).
+			WithArgs(1.25, cmd.UserID).
+			WillReturnError(errors.New("write failed"))
+		mock.ExpectRollback()
+
+		_, err = repo.Apply(ctx, cmd)
+		require.Error(t, err)
+		require.Empty(t, publisher.accountIDs)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("commit_failure", func(t *testing.T) {
+		ctx := context.Background()
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		publisher := &balanceCenterUsageEventPublisherSpy{}
+		repo := &usageBillingRepository{db: db, balanceCenterPublisher: publisher}
+		cmd := &service.UsageBillingCommand{
+			RequestID:   "req-balance-center-commit-failure",
+			APIKeyID:    7,
+			UserID:      42,
+			AccountID:   17,
+			BalanceCost: 1.25,
+		}
+
+		mock.ExpectBegin()
+		mock.ExpectQuery(`INSERT INTO usage_billing_dedup`).
+			WithArgs(cmd.RequestID, cmd.APIKeyID, sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
+		mock.ExpectQuery(`SELECT request_fingerprint\s+FROM usage_billing_dedup_archive`).
+			WithArgs(cmd.RequestID, cmd.APIKeyID).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(conditionalBalanceDeductSQL).
+			WithArgs(1.25, cmd.UserID).
+			WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+		mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
+
+		_, err = repo.Apply(ctx, cmd)
+		require.Error(t, err)
+		require.Empty(t, publisher.accountIDs)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestReserveUsageBillingBatchImageBalance_DoesNotPublishBalanceCenterEvent(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	publisher := &balanceCenterUsageEventPublisherSpy{}
+	repo := &usageBillingRepository{db: db, balanceCenterPublisher: publisher}
+	cmd := &service.BatchImageBalanceHoldCommand{
+		RequestID:  "batch-hold-balance-center",
+		APIKeyID:   7,
+		UserID:     42,
+		BatchID:    "imgbatch_balance_center",
+		HoldAmount: 2.5,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO usage_billing_dedup`).
+		WithArgs(cmd.RequestID, cmd.APIKeyID, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
+	mock.ExpectQuery(`SELECT request_fingerprint\s+FROM usage_billing_dedup_archive`).
+		WithArgs(cmd.RequestID, cmd.APIKeyID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(reserveBatchImageHoldSQL).
+		WithArgs(2.5, cmd.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"balance", "frozen_balance"}).AddRow(97.5, 2.5))
+	mock.ExpectCommit()
+
+	result, err := repo.ReserveBatchImageBalance(ctx, cmd)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Empty(t, publisher.accountIDs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+type balanceCenterUsageEventPublisherSpy struct {
+	accountIDs []int64
+}
+
+func (p *balanceCenterUsageEventPublisherSpy) PublishAccountUsed(_ context.Context, accountID int64) {
+	p.accountIDs = append(p.accountIDs, accountID)
 }
 
 func TestDeductUsageBillingBalance_ReturnsUserNotFoundWhenNoUserUpdated(t *testing.T) {

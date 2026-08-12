@@ -240,21 +240,22 @@ type UpstreamBillingProbeService struct {
 	settingService     *SettingService
 	upstreamSites      *UpstreamSiteCredentialService
 
-	parentCtx    context.Context
-	parentCancel context.CancelFunc
-	wg           sync.WaitGroup
-	mu           sync.Mutex
-	started      bool
-	stopped      bool
-	cycleMu      sync.Mutex
-	probeGroup   singleflight.Group
-	probeSlots   chan struct{}
-	now          func() time.Time
-	lockCache    LeaderLockCache
-	db           *sql.DB
-	instanceID   string
-	webTokenMu   sync.Mutex
-	webTokens    map[string]cachedWebAccountToken
+	parentCtx           context.Context
+	parentCancel        context.CancelFunc
+	wg                  sync.WaitGroup
+	mu                  sync.Mutex
+	started             bool
+	stopped             bool
+	cycleMu             sync.Mutex
+	probeGroup          singleflight.Group
+	probeSlots          chan struct{}
+	now                 func() time.Time
+	lockCache           LeaderLockCache
+	db                  *sql.DB
+	instanceID          string
+	webTokenMu          sync.Mutex
+	webTokens           map[string]cachedWebAccountToken
+	balanceCenterEvents *BalanceCenterEventService
 }
 
 type cachedWebAccountToken struct {
@@ -310,17 +311,29 @@ func (s *UpstreamBillingProbeService) SetUpstreamSiteCredentialService(credentia
 	s.upstreamSites = credentials
 }
 
+func (s *UpstreamBillingProbeService) SetBalanceCenterEventService(events *BalanceCenterEventService) {
+	if s == nil {
+		return
+	}
+	s.balanceCenterEvents = events
+	if events != nil {
+		events.SetProber(s)
+	}
+}
+
 // ProvideUpstreamBillingProbeService starts the process-wide periodic runner.
 func ProvideUpstreamBillingProbeService(
 	accountRepo AccountRepository,
 	accountTestService *AccountTestService,
 	settingService *SettingService,
 	upstreamSites *UpstreamSiteCredentialService,
+	balanceCenterEvents *BalanceCenterEventService,
 	lockCache LeaderLockCache,
 	db *sql.DB,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetUpstreamSiteCredentialService(upstreamSites)
+	svc.SetBalanceCenterEventService(balanceCenterEvents)
 	svc.SetLeaderLock(lockCache, db)
 	svc.Start()
 	return svc
@@ -380,6 +393,8 @@ func (s *UpstreamBillingProbeService) RunDue(ctx context.Context) error {
 	}
 	s.cycleMu.Lock()
 	defer s.cycleMu.Unlock()
+
+	s.consumeBalanceCenterDueEvents(ctx)
 
 	settings, err := s.getSettings(ctx)
 	if err != nil {
@@ -455,6 +470,20 @@ func (s *UpstreamBillingProbeService) RunDue(ctx context.Context) error {
 		})
 	}
 	return group.Wait()
+}
+
+func (s *UpstreamBillingProbeService) consumeBalanceCenterDueEvents(ctx context.Context) {
+	if s == nil || s.balanceCenterEvents == nil {
+		return
+	}
+	// 余额中心事件探测是新功能的旁路观察者；即使 Redis 或设置读取失败，也不能影响旧兜底探测。
+	if err := s.balanceCenterEvents.RefreshSettings(ctx); err != nil {
+		logger.LegacyPrintf("service.upstream_billing_probe", "balance_center_refresh_settings_failed: err=%v", err)
+		return
+	}
+	if err := s.balanceCenterEvents.ConsumeDue(ctx); err != nil {
+		logger.LegacyPrintf("service.upstream_billing_probe", "balance_center_consume_due_failed: err=%v", err)
+	}
 }
 
 func (s *UpstreamBillingProbeService) listDueAccounts(ctx context.Context, now time.Time) ([]Account, error) {

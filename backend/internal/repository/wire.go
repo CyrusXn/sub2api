@@ -48,6 +48,11 @@ func ProvideSessionLimitCache(rdb *redis.Client, cfg *config.Config) service.Ses
 	return NewSessionLimitCache(rdb, defaultIdleTimeoutMinutes)
 }
 
+// ProvideUsageBillingRepository 将余额中心旁路事件发布者注入真实结算仓储。
+func ProvideUsageBillingRepository(client *ent.Client, db *sql.DB, publisher service.BalanceCenterUsageEventPublisher) service.UsageBillingRepository {
+	return NewUsageBillingRepository(client, db, publisher)
+}
+
 // ProvideSchedulerCache 创建调度快照缓存，并注入快照分块参数。
 func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.SchedulerCache {
 	mgetChunkSize := defaultSchedulerSnapshotMGetChunkSize
@@ -81,7 +86,7 @@ var ProviderSet = wire.NewSet(
 	NewAnnouncementRepository,
 	NewAnnouncementReadRepository,
 	NewUsageLogRepository,
-	NewUsageBillingRepository,
+	ProvideUsageBillingRepository,
 	NewBatchImageRepository,
 	NewIdempotencyRepository,
 	NewUsageCleanupRepository,
@@ -131,6 +136,7 @@ var ProviderSet = wire.NewSet(
 	NewBatchImageQueue,
 	NewBatchImageDownloadLimiter,
 	NewLeaderLockCache,
+	NewBalanceCenterEventQueue,
 	ProvideSchedulerCache,
 	NewSchedulerOutboxRepository,
 	NewAuthCacheInvalidationOutboxRepository,

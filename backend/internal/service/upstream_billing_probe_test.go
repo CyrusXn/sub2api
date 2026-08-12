@@ -397,6 +397,18 @@ func (r *upstreamBillingProbeSettingRepo) GetValue(_ context.Context, key string
 	return value, nil
 }
 
+func (r *upstreamBillingProbeSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := r.values[key]; ok {
+			result[key] = value
+		}
+	}
+	return result, nil
+}
+
 func (r *upstreamBillingProbeSettingRepo) Set(_ context.Context, key, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1651,6 +1663,32 @@ func TestUpstreamBillingProbeRunnerIsBoundedAndManualProbeIgnoresSwitches(t *tes
 	require.Equal(t, int64(21), upstream.calls.Load())
 	require.NotNil(t, accounts[25].RateMultiplier)
 	require.Equal(t, manualRate, *accounts[25].RateMultiplier)
+}
+
+func TestUpstreamBillingProbeRunDueConsumesBalanceCenterEventsWhenFallbackDisabled(t *testing.T) {
+	account := &Account{
+		ID:          31,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://upstream.example"},
+		Extra:       map[string]any{UpstreamBillingProbeEnabledExtraKey: false},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{
+		SettingKeyUpstreamBillingProbeSettings:   `{"enabled":false,"interval_minutes":30}`,
+		SettingKeyBalanceCenterEnabled:           "true",
+		SettingKeyBalanceCenterEventProbeEnabled: "true",
+	}}
+	upstream := &upstreamBillingProbeHTTPStub{}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, settingsRepo)
+	events := NewBalanceCenterEventService(&balanceCenterEventQueueStub{due: []int64{account.ID}}, settingsRepo, svc)
+	svc.SetBalanceCenterEventService(events)
+	svc.now = func() time.Time { return time.Date(2026, time.August, 12, 2, 0, 0, 0, time.UTC) }
+
+	require.NoError(t, svc.RunDue(context.Background()))
+	require.Equal(t, int64(1), upstream.calls.Load())
 }
 
 func TestUpstreamBillingProbeRunnerRechecksEnabledAfterDueSelection(t *testing.T) {
