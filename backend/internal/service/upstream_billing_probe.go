@@ -256,6 +256,7 @@ type UpstreamBillingProbeService struct {
 	webTokenMu          sync.Mutex
 	webTokens           map[string]cachedWebAccountToken
 	balanceCenterEvents *BalanceCenterEventService
+	balanceCenterRepo   BalanceCenterRepository
 }
 
 type cachedWebAccountToken struct {
@@ -321,6 +322,14 @@ func (s *UpstreamBillingProbeService) SetBalanceCenterEventService(events *Balan
 	}
 }
 
+// SetBalanceCenterRepository 注入统一余额快照仓储；写入失败不反向影响原探测链路。
+func (s *UpstreamBillingProbeService) SetBalanceCenterRepository(repository BalanceCenterRepository) {
+	if s == nil {
+		return
+	}
+	s.balanceCenterRepo = repository
+}
+
 // ProvideUpstreamBillingProbeService starts the process-wide periodic runner.
 func ProvideUpstreamBillingProbeService(
 	accountRepo AccountRepository,
@@ -328,12 +337,14 @@ func ProvideUpstreamBillingProbeService(
 	settingService *SettingService,
 	upstreamSites *UpstreamSiteCredentialService,
 	balanceCenterEvents *BalanceCenterEventService,
+	balanceCenterRepo BalanceCenterRepository,
 	lockCache LeaderLockCache,
 	db *sql.DB,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetUpstreamSiteCredentialService(upstreamSites)
 	svc.SetBalanceCenterEventService(balanceCenterEvents)
+	svc.SetBalanceCenterRepository(balanceCenterRepo)
 	svc.SetLeaderLock(lockCache, db)
 	svc.Start()
 	return svc
@@ -1936,7 +1947,102 @@ func (s *UpstreamBillingProbeService) updateSnapshot(
 	if !ok {
 		return ErrUpstreamBillingProbeUnavailable
 	}
-	return writer.UpdateUpstreamBillingProbeSnapshot(ctx, account, snapshot, rateMultiplier)
+	if err := writer.UpdateUpstreamBillingProbeSnapshot(ctx, account, snapshot, rateMultiplier); err != nil {
+		return err
+	}
+	s.persistBalanceCenterProbeSnapshot(ctx, account, snapshot)
+	return nil
+}
+
+func (s *UpstreamBillingProbeService) persistBalanceCenterProbeSnapshot(
+	ctx context.Context,
+	account *Account,
+	snapshot *UpstreamBillingProbeSnapshot,
+) {
+	if s == nil || s.balanceCenterRepo == nil {
+		return
+	}
+	balanceSnapshot, err := buildBalanceCenterProbeSnapshot(account, snapshot)
+	if err == nil {
+		_, err = s.balanceCenterRepo.PersistSnapshot(ctx, balanceSnapshot)
+	}
+	if err != nil {
+		accountID := int64(0)
+		if account != nil {
+			accountID = account.ID
+		}
+		// 不记录上游响应或凭据，余额中心旁路失败不能扩大敏感信息暴露面。
+		slog.Warn("balance_center_probe_snapshot_persist_failed", "account_id", accountID, "error_type", fmt.Sprintf("%T", err))
+	}
+}
+
+func buildBalanceCenterProbeSnapshot(account *Account, snapshot *UpstreamBillingProbeSnapshot) (*BalanceCenterSnapshot, error) {
+	if account == nil || snapshot == nil {
+		return nil, errors.New("余额中心探测快照参数不完整")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(account.GetCredential("base_url")))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Hostname() == "" {
+		return nil, errors.New("余额中心探测站点地址无效")
+	}
+	normalizedDomain := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	baseURL := strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host)
+	accountID := account.ID
+	result := &BalanceCenterSnapshot{
+		AccountID:        &accountID,
+		SiteName:         strings.TrimSpace(account.Name),
+		NormalizedDomain: normalizedDomain,
+		BaseURL:          baseURL,
+		Source:           "sub2api_probe",
+		SourceKey:        fmt.Sprintf("sub2api_probe:%d:%d", account.ID, snapshot.LastAttemptAt.UnixNano()),
+		Status:           snapshot.Status,
+		ConversionScale:  balanceCenterProbeConversionScale(account),
+		Reason:           snapshot.LastError,
+		ProbedAt:         snapshot.LastAttemptAt,
+		LastUsedAt:       account.LastUsedAt,
+	}
+	if result.SiteName == "" {
+		result.SiteName = normalizedDomain
+	}
+	payload := map[string]any{}
+	if snapshot.HTTPStatus != 0 {
+		payload["http_status"] = snapshot.HTTPStatus
+	}
+	if snapshot.FailureCount != 0 {
+		payload["failure_count"] = snapshot.FailureCount
+	}
+	result.Payload, err = json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("序列化余额中心探测摘要失败: %w", err)
+	}
+	if snapshot.Status != UpstreamBillingProbeStatusOK {
+		return result, nil
+	}
+	if snapshot.Balance != nil && snapshot.Balance.Status == UpstreamBillingProbeStatusOK && snapshot.Balance.Amount != nil {
+		converted := *snapshot.Balance.Amount
+		raw := converted / result.ConversionScale
+		result.Balance = &raw
+		result.ConvertedBalance = &converted
+		result.Currency = snapshot.Balance.Unit
+	}
+	if value, ok := resolveAccountExtraNumber(snapshot.Data, "resolved_rate_multiplier"); ok {
+		result.RateMultiplier = &value
+	}
+	return result, nil
+}
+
+func balanceCenterProbeConversionScale(account *Account) float64 {
+	// 兼容账号级换算字段尚未合入的旧基线；新字段存在时以账号配置为准。
+	type conversionScaleProvider interface {
+		UpstreamRechargeConversionScale() float64
+	}
+	if provider, ok := any(account).(conversionScaleProvider); ok {
+		return provider.UpstreamRechargeConversionScale()
+	}
+	parsed, err := url.Parse(strings.TrimSpace(account.GetCredential("base_url")))
+	if err == nil && strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".") == "hubway.cc" {
+		return 0.1
+	}
+	return 1
 }
 
 func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {

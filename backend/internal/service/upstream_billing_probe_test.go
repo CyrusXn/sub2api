@@ -154,6 +154,35 @@ type upstreamBillingProbeSettingRepo struct {
 	values map[string]string
 }
 
+type balanceCenterRepositorySpy struct {
+	mu        sync.Mutex
+	snapshots []*BalanceCenterSnapshot
+	err       error
+}
+
+func (r *balanceCenterRepositorySpy) PersistSnapshot(_ context.Context, snapshot *BalanceCenterSnapshot) (*BalanceCenterSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clone := *snapshot
+	clone.Payload = append(json.RawMessage(nil), snapshot.Payload...)
+	r.snapshots = append(r.snapshots, &clone)
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &clone, nil
+}
+
+func (r *balanceCenterRepositorySpy) lastSnapshot() *BalanceCenterSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.snapshots) == 0 {
+		return nil
+	}
+	clone := *r.snapshots[len(r.snapshots)-1]
+	clone.Payload = append(json.RawMessage(nil), clone.Payload...)
+	return &clone
+}
+
 type upstreamBillingProbeHTTPStub struct {
 	calls          atomic.Int64
 	active         atomic.Int64
@@ -430,6 +459,133 @@ func newUpstreamBillingProbeTestService(
 	}}}
 	accountTestService := &AccountTestService{accountRepo: repo, httpUpstream: upstream, cfg: cfg}
 	return NewUpstreamBillingProbeService(repo, accountTestService, NewSettingService(settingRepo, cfg))
+}
+
+func TestUpstreamBillingProbePersistsSuccessfulBalanceCenterSnapshot(t *testing.T) {
+	lastUsedAt := time.Date(2026, time.August, 12, 7, 58, 0, 0, time.UTC)
+	account := &Account{
+		ID:          61,
+		Name:        "VoVo-main-key",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		LastUsedAt:  &lastUsedAt,
+		Credentials: map[string]any{
+			"api_key":  "sk-sensitive-value",
+			"base_url": "https://VOVOAPI.com/v1/",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	centerRepo := &balanceCenterRepositorySpy{}
+	svc := newUpstreamBillingProbeTestService(repo, &upstreamBillingProbeHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+	svc.SetBalanceCenterRepository(centerRepo)
+	now := time.Date(2026, time.August, 12, 8, 0, 0, 123, time.UTC)
+	amount := 12.34
+
+	snapshot, err := svc.persistProbeSuccess(context.Background(), account, 30, now, http.StatusOK,
+		map[string]any{"resolved_rate_multiplier": 0.7, "secret": "must-not-persist"},
+		&UpstreamAccountBalanceSnapshot{Status: UpstreamBillingProbeStatusOK, Amount: &amount, Unit: "USD"},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	persisted := centerRepo.lastSnapshot()
+	require.NotNil(t, persisted)
+	require.Equal(t, int64Ptr(account.ID), persisted.AccountID)
+	require.Equal(t, account.Name, persisted.SiteName)
+	require.Equal(t, "vovoapi.com", persisted.NormalizedDomain)
+	require.Equal(t, "https://vovoapi.com", persisted.BaseURL)
+	require.Equal(t, "sub2api_probe", persisted.Source)
+	require.Equal(t, "sub2api_probe:61:1786521600000000123", persisted.SourceKey)
+	require.Equal(t, UpstreamBillingProbeStatusOK, persisted.Status)
+	require.NotNil(t, persisted.Balance)
+	require.InDelta(t, 12.34, *persisted.Balance, 1e-12)
+	require.NotNil(t, persisted.ConvertedBalance)
+	require.InDelta(t, 12.34, *persisted.ConvertedBalance, 1e-12)
+	require.NotNil(t, persisted.RateMultiplier)
+	require.InDelta(t, 0.7, *persisted.RateMultiplier, 1e-12)
+	require.Equal(t, 1.0, persisted.ConversionScale)
+	require.Equal(t, "USD", persisted.Currency)
+	require.Equal(t, now, persisted.ProbedAt)
+	require.Equal(t, &lastUsedAt, persisted.LastUsedAt)
+	require.JSONEq(t, `{"http_status":200}`, string(persisted.Payload))
+	require.NotContains(t, string(persisted.Payload), "sk-sensitive-value")
+	require.NotContains(t, string(persisted.Payload), "must-not-persist")
+}
+
+func TestUpstreamBillingProbePersistsFailedBalanceCenterSnapshotWithoutStaleValues(t *testing.T) {
+	account := &Account{
+		ID:          62,
+		Name:        "VoVo",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-sensitive-value", "base_url": "https://vovoapi.com/v1"},
+	}
+	previousAmount := 99.0
+	account.Extra = map[string]any{UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{
+		Status: UpstreamBillingProbeStatusOK,
+		Data:   map[string]any{"resolved_rate_multiplier": 0.5},
+		Balance: &UpstreamAccountBalanceSnapshot{
+			Status: UpstreamBillingProbeStatusOK,
+			Amount: &previousAmount,
+		},
+	}}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	centerRepo := &balanceCenterRepositorySpy{}
+	svc := newUpstreamBillingProbeTestService(repo, &upstreamBillingProbeHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+	svc.SetBalanceCenterRepository(centerRepo)
+	now := time.Date(2026, time.August, 12, 8, 1, 0, 0, time.UTC)
+
+	result, err := svc.persistProbeFailure(context.Background(), account, 30, now, http.StatusBadGateway, "http_error", 0)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, result.Status)
+	persisted := centerRepo.lastSnapshot()
+	require.NotNil(t, persisted)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, persisted.Status)
+	require.Nil(t, persisted.Balance)
+	require.Nil(t, persisted.ConvertedBalance)
+	require.Nil(t, persisted.RateMultiplier)
+	require.Equal(t, "http_error", persisted.Reason)
+	require.JSONEq(t, `{"failure_count":1,"http_status":502}`, string(persisted.Payload))
+}
+
+func TestUpstreamBillingProbeBalanceCenterSourceKeyIsStable(t *testing.T) {
+	account := &Account{ID: 63, Name: "Pite", Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://ai.pite.chat/v1"}}
+	now := time.Date(2026, time.August, 12, 8, 2, 0, 456, time.UTC)
+	snapshot := &UpstreamBillingProbeSnapshot{Status: UpstreamBillingProbeStatusFailed, LastAttemptAt: now, HTTPStatus: 503, LastError: "http_error"}
+
+	first, err := buildBalanceCenterProbeSnapshot(account, snapshot)
+	require.NoError(t, err)
+	second, err := buildBalanceCenterProbeSnapshot(account, snapshot)
+	require.NoError(t, err)
+	require.Equal(t, first.SourceKey, second.SourceKey)
+	require.Equal(t, "sub2api_probe:63:1786521720000000456", first.SourceKey)
+}
+
+func TestUpstreamBillingProbeIgnoresBalanceCenterPersistenceFailure(t *testing.T) {
+	account := &Account{
+		ID:          64,
+		Name:        "OneBool",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-sensitive-value", "base_url": "https://onebool.com/v1"},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	centerRepo := &balanceCenterRepositorySpy{err: errors.New("database unavailable")}
+	svc := newUpstreamBillingProbeTestService(repo, &upstreamBillingProbeHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+	svc.SetBalanceCenterRepository(centerRepo)
+
+	result, err := svc.persistProbeFailure(context.Background(), account, 30, time.Now(), http.StatusBadGateway, "http_error", 0)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, result.Status)
+	require.NotNil(t, centerRepo.lastSnapshot())
 }
 
 func attachUpstreamSiteCredential(svc *UpstreamBillingProbeService, host string) {
