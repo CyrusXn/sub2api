@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"math"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,6 +21,8 @@ const (
 
 	BalanceCenterAlertLowBalance        = "low_balance"
 	BalanceCenterAlertMultiplierChanged = "multiplier_changed"
+	BalanceCenterAlertDeliveryAccepted  = "accepted"
+	BalanceCenterAlertDeliveryFailed    = "failed"
 
 	balanceCenterDefaultLowBalanceThreshold = 5.0
 	balanceCenterFloatTolerance             = 1e-9
@@ -50,6 +55,28 @@ type BalanceCenterAlertDecision struct {
 type BalanceCenterService struct {
 	repository  BalanceCenterRepository
 	settingRepo SettingRepository
+	emailSender BalanceCenterEmailSender
+}
+
+type BalanceCenterEmailSender interface {
+	SendEmail(context.Context, string, string, string) error
+}
+
+type BalanceCenterAlertDeliveryInput struct {
+	IdentityKey   string
+	SiteID        int64
+	AccountID     *int64
+	SnapshotID    int64
+	AlertType     string
+	Recipient     string
+	Subject       string
+	OldValue      *float64
+	NewValue      *float64
+	Threshold     *float64
+	Status        string
+	FailureReason string
+	AttemptedAt   time.Time
+	AcceptedAt    *time.Time
 }
 
 type BalanceCenterSnapshot struct {
@@ -78,8 +105,168 @@ type BalanceCenterRepository interface {
 	PersistSnapshot(context.Context, *BalanceCenterSnapshot) (*BalanceCenterSnapshot, error)
 }
 
+type BalanceCenterAlertRepository interface {
+	GetAlertState(context.Context, string, int64, *int64) (BalanceCenterAlertState, error)
+	SaveAlertState(context.Context, string, int64, *int64, int64, BalanceCenterAlertState, *BalanceCenterAlertDecision, time.Time) error
+	RecordAlertDelivery(context.Context, *BalanceCenterAlertDeliveryInput) error
+}
+
 func NewBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository) *BalanceCenterService {
 	return &BalanceCenterService{repository: repository, settingRepo: settingRepo}
+}
+
+func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository, emailService *EmailService) *BalanceCenterService {
+	service := NewBalanceCenterService(repository, settingRepo)
+	service.SetEmailSender(emailService)
+	return service
+}
+
+func (s *BalanceCenterService) SetEmailSender(sender BalanceCenterEmailSender) {
+	if s != nil {
+		s.emailSender = sender
+	}
+}
+
+func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *BalanceCenterSnapshot) (*BalanceCenterSnapshot, error) {
+	if s == nil || s.repository == nil {
+		return nil, errors.New("余额中心仓储不可用")
+	}
+	settings, err := s.GetSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !settings.Enabled {
+		return nil, nil
+	}
+	persisted, err := s.repository.PersistSnapshot(ctx, snapshot)
+	if err != nil || persisted == nil || persisted.Status != "ok" {
+		return persisted, err
+	}
+	alertRepo, ok := s.repository.(BalanceCenterAlertRepository)
+	if !ok {
+		return persisted, errors.New("余额告警仓储不可用")
+	}
+	identityKey := balanceCenterAlertIdentityKey(persisted)
+	state, err := alertRepo.GetAlertState(ctx, identityKey, persisted.SiteID, persisted.AccountID)
+	if err != nil {
+		return persisted, fmt.Errorf("读取余额告警状态失败: %w", err)
+	}
+	decisions, next := EvaluateBalanceCenterAlerts(state, BalanceCenterSuccessfulSnapshot{
+		ConvertedBalance: persisted.ConvertedBalance,
+		RateMultiplier:   persisted.RateMultiplier,
+	}, settings.LowBalanceThreshold)
+	if err := alertRepo.SaveAlertState(ctx, identityKey, persisted.SiteID, persisted.AccountID, persisted.ID, next, nil, persisted.ProbedAt); err != nil {
+		return persisted, fmt.Errorf("保存余额告警基线失败: %w", err)
+	}
+	if len(decisions) == 0 || !settings.EmailEnabled || s.emailSender == nil {
+		return persisted, nil
+	}
+	recipients, err := s.balanceCenterAlertRecipients(ctx)
+	if err != nil {
+		return persisted, err
+	}
+	if len(recipients) == 0 {
+		return persisted, nil
+	}
+
+	current := next
+	var sendErrors []error
+	for i := range decisions {
+		decision := decisions[i]
+		accepted := true
+		subject, body := buildBalanceCenterAlertEmail(persisted, decision)
+		for _, recipient := range recipients {
+			attemptedAt := time.Now().UTC()
+			delivery := &BalanceCenterAlertDeliveryInput{
+				IdentityKey: identityKey, SiteID: persisted.SiteID, AccountID: persisted.AccountID,
+				SnapshotID: persisted.ID, AlertType: decision.Type, Recipient: recipient, Subject: subject,
+				OldValue: decision.OldValue, NewValue: decision.NewValue, Threshold: decision.Threshold,
+				Status: BalanceCenterAlertDeliveryAccepted, AttemptedAt: attemptedAt,
+			}
+			if sendErr := s.emailSender.SendEmail(ctx, recipient, subject, body); sendErr != nil {
+				accepted = false
+				delivery.Status = BalanceCenterAlertDeliveryFailed
+				delivery.FailureReason = "SMTP 未接受"
+				sendErrors = append(sendErrors, fmt.Errorf("发送余额告警邮件失败: %w", sendErr))
+			} else {
+				delivery.AcceptedAt = &attemptedAt
+			}
+			if auditErr := alertRepo.RecordAlertDelivery(ctx, delivery); auditErr != nil {
+				accepted = false
+				sendErrors = append(sendErrors, fmt.Errorf("记录余额告警投递失败: %w", auditErr))
+			}
+		}
+		if accepted {
+			current = AcceptBalanceCenterAlert(current, decision)
+			if saveErr := alertRepo.SaveAlertState(ctx, identityKey, persisted.SiteID, persisted.AccountID, persisted.ID, current, &decision, persisted.ProbedAt); saveErr != nil {
+				sendErrors = append(sendErrors, fmt.Errorf("推进余额告警状态失败: %w", saveErr))
+			}
+		}
+	}
+	return persisted, errors.Join(sendErrors...)
+}
+
+func (s *BalanceCenterService) balanceCenterAlertRecipients(ctx context.Context) ([]string, error) {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyOpsEmailNotificationConfig)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("读取余额告警收件人失败: %w", err)
+	}
+	var config OpsEmailNotificationConfig
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return nil, errors.New("余额告警收件人配置无效")
+	}
+	seen := make(map[string]struct{})
+	result := make([]string, 0, len(config.Alert.Recipients))
+	for _, item := range config.Alert.Recipients {
+		address := strings.TrimSpace(strings.ToLower(item))
+		if address == "" {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		seen[address] = struct{}{}
+		result = append(result, address)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func balanceCenterAlertIdentityKey(snapshot *BalanceCenterSnapshot) string {
+	if snapshot.AccountID != nil {
+		return fmt.Sprintf("account:%d", *snapshot.AccountID)
+	}
+	return fmt.Sprintf("site:%d", snapshot.SiteID)
+}
+
+func buildBalanceCenterAlertEmail(snapshot *BalanceCenterSnapshot, decision BalanceCenterAlertDecision) (string, string) {
+	title := "倍率变化告警"
+	if decision.Type == BalanceCenterAlertLowBalance {
+		title = "低余额告警"
+	}
+	value := func(input *float64) string {
+		if input == nil {
+			return "-"
+		}
+		return strconv.FormatFloat(*input, 'f', -1, 64)
+	}
+	subject := "[余额中心]" + title + " - " + snapshot.SiteName
+	body := fmt.Sprintf(`<h2>%s</h2><p>站点：%s</p><p>账号：%s</p><p>域名：%s</p><p>原值：%s</p><p>新值：%s</p><p>原始余额：%s</p><p>折算余额：%s</p><p>阈值：%s</p><p>折算系数：%s</p><p>币种：%s</p><p>探测时间：%s</p>`,
+		html.EscapeString(title), html.EscapeString(snapshot.SiteName), html.EscapeString(balanceCenterAccountLabel(snapshot.AccountID)),
+		html.EscapeString(snapshot.NormalizedDomain), value(decision.OldValue), value(decision.NewValue), value(snapshot.Balance), value(snapshot.ConvertedBalance), value(decision.Threshold),
+		strconv.FormatFloat(snapshot.ConversionScale, 'f', -1, 64), html.EscapeString(snapshot.Currency), snapshot.ProbedAt.UTC().Format(time.RFC3339),
+	)
+	return subject, body
+}
+
+func balanceCenterAccountLabel(accountID *int64) string {
+	if accountID == nil {
+		return "历史账号"
+	}
+	return strconv.FormatInt(*accountID, 10)
 }
 
 func (s *BalanceCenterService) GetSettings(ctx context.Context) (*BalanceCenterSettings, error) {
@@ -120,40 +307,42 @@ func (s *BalanceCenterService) UpdateSettings(ctx context.Context, settings *Bal
 	})
 }
 
-func EvaluateBalanceCenterAlerts(state BalanceCenterAlertState, snapshot BalanceCenterSuccessfulSnapshot, threshold float64) (BalanceCenterAlertDecision, BalanceCenterAlertState) {
+func EvaluateBalanceCenterAlerts(state BalanceCenterAlertState, snapshot BalanceCenterSuccessfulSnapshot, threshold float64) ([]BalanceCenterAlertDecision, BalanceCenterAlertState) {
 	next := cloneBalanceCenterAlertState(state)
+	decisions := make([]BalanceCenterAlertDecision, 0, 2)
 	if snapshot.ConvertedBalance != nil {
 		if *snapshot.ConvertedBalance >= threshold {
 			next.LowBalanceActive = false
 		} else if !state.LowBalanceActive {
 			value := *snapshot.ConvertedBalance
 			thresholdValue := threshold
-			return BalanceCenterAlertDecision{
+			decisions = append(decisions, BalanceCenterAlertDecision{
 				Type:      BalanceCenterAlertLowBalance,
 				NewValue:  &value,
 				Threshold: &thresholdValue,
-			}, next
+			})
 		}
 	}
 
 	if snapshot.RateMultiplier == nil {
-		return BalanceCenterAlertDecision{}, next
+		return decisions, next
 	}
 	if state.MultiplierBaseline == nil {
 		value := *snapshot.RateMultiplier
 		next.MultiplierBaseline = &value
-		return BalanceCenterAlertDecision{}, next
+		return decisions, next
 	}
 	if math.Abs(*snapshot.RateMultiplier-*state.MultiplierBaseline) <= balanceCenterFloatTolerance {
-		return BalanceCenterAlertDecision{}, next
+		return decisions, next
 	}
 	oldValue := *state.MultiplierBaseline
 	newValue := *snapshot.RateMultiplier
-	return BalanceCenterAlertDecision{
+	decisions = append(decisions, BalanceCenterAlertDecision{
 		Type:     BalanceCenterAlertMultiplierChanged,
 		OldValue: &oldValue,
 		NewValue: &newValue,
-	}, next
+	})
+	return decisions, next
 }
 
 func AcceptBalanceCenterAlert(state BalanceCenterAlertState, decision BalanceCenterAlertDecision) BalanceCenterAlertState {

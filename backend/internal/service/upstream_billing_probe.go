@@ -256,7 +256,9 @@ type UpstreamBillingProbeService struct {
 	webTokenMu          sync.Mutex
 	webTokens           map[string]cachedWebAccountToken
 	balanceCenterEvents *BalanceCenterEventService
-	balanceCenterRepo   BalanceCenterRepository
+	balanceCenterStore  interface {
+		PersistSnapshot(context.Context, *BalanceCenterSnapshot) (*BalanceCenterSnapshot, error)
+	}
 }
 
 type cachedWebAccountToken struct {
@@ -323,11 +325,13 @@ func (s *UpstreamBillingProbeService) SetBalanceCenterEventService(events *Balan
 }
 
 // SetBalanceCenterRepository 注入统一余额快照仓储；写入失败不反向影响原探测链路。
-func (s *UpstreamBillingProbeService) SetBalanceCenterRepository(repository BalanceCenterRepository) {
+func (s *UpstreamBillingProbeService) SetBalanceCenterRepository(repository interface {
+	PersistSnapshot(context.Context, *BalanceCenterSnapshot) (*BalanceCenterSnapshot, error)
+}) {
 	if s == nil {
 		return
 	}
-	s.balanceCenterRepo = repository
+	s.balanceCenterStore = repository
 }
 
 // ProvideUpstreamBillingProbeService starts the process-wide periodic runner.
@@ -337,14 +341,14 @@ func ProvideUpstreamBillingProbeService(
 	settingService *SettingService,
 	upstreamSites *UpstreamSiteCredentialService,
 	balanceCenterEvents *BalanceCenterEventService,
-	balanceCenterRepo BalanceCenterRepository,
+	balanceCenterService *BalanceCenterService,
 	lockCache LeaderLockCache,
 	db *sql.DB,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetUpstreamSiteCredentialService(upstreamSites)
 	svc.SetBalanceCenterEventService(balanceCenterEvents)
-	svc.SetBalanceCenterRepository(balanceCenterRepo)
+	svc.SetBalanceCenterRepository(balanceCenterService)
 	svc.SetLeaderLock(lockCache, db)
 	svc.Start()
 	return svc
@@ -1959,12 +1963,12 @@ func (s *UpstreamBillingProbeService) persistBalanceCenterProbeSnapshot(
 	account *Account,
 	snapshot *UpstreamBillingProbeSnapshot,
 ) {
-	if s == nil || s.balanceCenterRepo == nil {
+	if s == nil || s.balanceCenterStore == nil {
 		return
 	}
 	balanceSnapshot, err := buildBalanceCenterProbeSnapshot(account, snapshot)
 	if err == nil {
-		_, err = s.balanceCenterRepo.PersistSnapshot(ctx, balanceSnapshot)
+		_, err = s.balanceCenterStore.PersistSnapshot(ctx, balanceSnapshot)
 	}
 	if err != nil {
 		accountID := int64(0)

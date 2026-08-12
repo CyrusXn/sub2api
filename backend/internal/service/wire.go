@@ -773,6 +773,7 @@ var ProviderSet = wire.NewSet(
 	NewUsageService,
 	NewUsageIPAttributionService,
 	ProvideBalanceCenterEventService,
+	ProvideBalanceCenterService,
 	wire.Bind(new(BalanceCenterUsageEventPublisher), new(*BalanceCenterEventService)),
 	NewDashboardService,
 	ProvidePricingService,

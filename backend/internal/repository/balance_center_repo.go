@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -125,6 +126,103 @@ ON CONFLICT (identity_key) DO UPDATE SET
 	result.SiteID = siteID
 	result.ConversionScale = conversionScale
 	return &result, nil
+}
+
+func (r *balanceCenterRepository) GetAlertState(ctx context.Context, identityKey string, _ int64, _ *int64) (service.BalanceCenterAlertState, error) {
+	if r == nil || r.db == nil {
+		return service.BalanceCenterAlertState{}, errors.New("余额中心仓储未初始化")
+	}
+	var lowBalanceActive bool
+	var multiplier sql.NullFloat64
+	err := r.db.QueryRowContext(ctx, `
+SELECT low_balance_active, multiplier_baseline
+FROM balance_center_alert_states
+WHERE identity_key = $1`, identityKey).Scan(&lowBalanceActive, &multiplier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return service.BalanceCenterAlertState{}, nil
+	}
+	if err != nil {
+		return service.BalanceCenterAlertState{}, fmt.Errorf("读取余额告警状态失败: %w", err)
+	}
+	state := service.BalanceCenterAlertState{LowBalanceActive: lowBalanceActive}
+	if multiplier.Valid {
+		value := multiplier.Float64
+		state.MultiplierBaseline = &value
+	}
+	return state, nil
+}
+
+func (r *balanceCenterRepository) SaveAlertState(
+	ctx context.Context,
+	identityKey string,
+	siteID int64,
+	accountID *int64,
+	snapshotID int64,
+	state service.BalanceCenterAlertState,
+	decision *service.BalanceCenterAlertDecision,
+	now time.Time,
+) error {
+	if r == nil || r.db == nil {
+		return errors.New("余额中心仓储未初始化")
+	}
+	var alertType any
+	if decision != nil && strings.TrimSpace(decision.Type) != "" {
+		alertType = decision.Type
+	}
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO balance_center_alert_states (
+    identity_key, site_id, account_id, low_balance_active, multiplier_baseline,
+    last_success_snapshot_id, low_balance_notified_at, multiplier_notified_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    CASE WHEN $7::text = 'low_balance' THEN $8 ELSE NULL END,
+    CASE WHEN $7::text = 'multiplier_changed' THEN $8 ELSE NULL END
+)
+ON CONFLICT (identity_key) DO UPDATE SET
+    site_id = EXCLUDED.site_id,
+    account_id = EXCLUDED.account_id,
+    low_balance_active = EXCLUDED.low_balance_active,
+    multiplier_baseline = EXCLUDED.multiplier_baseline,
+    last_success_snapshot_id = EXCLUDED.last_success_snapshot_id,
+    low_balance_notified_at = CASE WHEN $7::text = 'low_balance' THEN $8 ELSE balance_center_alert_states.low_balance_notified_at END,
+    multiplier_notified_at = CASE WHEN $7::text = 'multiplier_changed' THEN $8 ELSE balance_center_alert_states.multiplier_notified_at END,
+    updated_at = NOW()`,
+		identityKey, siteID, accountID, state.LowBalanceActive, state.MultiplierBaseline,
+		snapshotID, alertType, now,
+	)
+	if err != nil {
+		return fmt.Errorf("保存余额告警状态失败: %w", err)
+	}
+	return nil
+}
+
+func (r *balanceCenterRepository) RecordAlertDelivery(ctx context.Context, input *service.BalanceCenterAlertDeliveryInput) error {
+	if r == nil || r.db == nil {
+		return errors.New("余额中心仓储未初始化")
+	}
+	if input == nil || strings.TrimSpace(input.IdentityKey) == "" || strings.TrimSpace(input.AlertType) == "" {
+		return errors.New("余额告警投递记录不能为空")
+	}
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO balance_center_alert_deliveries (
+    identity_key, site_id, account_id, snapshot_id, alert_type,
+    recipient_email, subject, old_value, new_value, threshold,
+    status, failure_reason, attempted_at, accepted_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+ON CONFLICT (snapshot_id, alert_type, recipient_email) DO UPDATE SET
+    status = EXCLUDED.status,
+    failure_reason = EXCLUDED.failure_reason,
+    attempted_at = EXCLUDED.attempted_at,
+    accepted_at = EXCLUDED.accepted_at`,
+		input.IdentityKey, input.SiteID, input.AccountID, input.SnapshotID, input.AlertType,
+		strings.TrimSpace(input.Recipient), strings.TrimSpace(input.Subject), input.OldValue,
+		input.NewValue, input.Threshold, input.Status, input.FailureReason,
+		input.AttemptedAt, input.AcceptedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("记录余额告警投递失败: %w", err)
+	}
+	return nil
 }
 
 func validateBalanceCenterSnapshot(snapshot *service.BalanceCenterSnapshot) error {
