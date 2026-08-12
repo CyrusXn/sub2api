@@ -619,6 +619,7 @@ RETURNING
   email_sent,
   created_at`
 
+	// 迁移 222 将去重键设为非空列；普通规则没有去重键时必须写入空字符串。
 	row := r.db.QueryRowContext(
 		ctx,
 		q,
@@ -630,7 +631,7 @@ RETURNING
 		opsNullFloat64(event.MetricValue),
 		opsNullFloat64(event.ThresholdValue),
 		dimensionsArg,
-		opsNullString(event.DedupeKey),
+		strings.TrimSpace(event.DedupeKey),
 		event.FiredAt,
 		opsNullTime(event.ResolvedAt),
 		event.EmailSent,

@@ -30,6 +30,8 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+sub2api-*.tar.gz
+sub2api-*.tar.gz.sha256
 
 # Node modules (will be installed in container)
 frontend/node_modules/
