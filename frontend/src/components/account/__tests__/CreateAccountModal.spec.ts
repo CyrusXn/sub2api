@@ -182,6 +182,22 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createAccountMock.mock.calls[0]?.[0]?.admin_usage_multiplier).toBe(1.25)
   })
 
+  it('充值换算系数支持后端约定的六位小数且 0.1 可通过原生校验', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+
+    // 直接验证浏览器原生 number 步进规则，防止 min 与 step 基准错位。
+    const label = wrapper.findAll('label').find((item) =>
+      item.text().includes('admin.accounts.upstreamRechargeScale')
+    )
+    const input = label?.element.parentElement?.querySelector('input') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    expect(input?.step).toBe('0.000001')
+    input!.value = '0.1'
+    expect(input?.checkValidity()).toBe(true)
+  })
+
   // namespace 摊平是仅 OAuth 的兼容开关：API Key 走 chat completions 回退桥时由桥自行摊平
   it('shows the Codex namespace flatten toggle only for OpenAI OAuth accounts', async () => {
     const wrapper = mountModal()

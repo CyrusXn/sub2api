@@ -352,6 +352,20 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.admin_usage_multiplier).toBe(1.75)
   })
 
+  it('充值换算系数支持后端约定的六位小数且 0.1 可通过原生校验', () => {
+    const wrapper = mountModal(buildAccount())
+
+    // 直接验证浏览器原生 number 步进规则，覆盖编辑账号时的提交拦截回归。
+    const label = wrapper.findAll('label').find((item) =>
+      item.text().includes('admin.accounts.upstreamRechargeScale')
+    )
+    const input = label?.element.parentElement?.querySelector('input') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    expect(input?.step).toBe('0.000001')
+    input!.value = '0.1'
+    expect(input?.checkValidity()).toBe(true)
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

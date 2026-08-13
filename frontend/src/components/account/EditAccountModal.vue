@@ -1527,7 +1527,8 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.upstreamRechargeScale') }}</label>
-          <input v-model.number="form.upstream_recharge_scale" type="number" min="0.000001" max="9999.999999" step="0.001" class="input" />
+          <!-- 与后端 DECIMAL(10,6) 精度对齐，避免 0.1 被浏览器判定为步进不匹配。 -->
+          <input v-model.number="form.upstream_recharge_scale" type="number" min="0.000001" max="9999.999999" step="0.000001" class="input" />
           <p class="input-hint">{{ t('admin.accounts.upstreamRechargeScaleHint') }}</p>
         </div>
       </div>
