@@ -735,12 +735,17 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	}
 
 	account := &Account{
-		ID:             123,
-		Name:           "acc",
-		Platform:       PlatformOpenAI,
-		Type:           AccountTypeOAuth,
-		Concurrency:    1,
-		Credentials:    map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+		ID:          123,
+		Name:        "acc",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":          "oauth-token",
+			"chatgpt_account_id":    "chatgpt-acc",
+			"model_mapping":         map[string]any{"gpt-5.1-codex": "gpt-5.1-account"},
+			"compact_model_mapping": map[string]any{"gpt-5.1-codex": "gpt-5.1-compact"},
+		},
 		Extra:          map[string]any{"openai_passthrough": true},
 		Status:         StatusActive,
 		Schedulable:    true,
@@ -754,7 +759,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Exists())
-	require.Equal(t, "gpt-5.1-codex", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "gpt-5.1-compact", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, "compact me", gjson.GetBytes(upstream.lastBody, "input.0.text").String())
 	require.Equal(t, "local-test-instructions", strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
@@ -997,7 +1002,7 @@ func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t 
 	require.NotEqual(t, "opencode", upstream.lastReq.Header.Get("originator"))
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersHideXCodex(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersAllowSafeXCodexUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1015,6 +1020,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersHideXCodex(t *test
 	headers.Set("x-codex-primary-window-minutes", "300")
 	headers.Set("x-codex-secondary-window-minutes", "10080")
 	headers.Set("x-codex-primary-reset-after-seconds", "1")
+	headers.Set("x-codex-secret-debug", "must-not-leak")
 
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -1051,8 +1057,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersHideXCodex(t *test
 	_, err := svc.Forward(context.Background(), c, account, originalBody)
 	require.NoError(t, err)
 
-	require.Empty(t, rec.Header().Get("x-codex-primary-used-percent"))
-	require.Empty(t, rec.Header().Get("x-codex-secondary-used-percent"))
+	// 仅回传 Codex 客户端计算用量窗口所需的协议头，未知调试头仍必须被净化。
+	require.Equal(t, "12", rec.Header().Get("x-codex-primary-used-percent"))
+	require.Equal(t, "34", rec.Header().Get("x-codex-secondary-used-percent"))
+	require.Empty(t, rec.Header().Get("x-codex-secret-debug"))
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughFlag(t *testing.T) {
@@ -2172,12 +2180,16 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PreservesBodyAndUsesResponsesEnd
 	}
 
 	account := &Account{
-		ID:             456,
-		Name:           "apikey-acc",
-		Platform:       PlatformOpenAI,
-		Type:           AccountTypeAPIKey,
-		Concurrency:    1,
-		Credentials:    map[string]any{"api_key": "sk-api-key", "base_url": "https://api.openai.com"},
+		ID:          456,
+		Name:        "apikey-acc",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":       "sk-api-key",
+			"base_url":      "https://api.openai.com",
+			"model_mapping": map[string]any{"gpt-5.2": "gpt-5.2-account"},
+		},
 		Extra:          map[string]any{"openai_passthrough": true},
 		Status:         StatusActive,
 		Schedulable:    true,

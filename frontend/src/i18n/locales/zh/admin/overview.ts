@@ -855,6 +855,7 @@ export default {
         userStatus: '状态'
       },
       usageToday: '今日',
+      usageYesterday: '昨日',
       usageTotal: '累计',
       concurrencySort: {
         title: '选择并发排序指标',

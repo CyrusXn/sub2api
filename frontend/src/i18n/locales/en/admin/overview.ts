@@ -859,6 +859,7 @@ export default {
         userStatus: 'Status'
       },
       usageToday: 'Today',
+      usageYesterday: 'Yesterday',
       usageTotal: 'Total',
       concurrencySort: {
         title: 'Select concurrency sort metric',

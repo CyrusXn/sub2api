@@ -220,7 +220,8 @@ func TestAccountRequestAlertEmailUsesDirectSubjectAndReasonFirst(t *testing.T) {
 func TestAccountRequestAlertEmailEnqueuesPersistentAggregationInsteadOfSendingDirectly(t *testing.T) {
 	repo := newAccountRequestAlertRepoMock()
 	settings := &balanceCenterSettingRepoStub{values: map[string]string{
-		SettingKeyOpsEmailNotificationConfig: `{"alert":{"enabled":true,"recipients":["ops@example.com"],"min_severity":"P2","rate_limit_per_hour":100}}`,
+		// 本测试只验证持久队列，显式关闭夜间静默，避免执行时刻影响结果。
+		SettingKeyOpsEmailNotificationConfig: `{"alert":{"enabled":true,"recipients":["ops@example.com"],"min_severity":"P2","rate_limit_per_hour":100,"quiet_hours_enabled":false}}`,
 	}}
 	opsService := &OpsService{opsRepo: repo, settingRepo: settings}
 	evaluator := NewOpsAlertEvaluatorService(opsService, repo, &EmailService{}, nil, nil, nil)
