@@ -197,6 +197,16 @@ func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanu
 	logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task started: task=%d batch_size=%d deleted_rows=%d %s", task.ID, batchSize, deletedTotal, describeUsageCleanupFilters(task.Filters))
 	var batchNum int
 
+	// 永久经营汇总是清理动作的硬前置条件，任何失败都不得继续删除明细。
+	if s.dashboard == nil {
+		s.markTaskFailed(task.ID, deletedTotal, errors.New("经营汇总固化服务不可用，已停止清理"))
+		return
+	}
+	if err := s.dashboard.PreserveBusinessRange(ctx, task.Filters.StartTime, task.Filters.EndTime); err != nil {
+		s.markTaskFailed(task.ID, deletedTotal, fmt.Errorf("清理前固化经营汇总失败: %w", err))
+		return
+	}
+
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task interrupted: task=%d err=%v", task.ID, ctx.Err())

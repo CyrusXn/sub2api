@@ -83,7 +83,7 @@ func TestBalanceCenterAdminRechargeUpsertIsIdempotent(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectQuery(regexp.QuoteMeta("ON CONFLICT (source, source_key) DO UPDATE")).
-		WithArgs("manual", "tx-1", nil, nil, 10.0, "CNY", now, "备注").
+		WithArgs("manual", "tx-1", nil, "", nil, 10.0, "CNY", now, "备注").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9))
 
 	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
@@ -92,6 +92,118 @@ func TestBalanceCenterAdminRechargeUpsertIsIdempotent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(9), item.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterRechargeSummaryAggregatesFullFilteredRangeBeforePagination(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 31, 23, 59, 59, 0, time.UTC)
+	siteID := int64(3)
+	newest := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	middle := time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC)
+	oldest := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("COALESCE\\(NULLIF\\(BTRIM\\(s.site_label\\)[\\s\\S]+FROM balance_center_recharge_events s[\\s\\S]+LEFT JOIN balance_center_sites bs[\\s\\S]+s.occurred_at >= \\$1[\\s\\S]+s.occurred_at <= \\$2[\\s\\S]+ORDER BY s.occurred_at DESC, s.id DESC").
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "source_key", "site_id", "account_id", "amount", "currency", "occurred_at", "note", "site_label", "site_name",
+		}).
+			AddRow(12, "manual", "tx-12", siteID, nil, 30.0, "CNY", newest, "第二笔", "", "站点 A").
+			AddRow(11, "manual", "tx-11", siteID, nil, 20.0, "CNY", middle, "第一笔", "", "站点 A").
+			AddRow(10, "legacy_opening", "opening-a", nil, nil, 50.0, "CNY", oldest, "旧系统期初累计，历史日期未知", "HX", "HX").
+			AddRow(9, "legacy_opening", "opening-b", nil, nil, 25.0, "CNY", oldest.Add(-time.Hour), "旧系统期初累计，历史日期未知", "Fox", "Fox"))
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	summary, err := repo.GetBalanceCenterRechargeSummary(context.Background(), service.BalanceCenterListFilter{
+		Page: 2, PageSize: 1, StartTime: &start, EndTime: &end,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 125.0, summary.TotalAmount)
+	require.Equal(t, int64(4), summary.Total)
+	require.Equal(t, 2, summary.Page)
+	require.Equal(t, 1, summary.PageSize)
+	require.Len(t, summary.Items, 1)
+	require.Equal(t, int64(11), summary.Items[0].ID)
+	require.Len(t, summary.Sites, 3)
+	require.Equal(t, &siteID, summary.Sites[0].SiteID)
+	require.Equal(t, "站点 A", summary.Sites[0].SiteName)
+	require.Equal(t, 50.0, summary.Sites[0].TotalAmount)
+	require.Equal(t, int64(2), summary.Sites[0].RecordCount)
+	require.Len(t, summary.Sites[0].Items, 2)
+	require.Nil(t, summary.Sites[1].SiteID)
+	require.Equal(t, "HX", summary.Sites[1].SiteName)
+	require.Equal(t, 50.0, summary.Sites[1].TotalAmount)
+	require.Equal(t, int64(1), summary.Sites[1].RecordCount)
+	require.Equal(t, "Fox", summary.Sites[2].SiteName)
+	require.Equal(t, 25.0, summary.Sites[2].TotalAmount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterRechargeSummaryUsesDecimalForAmounts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	mock.ExpectQuery("FROM balance_center_recharge_events s").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "source_key", "site_id", "account_id", "amount", "currency", "occurred_at", "note", "site_label", "site_name",
+		}).
+			AddRow(2, "manual", "tx-2", 3, nil, 0.1, "CNY", now, "", "", "站点 A").
+			AddRow(1, "manual", "tx-1", 3, nil, 0.2, "CNY", now.Add(-time.Second), "", "", "站点 A"))
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	summary, err := repo.GetBalanceCenterRechargeSummary(context.Background(), service.BalanceCenterListFilter{Page: 1, PageSize: 20})
+
+	require.NoError(t, err)
+	require.Equal(t, 0.3, summary.TotalAmount)
+	require.Equal(t, 0.3, summary.Sites[0].TotalAmount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterRechargeSummaryProtectsPaginationOverflow(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	mock.ExpectQuery("FROM balance_center_recharge_events s").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "source_key", "site_id", "account_id", "amount", "currency", "occurred_at", "note", "site_label", "site_name",
+		}).AddRow(1, "manual", "tx-1", 3, nil, 10.0, "CNY", now, "", "", "站点 A"))
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	maxInt := int(^uint(0) >> 1)
+	var summary *service.BalanceCenterRechargeSummary
+	require.NotPanics(t, func() {
+		summary, err = repo.GetBalanceCenterRechargeSummary(context.Background(), service.BalanceCenterListFilter{Page: maxInt, PageSize: maxInt})
+	})
+	require.NoError(t, err)
+	require.Empty(t, summary.Items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterRechargeSummaryCombinesSiteAndTimeFilters(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	mock.ExpectQuery("s.site_id=\\$1[\\s\\S]+s.occurred_at >= \\$2[\\s\\S]+s.occurred_at <= \\$3").
+		WithArgs(int64(7), start, end).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "source_key", "site_id", "account_id", "amount", "currency", "occurred_at", "note", "site_label", "site_name",
+		}))
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	_, err = repo.GetBalanceCenterRechargeSummary(context.Background(), service.BalanceCenterListFilter{
+		Page: 1, PageSize: 20, SiteID: 7, StartTime: &start, EndTime: &end,
+	})
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

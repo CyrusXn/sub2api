@@ -1083,8 +1083,19 @@ const users = ref<AdminUser[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const USER_SORT_STORAGE_KEY = 'admin-users-table-sort'
-const loadInitialSortState = (): { sort_by: string; sort_order: 'asc' | 'desc' } => {
-  const fallback = { sort_by: 'created_at', sort_order: 'desc' as 'asc' | 'desc' }
+type ConcurrencyMetric = 'total' | 'current'
+type UserSortState = {
+  sort_by: string
+  sort_order: 'asc' | 'desc'
+  initial_concurrency_metric?: 'available'
+}
+const loadInitialSortState = (): UserSortState => {
+  // 首次进入按剩余并发降序；一旦管理员主动排序，就改用界面选中的实时并发指标。
+  const fallback: UserSortState = {
+    sort_by: 'concurrency',
+    sort_order: 'desc',
+    initial_concurrency_metric: 'available'
+  }
   const sortable = new Set(['email', 'id', 'username', 'role', 'admin_usage_multiplier', 'balance', 'concurrency', 'status', 'last_used_at', 'last_active_at', 'created_at'])
   try {
     const raw = localStorage.getItem(USER_SORT_STORAGE_KEY)
@@ -1100,14 +1111,14 @@ const loadInitialSortState = (): { sort_by: string; sort_order: 'asc' | 'desc' }
     return fallback
   }
 }
-const sortState = reactive(loadInitialSortState())
-type ConcurrencyMetric = 'total' | 'current'
-const concurrencyMetric = ref<ConcurrencyMetric>('total')
+const sortState = reactive<UserSortState>(loadInitialSortState())
+const concurrencyMetric = ref<ConcurrencyMetric>('current')
 const concurrencyMetricMenuOpen = ref(false)
 const setConcurrencyMetric = (metric: ConcurrencyMetric) => {
   concurrencyMetric.value = metric
   concurrencyMetricMenuOpen.value = false
   clearUsageSort()
+  delete sortState.initial_concurrency_metric
   sortState.sort_by = 'concurrency'
   pagination.page = 1
   loadUsers()
@@ -1401,6 +1412,7 @@ const closePlatformQuotaModal = () => {
 }
 let abortController: AbortController | null = null
 let secondaryDataSeq = 0
+let initialUserTableSetupPromise: Promise<void> | null = null
 
 const loadUsersSecondaryData = async (
   userIds: number[],
@@ -1408,6 +1420,13 @@ const loadUsersSecondaryData = async (
   expectedSeq?: number
 ) => {
   if (userIds.length === 0) return
+
+  // 主列表无需等待远程列偏好；次要数据等列布局和属性定义就绪后再按实际可见列加载。
+  if (initialUserTableSetupPromise) {
+    await initialUserTableSetupPromise
+  }
+  if (signal?.aborted) return
+  if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
 
   const tasks: Promise<void>[] = []
 
@@ -1650,7 +1669,9 @@ const loadUsers = async () => {
         // 始终请求 subscriptions：列隐藏时仍需用于 UserPlatformQuotaModal 的 active-subscription 警示 banner
         include_subscriptions: true,
         sort_by: sortState.sort_by,
-        concurrency_metric: sortState.sort_by === 'concurrency' ? concurrencyMetric.value : undefined,
+        concurrency_metric: sortState.sort_by === 'concurrency'
+          ? (sortState.initial_concurrency_metric ?? concurrencyMetric.value)
+          : undefined,
         sort_order: sortState.sort_order
       },
       { signal }
@@ -1718,6 +1739,7 @@ const handlePageSizeChange = (pageSize: number) => {
 
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   clearUsageSort()
+  delete sortState.initial_concurrency_metric
   sortState.sort_by = key
   sortState.sort_order = order
   pagination.page = 1
@@ -1895,32 +1917,41 @@ const handleScroll = () => {
   closeActionMenu()
 }
 
-onMounted(async () => {
-  await loadAttributeDefinitions()
+onMounted(() => {
   loadSavedFilters()
   loadSavedColumns()
-  const restoredHiddenColumns = await loadTablePreference({
-    hiddenColumns: [...hiddenColumns],
-    columnWidths: {},
-    columnOrder: []
-  }, {
-    columnWidthStorageKey: USER_COLUMN_WIDTH_STORAGE_KEY,
-    columnOrderStorageKey: USER_COLUMN_ORDER_STORAGE_KEY
+
+  initialUserTableSetupPromise = (async () => {
+    const [, restoredHiddenColumns] = await Promise.all([
+      loadAttributeDefinitions(),
+      loadTablePreference({
+        hiddenColumns: [...hiddenColumns],
+        columnWidths: {},
+        columnOrder: []
+      }, {
+        columnWidthStorageKey: USER_COLUMN_WIDTH_STORAGE_KEY,
+        columnOrderStorageKey: USER_COLUMN_ORDER_STORAGE_KEY
+      })
+    ])
+    if (restoredHiddenColumns) {
+      hiddenColumns.clear()
+      restoredHiddenColumns.forEach((key) => hiddenColumns.add(key))
+      saveColumnsToStorage()
+    } else {
+      updateHiddenColumns([...hiddenColumns])
+    }
+  })()
+
+  // 本地筛选恢复后立即查询主列表，远程列布局不再造成首屏空白等待。
+  void loadUsers()
+  void initialUserTableSetupPromise.then(() => {
+    if (hasVisibleGroupsColumn.value || visibleFilters.has('group')) {
+      void loadAllGroups()
+    }
+    if (visibleFilters.has('apiKeyGroup')) {
+      void loadAllGroupsForApiKeyFilter()
+    }
   })
-  if (restoredHiddenColumns) {
-    hiddenColumns.clear()
-    restoredHiddenColumns.forEach((key) => hiddenColumns.add(key))
-    saveColumnsToStorage()
-  } else {
-    updateHiddenColumns([...hiddenColumns])
-  }
-  loadUsers()
-  if (hasVisibleGroupsColumn.value || visibleFilters.has('group')) {
-    loadAllGroups()
-  }
-  if (visibleFilters.has('apiKeyGroup')) {
-    loadAllGroupsForApiKeyFilter()
-  }
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('scroll', handleScroll, true)
 })

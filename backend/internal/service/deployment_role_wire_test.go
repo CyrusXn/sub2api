@@ -32,7 +32,7 @@ func TestProvideOpsAlertEvaluatorServiceRelaysAPIOnlyRequestAlerts(t *testing.T)
 
 	svc := ProvideOpsAlertEvaluatorService(nil, nil, nil, rdb, &config.Config{
 		DeploymentRole: config.DeploymentRoleAPIOnly,
-	}, nil)
+	}, nil, nil)
 	require.NotNil(t, svc)
 	require.True(t, svc.relayRequestAlerts)
 

@@ -40,18 +40,83 @@ type dashboardStatsCacheEntry struct {
 
 // DashboardService 提供管理员仪表盘统计服务。
 type DashboardService struct {
-	usageRepo       UsageLogRepository
-	aggRepo         DashboardAggregationRepository
-	cache           DashboardStatsCache
-	cacheFreshTTL   time.Duration
-	cacheTTL        time.Duration
-	refreshTimeout  time.Duration
-	refreshing      int32
-	aggEnabled      bool
-	aggInterval     time.Duration
-	aggLookback     time.Duration
-	aggUsageDays    int
-	cacheGeneration uint64
+	usageRepo         UsageLogRepository
+	aggRepo           DashboardAggregationRepository
+	cache             DashboardStatsCache
+	cacheFreshTTL     time.Duration
+	cacheTTL          time.Duration
+	refreshTimeout    time.Duration
+	refreshing        int32
+	aggEnabled        bool
+	aggInterval       time.Duration
+	aggLookback       time.Duration
+	aggUsageDays      int
+	cacheGeneration   uint64
+	concurrencyReader DashboardConcurrencyReader
+}
+
+func (s *DashboardService) SetConcurrencyReader(reader DashboardConcurrencyReader) {
+	if s != nil {
+		s.concurrencyReader = reader
+	}
+}
+
+func (s *DashboardService) dashboardMetricsRepo() (DashboardMetricsRepository, error) {
+	repo, ok := s.aggRepo.(DashboardMetricsRepository)
+	if !ok || repo == nil {
+		return nil, errors.New("仪表盘扩展指标仓储不可用")
+	}
+	return repo, nil
+}
+
+func (s *DashboardService) GetBusinessSummary(ctx context.Context, start, end time.Time) (*DashboardBusinessSummary, error) {
+	repo, err := s.dashboardMetricsRepo()
+	if err != nil {
+		return nil, err
+	}
+	return repo.GetDashboardBusinessSummary(ctx, start, end)
+}
+
+func (s *DashboardService) GetLowBalanceAccounts(ctx context.Context, threshold float64, limit int) ([]DashboardLowBalanceAccount, error) {
+	repo, err := s.dashboardMetricsRepo()
+	if err != nil {
+		return nil, err
+	}
+	return repo.ListDashboardLowBalanceAccounts(ctx, threshold, limit)
+}
+
+func (s *DashboardService) GetSystemMetricTrend(ctx context.Context, start, end time.Time, maxPoints int) (*DashboardSystemMetricTrend, error) {
+	repo, err := s.dashboardMetricsRepo()
+	if err != nil {
+		return nil, err
+	}
+	return repo.GetDashboardSystemMetricTrend(ctx, start, end, maxPoints)
+}
+
+func (s *DashboardService) GetLast24HourUsage(ctx context.Context, now time.Time) (int64, float64, error) {
+	repo, err := s.dashboardMetricsRepo()
+	if err != nil {
+		return 0, 0, err
+	}
+	return repo.GetDashboardLast24HourUsage(ctx, now.Add(-24*time.Hour), now)
+}
+
+func (s *DashboardService) GetRealtimeMetrics(ctx context.Context) (*DashboardRealtimeMetrics, error) {
+	stats, err := s.GetDashboardStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := &DashboardRealtimeMetrics{
+		RequestsPerMinute:   stats.Rpm,
+		TokensPerMinute:     stats.Tpm,
+		AverageResponseTime: stats.AverageDurationMs,
+	}
+	if s.concurrencyReader != nil {
+		if active, readErr := s.concurrencyReader.GetTotalActiveConcurrency(ctx); readErr == nil {
+			result.ActiveRequests = active
+		}
+	}
+	return result, nil
 }
 
 func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregationRepository, cache DashboardStatsCache, cfg *config.Config) *DashboardService {
@@ -292,10 +357,41 @@ func (s *DashboardService) refreshDashboardStats(ctx context.Context) (*usagesta
 		return nil, err
 	}
 	s.applyAggregationStatus(ctx, stats)
+	s.applyPermanentBusinessTotals(ctx, stats)
 	cacheCtx, cancel := s.cacheOperationContext()
 	defer cancel()
 	s.saveDashboardStatsCache(cacheCtx, stats, generation)
 	return stats, nil
+}
+
+func (s *DashboardService) applyPermanentBusinessTotals(ctx context.Context, stats *usagestats.DashboardStats) {
+	if stats == nil {
+		return
+	}
+	repo, err := s.dashboardMetricsRepo()
+	if err != nil {
+		return
+	}
+	now := time.Now().UTC()
+	summary, err := repo.GetDashboardBusinessSummary(ctx, now, now)
+	if err != nil || summary == nil {
+		logger.LegacyPrintf("service.dashboard", "[Dashboard] 读取永久经营汇总失败: %v", err)
+		return
+	}
+	totals := summary.Lifetime
+	stats.TotalRequests = totals.TotalRequests
+	stats.TotalInputTokens = totals.InputTokens
+	stats.TotalOutputTokens = totals.OutputTokens
+	stats.TotalCacheCreationTokens = totals.CacheCreationTokens
+	stats.TotalCacheReadTokens = totals.CacheReadTokens
+	stats.TotalTokens = totals.TotalTokens
+	stats.TotalCost = totals.TotalCost
+	stats.TotalActualCost = totals.ActualCost
+	stats.TotalAccountCost = totals.AccountCost
+	if tokens, actualCost, usageErr := repo.GetDashboardLast24HourUsage(ctx, now.Add(-24*time.Hour), now); usageErr == nil {
+		stats.Last24HourTokens = tokens
+		stats.Last24HourActualCost = actualCost
+	}
 }
 
 func (s *DashboardService) refreshDashboardStatsAsync() {
@@ -319,6 +415,7 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 			return
 		}
 		s.applyAggregationStatus(ctx, stats)
+		s.applyPermanentBusinessTotals(ctx, stats)
 		cacheCtx, cancel := s.cacheOperationContext()
 		defer cancel()
 		s.saveDashboardStatsCache(cacheCtx, stats, generation)

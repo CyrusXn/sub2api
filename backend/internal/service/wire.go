@@ -55,6 +55,15 @@ func ProvideEmailQueueService(emailService *EmailService) *EmailQueueService {
 	return NewEmailQueueService(emailService, 3)
 }
 
+// ProvideAlertEmailOutboxService 只在主节点启动持久化邮件汇总 worker。
+func ProvideAlertEmailOutboxService(repository AlertEmailOutboxRepository, emailService *EmailService, cfg *config.Config) *AlertEmailOutboxService {
+	svc := NewAlertEmailOutboxService(repository, emailService, AlertEmailOutboxOptions{})
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
+	return svc
+}
+
 // ProvideBalanceCenterEventService 创建结算发布与定时消费共享的事件服务实例。
 func ProvideBalanceCenterEventService(queue BalanceCenterEventQueue, settingRepo SettingRepository) *BalanceCenterEventService {
 	return NewBalanceCenterEventService(queue, settingRepo)
@@ -477,6 +486,21 @@ func ProvideOpsMetricsCollector(
 	return collector
 }
 
+// ProvideDashboardService 注入仪表盘专用的 Redis 总并发读取器，同时保持公共并发接口稳定。
+func ProvideDashboardService(
+	usageRepo UsageLogRepository,
+	aggRepo DashboardAggregationRepository,
+	cache DashboardStatsCache,
+	cfg *config.Config,
+	concurrencyCache ConcurrencyCache,
+) *DashboardService {
+	svc := NewDashboardService(usageRepo, aggRepo, cache, cfg)
+	if reader, ok := concurrencyCache.(DashboardConcurrencyReader); ok {
+		svc.SetConcurrencyReader(reader)
+	}
+	return svc
+}
+
 // ProvideOpsAggregationService creates and starts OpsAggregationService (hourly/daily pre-aggregation).
 func ProvideOpsAggregationService(
 	opsRepo OpsRepository,
@@ -500,8 +524,10 @@ func ProvideOpsAlertEvaluatorService(
 	redisClient *redis.Client,
 	cfg *config.Config,
 	proxyRepo ProxyRepository,
+	alertOutbox *AlertEmailOutboxService,
 ) *OpsAlertEvaluatorService {
 	svc := NewOpsAlertEvaluatorService(opsService, opsRepo, emailService, redisClient, cfg, proxyRepo)
+	svc.SetAlertEmailOutbox(alertOutbox)
 	if opsService != nil {
 		opsService.SetAccountRequestAlertSink(svc.NotifyAccountRequestErrors)
 	}
@@ -828,9 +854,10 @@ var ProviderSet = wire.NewSet(
 	NewUsageIPAttributionService,
 	ProvideUsageIPAttributionServices,
 	ProvideBalanceCenterEventService,
+	ProvideAlertEmailOutboxService,
 	ProvideBalanceCenterService,
 	wire.Bind(new(BalanceCenterUsageEventPublisher), new(*BalanceCenterEventService)),
-	NewDashboardService,
+	ProvideDashboardService,
 	ProvidePricingService,
 	NewBillingService,
 	ProvideBillingCacheService,

@@ -163,8 +163,8 @@ describe('UseKeyModal', () => {
     expect(parsedSettings.env.ANTHROPIC_MODEL).toBe('grok-4.5')
     expect(wrapper.text()).toContain('keys.useKeyModal.claudeSettingsHint')
     expect(wrapper.text()).toContain('keys.useKeyModal.grok.claudeNote')
-    expect(wrapper.find('nav[aria-label="Client"]').classes()).toContain('min-w-max')
-    expect(wrapper.find('nav[aria-label="Client"]').element.parentElement?.classList.contains('overflow-x-auto')).toBe(true)
+    expect(wrapper.find('nav[aria-label="客户端"]').classes()).toContain('min-w-max')
+    expect(wrapper.find('nav[aria-label="客户端"]').element.parentElement?.classList.contains('overflow-x-auto')).toBe(true)
 
     const cmdTab = wrapper.findAll('button').find(
       (button) => button.text().trim() === 'Windows CMD'

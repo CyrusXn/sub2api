@@ -202,9 +202,14 @@ func (h *UserHandler) List(c *gin.Context) {
 	if sortBy == "concurrency" {
 		sort.SliceStable(users, func(i, j int) bool {
 			left, right := users[i].Concurrency, users[j].Concurrency
-			if concurrencyMetric == "current" {
+			switch concurrencyMetric {
+			case "current":
 				left = currentUserConcurrency(loadInfo, users[i].ID)
 				right = currentUserConcurrency(loadInfo, users[j].ID)
+			case "available":
+				// 剩余并发必须结合实时占用计算，确保跨分页排序结果一致。
+				left -= currentUserConcurrency(loadInfo, users[i].ID)
+				right -= currentUserConcurrency(loadInfo, users[j].ID)
 			}
 			if left == right {
 				return compareConcurrencyTie(users[i].ID, users[j].ID, sortOrder)
@@ -229,10 +234,13 @@ func (h *UserHandler) List(c *gin.Context) {
 }
 
 func normalizeConcurrencyMetric(value string) string {
-	if strings.EqualFold(strings.TrimSpace(value), "current") {
-		return "current"
+	metric := strings.ToLower(strings.TrimSpace(value))
+	switch metric {
+	case "current", "available":
+		return metric
+	default:
+		return "total"
 	}
-	return "total"
 }
 
 func compareConcurrencyValue(left, right int, order string) bool {

@@ -1019,6 +1019,11 @@ func (r *accountRepository) ListAllWithFilters(ctx context.Context, platform, ac
 	return r.accountsToService(ctx, accounts)
 }
 
+// ListIDsWithFilters 仅返回匹配账号 ID，供实时并发排序先分页再加载完整账号。
+func (r *accountRepository) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]int64, error) {
+	return r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode).IDs(ctx)
+}
+
 func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]service.Account, error) {
 	if r == nil || r.client == nil {
 		return []service.Account{}, nil
@@ -1094,6 +1099,9 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 		defaultOrder = false
 	case "admin_usage_multiplier":
 		field = dbaccount.FieldAdminUsageMultiplier
+		defaultOrder = false
+	case "concurrency":
+		field = dbaccount.FieldConcurrency
 		defaultOrder = false
 	case "last_used_at":
 		field = dbaccount.FieldLastUsedAt

@@ -82,6 +82,52 @@ func (r *dashboardAggregationRepository) AggregateRange(ctx context.Context, sta
 	return r.aggregateRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd)
 }
 
+// PreserveBusinessRange 在删除 usage_logs 前同步固化完整日期范围的经营指标。
+// 固化后的日期不会再被后续重算覆盖，避免明细清理后永久汇总被较小的新结果冲掉。
+func (r *dashboardAggregationRepository) PreserveBusinessRange(ctx context.Context, start, end time.Time) error {
+	if r == nil || r.sql == nil {
+		return fmt.Errorf("仪表盘经营汇总仓储不可用")
+	}
+	loc := timezone.Location()
+	startLocal := start.In(loc)
+	endLocal := end.In(loc)
+	if !endLocal.After(startLocal) {
+		return fmt.Errorf("经营汇总固化时间范围无效")
+	}
+
+	dayStart := truncateToDay(startLocal)
+	dayEnd := truncateToDay(endLocal)
+	if endLocal.After(dayEnd) {
+		dayEnd = dayEnd.Add(24 * time.Hour)
+	}
+
+	preserve := func(repo *dashboardAggregationRepository) error {
+		if err := repo.aggregateRangeInTx(ctx, dayStart, dayEnd, dayStart, dayEnd); err != nil {
+			return err
+		}
+		_, err := repo.sql.ExecContext(ctx, `
+			UPDATE dashboard_business_daily
+			SET finalized_at = COALESCE(finalized_at, NOW())
+			WHERE bucket_date >= $1::date AND bucket_date < $2::date
+		`, dayStart, dayEnd)
+		return err
+	}
+
+	if db, ok := r.sql.(*sql.DB); ok {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		txRepo := newDashboardAggregationRepositoryWithSQL(tx)
+		if err := preserve(txRepo); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		return tx.Commit()
+	}
+	return preserve(r)
+}
+
 func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context, hourStart, hourEnd, dayStart, dayEnd time.Time) error {
 	// 以桶边界聚合，允许覆盖 end 所在桶的剩余区间。
 	if err := r.insertHourlyActiveUsers(ctx, hourStart, hourEnd); err != nil {
@@ -94,6 +140,10 @@ func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context,
 		return err
 	}
 	if err := r.upsertDailyAggregates(ctx, dayStart, dayEnd); err != nil {
+		return err
+	}
+	// 永久经营汇总在普通聚合清理之外单独保存，避免 usage_logs 清理后丢失关键数据。
+	if err := r.upsertBusinessDailyAggregates(ctx, dayStart, dayEnd); err != nil {
 		return err
 	}
 	return nil
@@ -210,6 +260,14 @@ func (r *dashboardAggregationRepository) CleanupAggregates(ctx context.Context, 
 }
 
 func (r *dashboardAggregationRepository) CleanupUsageLogs(ctx context.Context, cutoff time.Time) error {
+	// 自动保留清理与手工清理遵循同一安全边界：永久经营汇总未固化时禁止删明细。
+	if _, err := r.sql.ExecContext(ctx, `
+		UPDATE dashboard_business_daily
+		SET finalized_at = COALESCE(finalized_at, NOW())
+		WHERE bucket_date < ($1 AT TIME ZONE $2)::date
+	`, cutoff.UTC(), timezone.Name()); err != nil {
+		return fmt.Errorf("固化自动清理范围的经营汇总: %w", err)
+	}
 	isPartitioned, err := r.isUsageLogsPartitioned(ctx)
 	if err != nil {
 		return err
@@ -459,6 +517,99 @@ func (r *dashboardAggregationRepository) upsertDailyAggregates(ctx context.Conte
 			computed_at = EXCLUDED.computed_at
 	`
 	_, err := r.sql.ExecContext(ctx, query, start, end, start, end, tzName)
+	return err
+}
+
+func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx context.Context, start, end time.Time) error {
+	tzName := timezone.Name()
+	query := `
+		WITH admin_usage AS (
+			SELECT
+				(created_at AT TIME ZONE $3)::date AS bucket_date,
+				COALESCE(SUM(actual_cost), 0) AS admin_actual_cost,
+				COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS admin_account_cost
+			FROM usage_logs
+			WHERE created_at >= $1 AND created_at < $2
+			  AND user_id = (
+				SELECT id FROM users
+				WHERE LOWER(TRIM(email)) = 'admin@example.com'
+				ORDER BY id ASC
+				LIMIT 1
+			  )
+			GROUP BY 1
+		), recharge AS (
+			SELECT
+				(used_at AT TIME ZONE $3)::date AS bucket_date,
+				COALESCE(SUM(value), 0) AS recharge_amount
+			FROM redeem_codes rc
+			LEFT JOIN users u ON u.id = rc.used_by
+			WHERE rc.used_at >= $1 AND rc.used_at < $2
+			  AND rc.status = 'used'
+			  AND rc.type IN ('balance', 'admin_balance')
+			  AND rc.value > 1
+			  AND LOWER(TRIM(COALESCE(u.email, ''))) <> 'admin@example.com'
+			GROUP BY 1
+		), dates AS (
+			SELECT bucket_date
+			FROM usage_dashboard_daily
+			WHERE bucket_date >= ($1 AT TIME ZONE $3)::date
+			  AND bucket_date < ($2 AT TIME ZONE $3)::date
+			UNION
+			SELECT bucket_date FROM recharge
+		)
+		INSERT INTO dashboard_business_daily (
+			bucket_date,
+			recharge_amount,
+			total_requests,
+			input_tokens,
+			output_tokens,
+			cache_creation_tokens,
+			cache_read_tokens,
+			total_cost,
+			actual_cost,
+			account_cost,
+			admin_actual_cost,
+			admin_account_cost,
+			total_duration_ms,
+			computed_at
+		)
+		SELECT
+			dates.bucket_date,
+			COALESCE(recharge.recharge_amount, 0),
+			COALESCE(d.total_requests, 0),
+			COALESCE(d.input_tokens, 0),
+			COALESCE(d.output_tokens, 0),
+			COALESCE(d.cache_creation_tokens, 0),
+			COALESCE(d.cache_read_tokens, 0),
+			COALESCE(d.total_cost, 0),
+			COALESCE(d.actual_cost, 0),
+			COALESCE(d.account_cost, 0),
+			COALESCE(admin_usage.admin_actual_cost, 0),
+			COALESCE(admin_usage.admin_account_cost, 0),
+			COALESCE(d.total_duration_ms, 0),
+			NOW()
+		FROM dates
+		LEFT JOIN usage_dashboard_daily d ON d.bucket_date = dates.bucket_date
+		LEFT JOIN admin_usage ON admin_usage.bucket_date = dates.bucket_date
+		LEFT JOIN recharge ON recharge.bucket_date = dates.bucket_date
+		ON CONFLICT (bucket_date)
+		DO UPDATE SET
+			recharge_amount = EXCLUDED.recharge_amount,
+			total_requests = EXCLUDED.total_requests,
+			input_tokens = EXCLUDED.input_tokens,
+			output_tokens = EXCLUDED.output_tokens,
+			cache_creation_tokens = EXCLUDED.cache_creation_tokens,
+			cache_read_tokens = EXCLUDED.cache_read_tokens,
+			total_cost = EXCLUDED.total_cost,
+			actual_cost = EXCLUDED.actual_cost,
+			account_cost = EXCLUDED.account_cost,
+			admin_actual_cost = EXCLUDED.admin_actual_cost,
+			admin_account_cost = EXCLUDED.admin_account_cost,
+			total_duration_ms = EXCLUDED.total_duration_ms,
+			computed_at = EXCLUDED.computed_at
+		WHERE dashboard_business_daily.finalized_at IS NULL
+	`
+	_, err := r.sql.ExecContext(ctx, query, start, end, tzName)
 	return err
 }
 

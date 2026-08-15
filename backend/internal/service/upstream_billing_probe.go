@@ -34,10 +34,11 @@ const (
 	UpstreamBillingProbeEnabledExtraKey    = "upstream_billing_probe_enabled"
 	UpstreamBillingRateSyncEnabledExtraKey = "upstream_billing_rate_sync_enabled"
 
-	upstreamBillingProbeDefaultIntervalMinutes = 30
+	// 默认五分钟兜底探测空闲账号；到期队列每十秒检查一次，活跃账号仍通过一分钟合并事件优先触发。
+	upstreamBillingProbeDefaultIntervalMinutes = 5
 	upstreamBillingProbeMinIntervalMinutes     = 5
 	upstreamBillingProbeMaxIntervalMinutes     = 24 * 60
-	upstreamBillingProbeCycleInterval          = time.Minute
+	upstreamBillingProbeCycleInterval          = 10 * time.Second
 	upstreamBillingProbeRequestTimeout         = 10 * time.Second
 	upstreamBillingProbeMaxBodyBytes           = 64 * 1024
 	upstreamBillingProbeMaxPerCycle            = 20

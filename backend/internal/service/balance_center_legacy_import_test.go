@@ -29,8 +29,8 @@ func TestImportLegacyBalanceCenterSQLiteDryRunSummarizesLegacyData(t *testing.T)
 	if report.EnabledKeys != 2 {
 		t.Fatalf("enabled keys = %d, want 2", report.EnabledKeys)
 	}
-	if report.Snapshots != 3 {
-		t.Fatalf("snapshots = %d, want 3", report.Snapshots)
+	if report.Snapshots != 2 {
+		t.Fatalf("snapshots = %d, want 2 latest successful snapshots", report.Snapshots)
 	}
 	if report.ManualRows != 15 {
 		t.Fatalf("manual rows = %d, want 15", report.ManualRows)
@@ -38,31 +38,98 @@ func TestImportLegacyBalanceCenterSQLiteDryRunSummarizesLegacyData(t *testing.T)
 	if report.ManualTotal != 2262.37 {
 		t.Fatalf("manual total = %.2f, want 2262.37", report.ManualTotal)
 	}
-	if report.ManualRechargeEvents != 1 {
-		t.Fatalf("manual recharge events = %d, want 1", report.ManualRechargeEvents)
+	if report.ManualRechargeEvents != 16 {
+		t.Fatalf("recharge events = %d, want 1 actual plus 15 opening events", report.ManualRechargeEvents)
 	}
-	if report.AutomaticRecords != 1 {
-		t.Fatalf("automatic records = %d, want 1", report.AutomaticRecords)
+	if report.ActualRechargeTotal != 10 || report.OpeningRechargeTotal != 2252.37 {
+		t.Fatalf("recharge totals mismatch: actual %.2f opening %.2f", report.ActualRechargeTotal, report.OpeningRechargeTotal)
 	}
-	if report.LiandongOrders != 1 {
-		t.Fatalf("liandong orders = %d, want 1", report.LiandongOrders)
+	if report.AutomaticRecords != 0 {
+		t.Fatalf("legacy automatic records must not be imported, got %d", report.AutomaticRecords)
 	}
-	if report.Reconciliations != 1 {
-		t.Fatalf("reconciliations = %d, want 1", report.Reconciliations)
+	if report.LiandongOrders != 0 {
+		t.Fatalf("legacy liandong orders must not be imported, got %d", report.LiandongOrders)
+	}
+	if report.Reconciliations != 0 {
+		t.Fatalf("legacy reconciliations must not be imported, got %d", report.Reconciliations)
+	}
+}
+
+func TestLoadLegacyBalanceCenterDataBuildsPerSiteOpeningEvents(t *testing.T) {
+	db := newLegacyBalanceSQLite(t, true)
+	seedLegacyBalanceSQLite(t, db, legacyManualBaselineRowsJSON())
+
+	data, err := loadLegacyBalanceCenterData(context.Background(), db)
+	if err != nil {
+		t.Fatalf("load legacy data: %v", err)
+	}
+
+	var total float64
+	openingByLabel := map[string]float64{}
+	for _, event := range data.ManualRechargeEvents {
+		total += event.Amount
+		if strings.HasPrefix(event.ID, "opening:") {
+			openingByLabel[event.SiteLabel] = event.Amount
+		}
+	}
+	if roundLegacyMoney(total) != 2262.37 {
+		t.Fatalf("actual plus opening total = %.2f, want 2262.37", total)
+	}
+	if openingByLabel["HBY"] != 327 {
+		t.Fatalf("HBY opening = %.2f, want 327", openingByLabel["HBY"])
+	}
+	if openingByLabel["Fox"] != 10 {
+		t.Fatalf("unmatched Fox opening must remain independently attributable, got %.2f", openingByLabel["Fox"])
+	}
+}
+
+func TestLoadLegacySnapshotsKeepsLatestSuccessfulSnapshotPerKey(t *testing.T) {
+	db := newLegacyBalanceSQLite(t, true)
+	seedLegacyBalanceSQLite(t, db, legacyManualBaselineRowsJSON())
+	if _, err := db.Exec(`INSERT INTO snapshots (id, site_id, key_id, remaining, unit, rate_multiplier, status, error_code, fetched_at)
+		VALUES ('snap-hby-new-failed', 'site-hby', 'key-hby', NULL, 'USD', NULL, 'error', 'upstream_error', '2026-08-12T10:00:00Z'),
+		       ('snap-hby-new-ok', 'site-hby', 'key-hby', 12, 'USD', 0.8, 'ok', '', '2026-08-12T09:30:00Z')`); err != nil {
+		t.Fatalf("insert snapshot history: %v", err)
+	}
+
+	items, err := loadLegacySnapshots(context.Background(), db)
+	if err != nil {
+		t.Fatalf("load latest snapshots: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("latest successful snapshots = %d, want 2", len(items))
+	}
+	if items[0].ID != "snap-hby-new-ok" || items[0].Remaining == nil || *items[0].Remaining != 12 {
+		t.Fatalf("HBY latest successful snapshot mismatch: %#v", items[0])
+	}
+}
+
+func TestUniqueLegacyAccountMatchRejectsAmbiguousCandidates(t *testing.T) {
+	fingerprint := legacySecretFingerprint("same-key")
+	accounts := []targetAccountFingerprint{
+		{AccountID: 11, Domain: "example.com", Fingerprint: fingerprint},
+		{AccountID: 12, Domain: "example.com", Fingerprint: fingerprint},
+	}
+	if id, ambiguous := uniqueLegacyAccountIDWithStatus("example.com", fingerprint, accounts); id != nil || !ambiguous {
+		t.Fatalf("ambiguous account match must stay unbound, got %v", id)
+	}
+	accounts = accounts[:1]
+	if id, ambiguous := uniqueLegacyAccountIDWithStatus("example.com", fingerprint, accounts); id == nil || ambiguous || *id != 11 {
+		t.Fatalf("unique account match = %v, want 11", id)
 	}
 }
 
 func TestImportLegacyBalanceCenterSQLiteRejectsWrongManualBaseline(t *testing.T) {
 	db := newLegacyBalanceSQLite(t, true)
-	seedLegacyBalanceSQLite(t, db, `[{"id":"bad","label":"HBY","expression":"1"}]`)
+	seedLegacyBalanceSQLite(t, db, `[{"id":"bad","label":"HBY","expression":"20"}]`)
 
 	report, err := ImportLegacyBalanceCenterSQLite(context.Background(), db, nil, BalanceCenterLegacyImportOptions{
-		ExpectedManifest: &BalanceCenterLegacyImportManifest{ManualRows: 1, ManualTotal: 2},
+		ExpectedManifest: &BalanceCenterLegacyImportManifest{ManualRows: 1, ManualTotal: 21},
 	})
 	if err == nil {
 		t.Fatal("expected wrong manual baseline to fail")
 	}
-	if report == nil || report.ManualTotal != 1 {
+	if report == nil || report.ManualTotal != 20 {
 		t.Fatalf("report should expose the parsed wrong total, got %#v", report)
 	}
 }
@@ -108,8 +175,8 @@ func TestImportLegacyBalanceCenterSQLiteAllowsMissingManualRechargeTable(t *test
 	if err != nil {
 		t.Fatalf("missing manual recharge table should be compatible: %v", err)
 	}
-	if report.ManualRechargeEvents != 0 {
-		t.Fatalf("manual recharge events = %d, want 0", report.ManualRechargeEvents)
+	if report.ManualRechargeEvents != 15 || report.ActualRechargeEvents != 0 || report.OpeningRechargeEvents != 15 {
+		t.Fatalf("missing actual table should produce opening events only, got %#v", report)
 	}
 }
 
@@ -170,21 +237,21 @@ func TestLegacyAutomaticRecordsDeduplicateRepeatedOrdersAcrossReconciliations(t 
 		t.Fatalf("insert repeated reconcile: %v", err)
 	}
 
-	data, err := loadLegacyBalanceCenterData(context.Background(), db)
+	_, automatic, err := loadLegacyReconciliations(context.Background(), db)
 	if err != nil {
 		t.Fatalf("load legacy data: %v", err)
 	}
-	if len(data.AutomaticRecords) != 1 {
-		t.Fatalf("automatic records = %d, want 1 unique order", len(data.AutomaticRecords))
+	if len(automatic) != 1 {
+		t.Fatalf("parsed automatic records = %d, want 1 unique order", len(automatic))
 	}
 	want, err := parseLegacyTime(firstCreatedAt)
 	if err != nil {
 		t.Fatalf("解析首次对账时间失败: %v", err)
 	}
-	if !data.AutomaticRecords[0].ReconciliationCreatedAt.Equal(want) {
-		t.Fatalf("重复订单回退时间 = %v, want first seen %v", data.AutomaticRecords[0].ReconciliationCreatedAt, want)
+	if !automatic[0].ReconciliationCreatedAt.Equal(want) {
+		t.Fatalf("重复订单回退时间 = %v, want first seen %v", automatic[0].ReconciliationCreatedAt, want)
 	}
-	gotOccurredAt, err := legacyAutomaticOccurredAt(data.AutomaticRecords[0])
+	gotOccurredAt, err := legacyAutomaticOccurredAt(automatic[0])
 	if err != nil {
 		t.Fatalf("选择重复订单时间失败: %v", err)
 	}
@@ -206,19 +273,19 @@ func TestLegacyAutomaticRecordWithoutOccurredAtUsesReconciliationCreatedAt(t *te
 		t.Fatalf("更新旧对账记录失败: %v", err)
 	}
 
-	data, err := loadLegacyBalanceCenterData(context.Background(), db)
+	_, automatic, err := loadLegacyReconciliations(context.Background(), db)
 	if err != nil {
 		t.Fatalf("读取旧数据失败: %v", err)
 	}
-	if len(data.AutomaticRecords) != 1 {
-		t.Fatalf("automatic records = %d, want 1", len(data.AutomaticRecords))
+	if len(automatic) != 1 {
+		t.Fatalf("parsed automatic records = %d, want 1", len(automatic))
 	}
 	want, err := parseLegacyTime(createdAt)
 	if err != nil {
 		t.Fatalf("解析测试时间失败: %v", err)
 	}
-	if !data.AutomaticRecords[0].ReconciliationCreatedAt.Equal(want) {
-		t.Fatalf("回退时间 = %v, want %v", data.AutomaticRecords[0].ReconciliationCreatedAt, want)
+	if !automatic[0].ReconciliationCreatedAt.Equal(want) {
+		t.Fatalf("回退时间 = %v, want %v", automatic[0].ReconciliationCreatedAt, want)
 	}
 }
 

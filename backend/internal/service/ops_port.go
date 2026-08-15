@@ -174,10 +174,16 @@ type OpsInsertSystemMetricsInput struct {
 	TTFTAvgMs *float64
 	TTFTMaxMs *int
 
-	CPUUsagePercent    *float64
-	MemoryUsedMB       *int64
-	MemoryTotalMB      *int64
-	MemoryUsagePercent *float64
+	CPUUsagePercent               *float64
+	MemoryUsedMB                  *int64
+	MemoryTotalMB                 *int64
+	MemoryUsagePercent            *float64
+	ResourceSource                *string
+	NetworkReceiveBytesPerSecond  *float64
+	NetworkTransmitBytesPerSecond *float64
+	DiskUsedBytes                 *int64
+	DiskTotalBytes                *int64
+	DiskUsagePercent              *float64
 
 	DBOK    *bool
 	RedisOK *bool
@@ -267,10 +273,16 @@ type OpsSystemMetricsSnapshot struct {
 	CreatedAt     time.Time `json:"created_at"`
 	WindowMinutes int       `json:"window_minutes"`
 
-	CPUUsagePercent    *float64 `json:"cpu_usage_percent"`
-	MemoryUsedMB       *int64   `json:"memory_used_mb"`
-	MemoryTotalMB      *int64   `json:"memory_total_mb"`
-	MemoryUsagePercent *float64 `json:"memory_usage_percent"`
+	CPUUsagePercent               *float64 `json:"cpu_usage_percent"`
+	MemoryUsedMB                  *int64   `json:"memory_used_mb"`
+	MemoryTotalMB                 *int64   `json:"memory_total_mb"`
+	MemoryUsagePercent            *float64 `json:"memory_usage_percent"`
+	ResourceSource                string   `json:"resource_source"`
+	NetworkReceiveBytesPerSecond  *float64 `json:"network_receive_bytes_per_second"`
+	NetworkTransmitBytesPerSecond *float64 `json:"network_transmit_bytes_per_second"`
+	DiskUsedBytes                 *int64   `json:"disk_used_bytes"`
+	DiskTotalBytes                *int64   `json:"disk_total_bytes"`
+	DiskUsagePercent              *float64 `json:"disk_usage_percent"`
 
 	DBOK    *bool `json:"db_ok"`
 	RedisOK *bool `json:"redis_ok"`

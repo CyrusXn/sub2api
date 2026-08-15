@@ -449,7 +449,7 @@ describe('API Client', () => {
       await expect(apiClient.get('/test')).rejects.toEqual(
         expect.objectContaining({
           status: 0,
-          message: 'Network error. Please check your connection.',
+          message: '网络错误，请检查网络连接。',
         })
       )
     })

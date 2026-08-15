@@ -1,21 +1,34 @@
 export default {
   balanceCenter: {
-    title: '余额中心',
-    description: '统一查看上游余额、倍率、充值、对账和告警状态',
-    tabs: {
-      overview: '概览', snapshots: '余额历史', recharge: '充值统计', manual: '手工基线',
-      reconciliation: '自动记录与对账', alerts: '告警记录'
-    },
-    settings: '运行设置', enabled: '启用余额中心', eventProbe: '事件触发探测', email: '邮件告警',
-    threshold: '低余额阈值', saveSettings: '保存设置', probeSelected: '探测所选账号',
-    filters: '筛选条件', site: '站点', accountId: '账号 ID', status: '状态', startTime: '开始时间', endTime: '结束时间',
-    all: '全部', siteName: '站点', domain: '域名', account: '账号', balance: '原始余额', convertedBalance: '折算余额',
-    multiplier: '倍率', probedAt: '最近探测', lastUsedAt: '最近使用', source: '来源', reason: '说明',
-    expression: '表达式', amount: '金额', actions: '操作', saveManual: '保存手工基线', addRow: '新增一行',
-    rechargeAt: '充值时间', note: '备注', addRecharge: '新增充值', delete: '删除',
-    expected: '应有金额', actual: '实际金额', difference: '差额', createdAt: '创建时间', addReconciliation: '新增对账',
-    automaticSync: '同步自动记录', liandongCurl: '粘贴链动小铺 curl', saveSession: '保存会话', liandongSync: '同步链动订单',
-    alertType: '告警类型', recipient: '收件人', oldValue: '原值', newValue: '新值', thresholdValue: '阈值', attemptedAt: '尝试时间',
-    empty: '暂无数据', saved: '已保存', probeComplete: '探测已完成', operationComplete: '操作已完成'
+    title: '充值统计',
+    description: '按站点录入充值，并从时间或站点两个维度查询记录与总额',
+    accountCenter: '上游账号与余额倍率',
+    addRecharge: '新增充值',
+    addRechargeHint: '输入金额后按回车即可添加，时间默认精确到当前分钟。',
+    rechargeAt: '充值时间',
+    siteName: '站点',
+    domain: '域名',
+    amount: '金额',
+    amountPlaceholder: '输入金额后回车',
+    rechargeAdded: '充值记录已添加',
+    totalAmount: '筛选范围总额',
+    records: '条记录',
+    recordsTitle: '充值记录',
+    timeRange: '查询时间',
+    customDate: '选择日期',
+    dimension: '查询维度',
+    byTime: '按时间',
+    bySite: '按站点',
+    delete: '删除记录',
+    deleteConfirm: '确定删除这条充值记录吗？删除后总额会立即重新计算。',
+    noSites: '暂无可录入的上游站点',
+    noRecords: '当前时间范围内没有充值记录',
+    unassignedSite: '未归属站点',
+    ranges: {
+      '24h': '24 小时',
+      today: '今天',
+      yesterday: '昨天',
+      all: '全部'
+    }
   }
 }

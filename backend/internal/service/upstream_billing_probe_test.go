@@ -612,7 +612,7 @@ func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
 	settings, err := settingsService.GetUpstreamBillingProbeSettings(context.Background())
 	require.NoError(t, err)
 	require.True(t, settings.Enabled)
-	require.Equal(t, 30, settings.IntervalMinutes)
+	require.Equal(t, 5, settings.IntervalMinutes)
 
 	err = settingsService.SetUpstreamBillingProbeSettings(context.Background(), &UpstreamBillingProbeSettings{
 		Enabled:         false,
@@ -640,12 +640,16 @@ func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
 	settings, err = settingsService.GetUpstreamBillingProbeSettings(context.Background())
 	require.NoError(t, err)
 	require.False(t, settings.Enabled)
-	require.Equal(t, 30, settings.IntervalMinutes)
+	require.Equal(t, 5, settings.IntervalMinutes)
 
 	repo.values[SettingKeyUpstreamBillingProbeSettings] = `{"enabled":`
 	settings, err = settingsService.GetUpstreamBillingProbeSettings(context.Background())
 	require.ErrorContains(t, err, "parse upstream billing probe settings")
 	require.Nil(t, settings)
+}
+
+func TestUpstreamBillingProbeBackgroundCadenceSupportsNearRealTimeEvents(t *testing.T) {
+	require.LessOrEqual(t, upstreamBillingProbeCycleInterval, 10*time.Second)
 }
 
 func TestUpstreamBillingProbeUsesWebAccountRateForKnownHosts(t *testing.T) {
@@ -1228,9 +1232,9 @@ func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {
 	require.NotNil(t, snapshot.ReceivedAt)
 	require.Equal(t, fixedNow, *snapshot.ReceivedAt)
 	require.NotNil(t, snapshot.FreshUntil)
-	require.Equal(t, fixedNow.Add(time.Hour), *snapshot.FreshUntil)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(24*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(36*time.Minute)))
+	require.Equal(t, fixedNow.Add(10*time.Minute), *snapshot.FreshUntil)
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(6*time.Minute)))
 	// 写回的是不含高峰因子的 resolved 倍率（0.6），不是探测那一刻含高峰的
 	// effective 倍率（0.9）——否则一个探测周期的峰值会被冻结进静态列。
 	require.NotNil(t, account.RateMultiplier)
@@ -1633,7 +1637,7 @@ func TestUpstreamBillingProbeFailurePreservesLastSuccessAndRetryAfter(t *testing
 	require.Equal(t, previous.Data, snapshot.Data)
 	require.Equal(t, previous.ReceivedAt, snapshot.ReceivedAt)
 	require.NotNil(t, snapshot.FreshUntil)
-	require.Equal(t, receivedAt.Add(time.Hour), *snapshot.FreshUntil)
+	require.Equal(t, receivedAt.Add(10*time.Minute), *snapshot.FreshUntil)
 	require.Equal(t, 2, snapshot.FailureCount)
 	require.Equal(t, "http_error", snapshot.LastError)
 	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Hour)))
@@ -1650,11 +1654,11 @@ func TestUpstreamBillingProbeRetryAfterIsNotShortened(t *testing.T) {
 // unsupported 的重探间隔明显长于普通失败，但始终有上界：上游后来接入 sub2api
 // 时最迟一天内会被重新发现，且不会缩短上游 Retry-After 指令。
 func TestUpstreamBillingProbeUnsupportedDelayIsStretchedAndBounded(t *testing.T) {
-	// 默认 30 分钟 interval：普通失败 24~36 分钟，unsupported 为其 8 倍。
-	stretched := unsupportedProbeDelay(30, 0)
-	require.Greater(t, stretched, 36*time.Minute)
-	require.GreaterOrEqual(t, stretched, 192*time.Minute)
-	require.LessOrEqual(t, stretched, 288*time.Minute)
+	// 默认 5 分钟 interval：普通失败 4~6 分钟，unsupported 为其 8 倍。
+	stretched := unsupportedProbeDelay(upstreamBillingProbeDefaultIntervalMinutes, 0)
+	require.Greater(t, stretched, 6*time.Minute)
+	require.GreaterOrEqual(t, stretched, 32*time.Minute)
+	require.LessOrEqual(t, stretched, 48*time.Minute)
 
 	// 永不超过封顶值，因此 unsupported 账号不会被永久排除在重探之外。
 	require.LessOrEqual(t, unsupportedProbeDelay(upstreamBillingProbeMaxIntervalMinutes, 0), upstreamBillingProbeMaxDelay)
@@ -1728,14 +1732,14 @@ func TestUpstreamBillingProbeEmptyResponseIsPersistedAsFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
 	require.Equal(t, "empty_response", snapshot.LastError)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(24*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(36*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(6*time.Minute)))
 
 	snapshot, err = svc.ProbeAccount(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, 2, snapshot.FailureCount)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(24*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(36*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(6*time.Minute)))
 }
 
 func TestUpstreamBillingProbeUnsupportedAndAccountToggle(t *testing.T) {
@@ -1764,15 +1768,15 @@ func TestUpstreamBillingProbeUnsupportedAndAccountToggle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status)
 	require.Equal(t, "unsupported", snapshot.LastError)
-	// unsupported 走加长退避：默认 30 分钟 interval ⇒ (24~36) * 8 分钟。
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(192*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(288*time.Minute)))
+	// unsupported 走加长退避：默认 5 分钟 interval => (4~6) * 8 分钟。
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(32*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(48*time.Minute)))
 
 	snapshot, err = svc.ProbeAccount(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, 2, snapshot.FailureCount)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(192*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(288*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(32*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(48*time.Minute)))
 	require.NoError(t, svc.SetAccountEnabled(context.Background(), account.ID, false))
 	require.Equal(t, false, account.Extra[UpstreamBillingProbeEnabledExtraKey])
 	require.Equal(t, false, account.Extra[UpstreamBillingRateSyncEnabledExtraKey])

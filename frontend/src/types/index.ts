@@ -135,7 +135,6 @@ export interface ActionCaptchaRequestProof extends Partial<TencentCaptchaRequest
 export interface RegisterRequest {
   email: string
   password: string
-  verify_code?: string
   turnstile_token?: string
   tencent_captcha_ticket?: string
   tencent_captcha_randstr?: string
@@ -168,20 +167,6 @@ export interface UserAffiliateDetail {
 export interface AffiliateTransferResponse {
   transferred_quota: number
   balance: number
-}
-
-export interface SendVerifyCodeRequest {
-  email: string
-  turnstile_token?: string
-  tencent_captcha_ticket?: string
-  tencent_captcha_randstr?: string
-  pending_auth_token?: string
-  pending_oauth_token?: string
-}
-
-export interface SendVerifyCodeResponse {
-  message: string
-  countdown: number
 }
 
 export interface CustomMenuItem {
@@ -1866,8 +1851,10 @@ export interface DashboardStats {
   today_output_tokens: number
   today_cache_creation_tokens: number
   today_cache_read_tokens: number
-  today_tokens: number
-  today_cost: number // 今日标准计费
+	today_tokens: number
+	last_24_hour_tokens?: number
+	last_24_hour_actual_cost?: number
+	today_cost: number // 今日标准计费
   today_actual_cost: number // 今日实际扣除
   today_account_cost: number // 今日账号成本
 

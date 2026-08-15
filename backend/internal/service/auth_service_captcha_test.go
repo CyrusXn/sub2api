@@ -95,18 +95,6 @@ func TestVerifyCaptchaRequiredModeAcceptsCompleteTencentProvider(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestVerifyCaptchaForRegisterSkipsDuplicateTencentTicketAfterEmailCode(t *testing.T) {
-	settings := tencentCaptchaSettings()
-	settings[SettingKeyEmailVerifyEnabled] = "true"
-	verifier := &tencentCaptchaVerifierStub{response: &TencentCaptchaVerifyResponse{CaptchaCode: 1}}
-	svc := newAuthServiceForCaptchaTest(settings, true, nil, verifier)
-
-	err := svc.VerifyCaptchaForRegister(context.Background(), CaptchaProof{}, "203.0.113.10", "123456")
-
-	require.NoError(t, err)
-	require.Zero(t, verifier.calls)
-}
-
 func TestVerifyCaptchaFailsClosedWhenProviderSettingsCannotBeRead(t *testing.T) {
 	repo := &settingRepoStub{err: errors.New("settings unavailable")}
 	svc := newAuthServiceForCaptchaRepoTest(repo, false, &turnstileVerifierSpy{}, &tencentCaptchaVerifierStub{})

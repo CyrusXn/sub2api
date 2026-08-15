@@ -59,15 +59,14 @@ type oauthAdoptionDecisionRequest struct {
 }
 
 type bindPendingOAuthLoginRequest struct {
-	Email            string `json:"email" binding:"required,email"`
+	Email            string `json:"email" binding:"required,max=255"`
 	Password         string `json:"password" binding:"required"`
 	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
 	AdoptAvatar      *bool  `json:"adopt_avatar,omitempty"`
 }
 
 type createPendingOAuthAccountRequest struct {
-	Email                 string `json:"email" binding:"required,email"`
-	VerifyCode            string `json:"verify_code,omitempty"`
+	Email                 string `json:"email" binding:"required,max=255"`
 	Password              string `json:"password" binding:"required,min=6"`
 	TurnstileToken        string `json:"turnstile_token,omitempty"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket,omitempty"`
@@ -76,15 +75,6 @@ type createPendingOAuthAccountRequest struct {
 	AffCode               string `json:"aff_code,omitempty"`
 	AdoptDisplayName      *bool  `json:"adopt_display_name,omitempty"`
 	AdoptAvatar           *bool  `json:"adopt_avatar,omitempty"`
-}
-
-type sendPendingOAuthVerifyCodeRequest struct {
-	Email                 string `json:"email" binding:"required,email"`
-	TurnstileToken        string `json:"turnstile_token,omitempty"`
-	TencentCaptchaTicket  string `json:"tencent_captcha_ticket,omitempty"`
-	TencentCaptchaRandstr string `json:"tencent_captcha_randstr,omitempty"`
-	PendingAuthToken      string `json:"pending_auth_token,omitempty"`
-	PendingOAuthToken     string `json:"pending_oauth_token,omitempty"`
 }
 
 func (r bindPendingOAuthLoginRequest) adoptionDecision() oauthAdoptionDecisionRequest {
@@ -386,7 +376,6 @@ func ensurePendingOAuthCompleteRegistrationSession(session *dbent.PendingAuthSes
 func buildLegacyCompleteRegistrationPendingResponse(
 	session *dbent.PendingAuthSession,
 	forceEmailOnSignup bool,
-	emailVerificationRequired bool,
 ) map[string]any {
 	completionResponse := normalizePendingOAuthCompletionResponse(mergePendingCompletionResponse(session, map[string]any{
 		"step":                   oauthPendingChoiceStep,
@@ -407,8 +396,6 @@ func buildLegacyCompleteRegistrationPendingResponse(
 		switch {
 		case forceEmailOnSignup:
 			completionResponse["choice_reason"] = "force_email_on_signup"
-		case emailVerificationRequired:
-			completionResponse["choice_reason"] = "email_verification_required"
 		default:
 			completionResponse["choice_reason"] = "third_party_signup"
 		}
@@ -429,9 +416,8 @@ func (h *AuthHandler) legacyCompleteRegistrationSessionStatus(
 		return session, true, nil
 	}
 
-	emailVerificationRequired := h != nil && h.authService != nil && h.authService.IsEmailVerifyEnabled(c.Request.Context())
 	forceEmailOnSignup := h.isForceEmailOnThirdPartySignup(c.Request.Context())
-	if !emailVerificationRequired && !forceEmailOnSignup {
+	if !forceEmailOnSignup {
 		return session, false, nil
 	}
 
@@ -447,7 +433,7 @@ func (h *AuthHandler) legacyCompleteRegistrationSessionStatus(
 		strings.TrimSpace(session.Intent),
 		strings.TrimSpace(session.ResolvedEmail),
 		nil,
-		buildLegacyCompleteRegistrationPendingResponse(session, forceEmailOnSignup, emailVerificationRequired),
+		buildLegacyCompleteRegistrationPendingResponse(session, forceEmailOnSignup),
 	)
 	if err != nil {
 		return nil, false, infraerrors.InternalServer("PENDING_AUTH_SESSION_UPDATE_FAILED", "failed to update pending oauth session").WithCause(err)
@@ -557,64 +543,6 @@ func (h *AuthHandler) CreateWeChatOAuthAccount(c *gin.Context) {
 
 func (h *AuthHandler) CreatePendingOAuthAccount(c *gin.Context) {
 	h.createPendingOAuthAccount(c, "")
-}
-
-// SendPendingOAuthVerifyCode sends a verification code for a browser-bound
-// pending OAuth account-creation flow.
-// POST /api/v1/auth/oauth/pending/send-verify-code
-func (h *AuthHandler) SendPendingOAuthVerifyCode(c *gin.Context) {
-	var req sendPendingOAuthVerifyCodeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request: "+err.Error())
-		return
-	}
-
-	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
-	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	_, session, _, err := readPendingOAuthBrowserSession(c, h)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	if err := ensurePendingOAuthCompleteRegistrationSession(session); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	client := h.entClient()
-	if client == nil {
-		response.ErrorFrom(c, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready"))
-		return
-	}
-
-	email := strings.TrimSpace(strings.ToLower(req.Email))
-	if existingUser, err := findUserByNormalizedEmail(c.Request.Context(), client, email); err == nil && existingUser != nil {
-		session, err = h.transitionPendingOAuthAccountToChoiceState(c, client, session, existingUser, email)
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, buildPendingOAuthSessionStatusPayload(session))
-		return
-	} else if err != nil && !errors.Is(err, service.ErrUserNotFound) {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	result, err := h.authService.SendPendingOAuthVerifyCode(c.Request.Context(), req.Email, c.GetHeader("Accept-Language"))
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	response.Success(c, SendVerifyCodeResponse{
-		Message:   "Verification code sent successfully",
-		Countdown: result.Countdown,
-	})
 }
 
 func (h *AuthHandler) upsertPendingOAuthAdoptionDecision(
@@ -1733,7 +1661,7 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 		return
 	}
 
-	email := strings.TrimSpace(strings.ToLower(req.Email))
+	email := strings.TrimSpace(req.Email)
 	existingUser, err := findUserByNormalizedEmail(c.Request.Context(), client, email)
 	if err != nil {
 		switch {
@@ -1766,11 +1694,10 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 		return
 	}
 
-	tokenPair, user, err := h.authService.RegisterOAuthEmailAccount(
+	tokenPair, user, err := h.authService.RegisterOAuthAccount(
 		c.Request.Context(),
 		email,
 		req.Password,
-		strings.TrimSpace(req.VerifyCode),
 		strings.TrimSpace(req.InvitationCode),
 		strings.TrimSpace(session.ProviderType),
 	)
@@ -2000,8 +1927,8 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 	}
 	// ─── 安全修复（账号接管 0day）────────────────────────────────────────────
 	// 非终态 session（如 choose_account_action_required）的 TargetUserID 可能来自
-	// 攻击者提交的他人邮箱：createPendingOAuthAccount / SendPendingOAuthVerifyCode
-	// 发现邮箱已存在时会把本 session 指向该邮箱用户，全程无密码、无邮箱验证码、
+	// 攻击者提交的他人邮箱：createPendingOAuthAccount
+	// 发现邮箱已存在时会把本 session 指向该邮箱用户，全程无密码、无账号所有权证明、
 	// 无账号所有权证明。若此时带着 adoption decision 继续执行，下方的
 	// applyPendingOAuthAdoption 会把本 OAuth identity 直接绑定到 TargetUserID，
 	// 攻击者随后再次 OAuth 登录即被系统识别为受害者本人（完整账号接管）。

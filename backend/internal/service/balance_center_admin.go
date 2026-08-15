@@ -62,11 +62,29 @@ type BalanceCenterRechargeEvent struct {
 	Source     string    `json:"source"`
 	SourceKey  string    `json:"source_key"`
 	SiteID     *int64    `json:"site_id,omitempty"`
+	SiteLabel  string    `json:"site_label,omitempty"`
 	AccountID  *int64    `json:"account_id,omitempty"`
 	Amount     float64   `json:"amount"`
 	Currency   string    `json:"currency"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Note       string    `json:"note"`
+}
+
+type BalanceCenterRechargeSiteSummary struct {
+	SiteID      *int64                       `json:"site_id"`
+	SiteName    string                       `json:"site_name"`
+	TotalAmount float64                      `json:"total_amount"`
+	RecordCount int64                        `json:"record_count"`
+	Items       []BalanceCenterRechargeEvent `json:"items"`
+}
+
+type BalanceCenterRechargeSummary struct {
+	TotalAmount float64                            `json:"total_amount"`
+	Items       []BalanceCenterRechargeEvent       `json:"items"`
+	Sites       []BalanceCenterRechargeSiteSummary `json:"sites"`
+	Total       int64                              `json:"total"`
+	Page        int                                `json:"page"`
+	PageSize    int                                `json:"page_size"`
 }
 
 type BalanceCenterReconciliation struct {
@@ -113,6 +131,7 @@ type BalanceCenterAdminRepository interface {
 	ListBalanceCenterManualRows(context.Context) ([]BalanceCenterManualRow, error)
 	ReplaceBalanceCenterManualRows(context.Context, []BalanceCenterManualRow) error
 	ListBalanceCenterRechargeEvents(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterRechargeEvent], error)
+	GetBalanceCenterRechargeSummary(context.Context, BalanceCenterListFilter) (*BalanceCenterRechargeSummary, error)
 	CreateBalanceCenterRechargeEvent(context.Context, *BalanceCenterRechargeEvent) (*BalanceCenterRechargeEvent, error)
 	DeleteBalanceCenterRechargeEvent(context.Context, int64) error
 	ListBalanceCenterReconciliations(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterReconciliation], error)
@@ -189,6 +208,14 @@ func (s *BalanceCenterService) ListRechargeEvents(ctx context.Context, filter Ba
 	return repository.ListBalanceCenterRechargeEvents(ctx, normalizeBalanceCenterFilter(filter))
 }
 
+func (s *BalanceCenterService) GetRechargeSummary(ctx context.Context, filter BalanceCenterListFilter) (*BalanceCenterRechargeSummary, error) {
+	repository, err := s.adminRepository()
+	if err != nil {
+		return nil, err
+	}
+	return repository.GetBalanceCenterRechargeSummary(ctx, normalizeBalanceCenterFilter(filter))
+}
+
 func (s *BalanceCenterService) CreateRechargeEvent(ctx context.Context, event *BalanceCenterRechargeEvent) (*BalanceCenterRechargeEvent, error) {
 	if event == nil || event.Amount <= 0 || event.OccurredAt.IsZero() {
 		return nil, errors.New("充值记录内容无效")
@@ -199,8 +226,13 @@ func (s *BalanceCenterService) CreateRechargeEvent(ctx context.Context, event *B
 	if strings.TrimSpace(event.SourceKey) == "" {
 		return nil, errors.New("充值记录幂等键不能为空")
 	}
-	if strings.TrimSpace(event.Currency) == "" {
+	event.SiteLabel = strings.TrimSpace(event.SiteLabel)
+	event.Currency = strings.TrimSpace(event.Currency)
+	if event.Currency == "" {
 		event.Currency = "CNY"
+	}
+	if event.Currency != "CNY" {
+		return nil, errors.New("充值记录币种仅支持 CNY")
 	}
 	repository, err := s.adminRepository()
 	if err != nil {

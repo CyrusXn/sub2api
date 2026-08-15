@@ -75,7 +75,8 @@ export async function list(
     attributes?: Record<number, string>  // attributeId -> value
     include_subscriptions?: boolean
     sort_by?: string
-    concurrency_metric?: 'total' | 'current'
+    // available 仅用于用户列表首次按剩余并发排序。
+    concurrency_metric?: 'total' | 'current' | 'available'
     sort_order?: 'asc' | 'desc'
   },
   options?: {

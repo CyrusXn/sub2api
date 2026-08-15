@@ -319,12 +319,6 @@ func TestBackendModeAuthGuard(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "enabled_allows_oauth_pending_send_verify_code",
-			enabled:    "true",
-			path:       "/api/v1/auth/oauth/pending/send-verify-code",
-			wantStatus: http.StatusOK,
-		},
-		{
 			name:       "enabled_allows_oauth_pending_create_account",
 			enabled:    "true",
 			path:       "/api/v1/auth/oauth/pending/create-account",

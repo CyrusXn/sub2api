@@ -1,5 +1,5 @@
 <template>
-  <AppLayout>
+  <AppLayout @refresh-admin-metrics="refreshTopMetrics">
     <div class="space-y-6">
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
@@ -80,14 +80,21 @@
               <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30">
                 <Icon name="userPlus" size="md" class="text-emerald-600 dark:text-emerald-400" :stroke-width="2" />
               </div>
-              <div>
+              <div class="min-w-0 flex-1">
                 <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                   {{ t('admin.dashboard.users') }}
                 </p>
-                <p class="text-xl font-bold text-emerald-600 dark:text-emerald-400">
-                  +{{ stats.today_new_users }}
-                </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">
+                <div class="grid grid-cols-2 divide-x divide-gray-200 dark:divide-dark-600">
+                  <div class="pr-3">
+                    <p class="text-xl font-bold text-emerald-600 dark:text-emerald-400">+{{ stats.today_new_users }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.newUsersToday') }}</p>
+                  </div>
+                  <div class="pl-3">
+                    <p class="text-xl font-bold text-sky-600 dark:text-sky-400">{{ stats.active_users }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.todayActiveUsers') }}</p>
+                  </div>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {{ t('common.total') }}: {{ formatNumber(stats.total_users) }}
                 </p>
               </div>
@@ -103,28 +110,33 @@
               <div class="rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30">
                 <Icon name="cube" size="md" class="text-amber-600 dark:text-amber-400" :stroke-width="2" />
               </div>
-              <div>
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.todayTokens') }}
-                </p>
-                <p class="text-xl font-bold text-gray-900 dark:text-white">
-                  {{ formatTokens(stats.today_tokens) }}
-                </p>
-                <p class="text-xs">
-                  <span
-                    class="text-green-600 dark:text-green-400"
-                    :title="t('admin.dashboard.actual')"
-                    >${{ formatCost(stats.today_actual_cost) }}</span
-                  >
-                  <span class="text-gray-400 dark:text-gray-500"> / </span>
+              <div class="min-w-0 flex-1">
+                <div class="grid grid-cols-2 divide-x divide-gray-200 dark:divide-dark-600">
+                  <div class="pr-3">
+                    <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.todayTokens') }}</p>
+                    <p class="text-xl font-bold text-gray-900 dark:text-white">{{ formatTokens(stats.today_tokens) }}</p>
+                    <div class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700">
+                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.todayTotalConsumption') }}</p>
+                      <p class="text-sm font-bold text-green-600 dark:text-green-400">{{ formatOptionalCost(stats.today_actual_cost) }}</p>
+                    </div>
+                  </div>
+                  <div class="pl-3">
+                    <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.last24HourTokens') }}</p>
+                    <p class="text-xl font-bold text-amber-700 dark:text-amber-300">{{ formatOptionalTokens(stats.last_24_hour_tokens) }}</p>
+                    <div class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700">
+                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.last24HourTotalConsumption') }}</p>
+                      <p class="text-sm font-bold text-amber-700 dark:text-amber-300">{{ formatOptionalCost(stats.last_24_hour_actual_cost) }}</p>
+                    </div>
+                  </div>
+                </div>
+                <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
                   <span
                     class="text-orange-500 dark:text-orange-400"
                     :title="t('admin.dashboard.accountCost')"
                     >${{ formatCost(stats.today_account_cost) }}</span
                   >
-                  <span class="text-gray-400 dark:text-gray-500"> / </span>
+                  <span> / </span>
                   <span
-                    class="text-gray-400 dark:text-gray-500"
                     :title="t('admin.dashboard.standard')"
                     >${{ formatCost(stats.today_cost) }}</span
                   >
@@ -175,21 +187,23 @@
               <div class="rounded-lg bg-violet-100 p-2 dark:bg-violet-900/30">
                 <Icon name="bolt" size="md" class="text-violet-600 dark:text-violet-400" :stroke-width="2" />
               </div>
-              <div class="flex-1">
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.performance') }}
-                </p>
-                <div class="flex items-baseline gap-2">
-                  <p class="text-xl font-bold text-gray-900 dark:text-white">
-                    {{ formatTokens(stats.rpm) }}
-                  </p>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">RPM</span>
-                </div>
-                <div class="flex items-baseline gap-2">
-                  <p class="text-sm font-semibold text-violet-600 dark:text-violet-400">
-                    {{ formatTokens(stats.tpm) }}
-                  </p>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">TPM</span>
+              <div class="min-w-0 flex-1">
+                <div class="grid grid-cols-2 divide-x divide-gray-200 dark:divide-dark-600">
+                  <div class="pr-3">
+                    <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.performance') }}</p>
+                    <div class="flex items-baseline gap-2">
+                      <p class="text-xl font-bold text-gray-900 dark:text-white">{{ formatTokens(realtimeMetricsStore.metrics?.requests_per_minute ?? stats.rpm) }}</p>
+                      <span class="text-xs text-gray-500 dark:text-gray-400">RPM</span>
+                    </div>
+                    <div class="flex items-baseline gap-2">
+                      <p class="text-sm font-semibold text-violet-600 dark:text-violet-400">{{ formatTokens(realtimeMetricsStore.metrics?.tokens_per_minute ?? stats.tpm) }}</p>
+                      <span class="text-xs text-gray-500 dark:text-gray-400">TPM</span>
+                    </div>
+                  </div>
+                  <div class="pl-3">
+                    <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.currentConcurrency') }}</p>
+                    <p class="text-xl font-bold text-red-600 dark:text-red-400">{{ realtimeMetricsStore.metrics?.active_requests ?? 0 }}</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -208,12 +222,88 @@
                 <p class="text-xl font-bold text-gray-900 dark:text-white">
                   {{ formatDuration(stats.average_duration_ms) }}
                 </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ stats.active_users }} {{ t('admin.dashboard.activeUsers') }}
-                </p>
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- 第三排历史经营指标，各卡片可独立触发异步刷新。 -->
+        <div class="space-y-2">
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div class="card p-4">
+              <div class="mb-3 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                  <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30">
+                    <Icon name="creditCard" size="md" class="text-emerald-600 dark:text-emerald-400" :stroke-width="2" />
+                  </div>
+                  <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">{{ t('admin.dashboard.historicalRecharge') }}</span>
+                </div>
+                <button type="button" :title="t('common.refresh')" class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-700 dark:hover:text-white" @click="loadBusinessSummary">
+                  <Icon name="refresh" size="sm" :class="{ 'animate-spin': businessLoading }" />
+                </button>
+              </div>
+              <p class="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatBusinessMoney(businessSummary?.lifetime.recharge_amount) }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.historicalRechargeDescription') }}</p>
+            </div>
+
+            <div class="card p-4">
+              <div class="mb-3 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                  <div class="rounded-lg bg-sky-100 p-2 dark:bg-sky-900/30">
+                    <Icon name="dollar" size="md" class="text-sky-600 dark:text-sky-400" :stroke-width="2" />
+                  </div>
+                  <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">{{ t('admin.dashboard.historicalConsumption') }}</span>
+                </div>
+                <button type="button" :title="t('common.refresh')" class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-700 dark:hover:text-white" @click="loadBusinessSummary">
+                  <Icon name="refresh" size="sm" :class="{ 'animate-spin': businessLoading }" />
+                </button>
+              </div>
+              <p class="flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
+                <span>{{ formatBusinessMoney(businessSummary?.lifetime.actual_cost) }}</span>
+                <span class="text-gray-300 dark:text-dark-500">/</span>
+                <span class="text-sky-600 dark:text-sky-400">{{ formatBusinessMoney(businessSummary?.lifetime.actual_cost_excluding_admin) }}</span>
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.allAndExcludeAdmin') }}</p>
+            </div>
+          </div>
+          <div class="card px-4 py-3">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.dashboard.selectedRange') }}</h3>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ startDate }} - {{ endDate }}</span>
+            </div>
+            <div class="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-4">
+              <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.rangeRecharge') }}</p>
+                <p class="mt-1 text-base font-bold text-emerald-600 dark:text-emerald-400">{{ formatBusinessMoney(businessSummary?.range.recharge_amount) }}</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.rangeTokens') }}</p>
+                <p class="mt-1 text-base font-bold text-gray-900 dark:text-white">{{ formatTokens(businessSummary?.range.total_tokens) }}</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.rangeConsumption') }}</p>
+                <p class="mt-1 flex flex-wrap items-baseline gap-1 text-base font-bold text-gray-900 dark:text-white">
+                  <span>{{ formatBusinessMoney(businessSummary?.range.actual_cost) }}</span>
+                  <span class="text-gray-300 dark:text-dark-500">/</span>
+                  <span class="text-sky-600 dark:text-sky-400">{{ formatBusinessMoney(businessSummary?.range.actual_cost_excluding_admin) }}</span>
+                </p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.rangeAccountCost') }}</p>
+                <p class="mt-1 text-base font-bold text-amber-600 dark:text-amber-400">{{ formatBusinessMoney(businessSummary?.range.account_cost) }}</p>
+              </div>
+            </div>
+          </div>
+          <p v-if="businessError" class="text-sm text-red-600 dark:text-red-400">{{ t('admin.dashboard.businessSummaryLoadFailed') }}</p>
+        </div>
+
+        <div class="card p-4">
+          <div class="mb-3 flex items-center justify-between"><h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.dashboard.lowBalanceAccounts') }}</h2><button type="button" :title="t('common.refresh')" class="rounded p-1 text-gray-400 hover:text-gray-700" @click="loadLowBalanceAccounts"><Icon name="refresh" size="sm" :class="{ 'animate-spin': lowBalanceLoading }" /></button></div>
+          <p v-if="lowBalanceError" class="py-4 text-center text-sm text-red-600 dark:text-red-400">{{ t('admin.dashboard.lowBalanceLoadFailed') }}</p>
+          <div v-else-if="lowBalanceAccounts.length" class="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+            <div v-for="account in lowBalanceAccounts" :key="account.id" class="flex items-center justify-between border-b border-gray-100 py-2 text-sm dark:border-dark-700"><span class="truncate pr-3 text-gray-700 dark:text-gray-200">{{ account.name }}</span><strong class="text-red-600 dark:text-red-400">{{ account.balance.toFixed(2) }} {{ account.unit }}</strong></div>
+          </div>
+          <p v-else class="py-4 text-center text-sm text-gray-500">{{ t('admin.dashboard.noLowBalanceAccounts') }}</p>
         </div>
 
         <!-- Quick Actions -->
@@ -316,6 +406,13 @@
             <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
           </div>
 
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <SystemMetricTrendCard :title="t('admin.dashboard.bandwidthTrend')" metric="network" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
+            <SystemMetricTrendCard :title="t('admin.dashboard.cpuTrend')" metric="cpu" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
+            <SystemMetricTrendCard :title="t('admin.dashboard.memoryTrend')" metric="memory" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
+            <SystemMetricTrendCard :title="t('admin.dashboard.diskTrend')" metric="disk" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
+          </div>
+
           <!-- User Usage Trend (Full Width) -->
           <div class="card p-4">
             <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
@@ -345,6 +442,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import { useAdminRealtimeMetricsStore } from '@/stores/adminRealtimeMetrics'
 
 const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
@@ -362,6 +460,12 @@ import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
+import SystemMetricTrendCard from '@/components/charts/SystemMetricTrendCard.vue'
+import type {
+  DashboardBusinessSummary,
+  DashboardLowBalanceAccount,
+  DashboardSystemMetricTrend
+} from '@/api/admin/dashboard'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
 import {
@@ -388,6 +492,7 @@ ChartJS.register(
 )
 
 const appStore = useAppStore()
+const realtimeMetricsStore = useAdminRealtimeMetricsStore()
 const router = useRouter()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const stats = ref<DashboardStats | null>(null)
@@ -396,6 +501,15 @@ const chartsLoading = ref(false)
 const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
 const rankingError = ref(false)
+const businessLoading = ref(false)
+const lowBalanceLoading = ref(false)
+const systemMetricsLoading = ref(false)
+const topMetricsLoading = ref(false)
+const businessSummary = ref<DashboardBusinessSummary | null>(null)
+const businessError = ref(false)
+const lowBalanceAccounts = ref<DashboardLowBalanceAccount[]>([])
+const lowBalanceError = ref(false)
+const systemMetricsTrend = ref<DashboardSystemMetricTrend>({ source: '', points: [] })
 
 // Chart data
 const trendData = ref<TrendDataPoint[]>([])
@@ -604,6 +718,26 @@ const formatCost = (value: number | null | undefined): string => {
   return safeValue.toFixed(4)
 }
 
+const formatOptionalCost = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
+  return `$${formatCost(Number(value))}`
+}
+
+// 兼容尚未部署新字段的线上接口，缺失值不误显示为真实零用量。
+const formatOptionalTokens = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
+  return formatTokens(Number(value))
+}
+
+// 经营汇总接口不可用时保留卡片结构，避免将缺失值误显示为 0。
+const formatBusinessMoney = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
+  return `$${Number(value).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`
+}
+
 const formatDuration = (ms: number): string => {
   if (ms >= 1000) {
     return `${(ms / 1000).toFixed(2)}s`
@@ -640,7 +774,62 @@ const onDateRangeChange = (range: {
     granularity.value = 'day'
   }
 
-  loadChartData()
+  void Promise.all([loadChartData(), loadBusinessSummary(), loadSystemMetricsTrend()])
+}
+
+const rangeParams = () => ({ start_date: startDate.value, end_date: endDate.value })
+
+const applyDashboardStats = (nextStats: DashboardStats) => {
+  stats.value = nextStats
+  realtimeMetricsStore.seedDashboardRates(nextStats.rpm, nextStats.tpm)
+}
+
+const loadBusinessSummary = async () => {
+  businessLoading.value = true
+  businessError.value = false
+  try { businessSummary.value = await adminAPI.dashboard.getBusinessSummary(rangeParams()) }
+  catch (error) { console.error('读取历史经营汇总失败:', error); businessError.value = true }
+  finally { businessLoading.value = false }
+}
+
+const loadLowBalanceAccounts = async () => {
+  lowBalanceLoading.value = true
+  lowBalanceError.value = false
+  try { lowBalanceAccounts.value = (await adminAPI.dashboard.getLowBalanceAccounts()).accounts || [] }
+  catch (error) { console.error('读取低余额账号失败:', error); lowBalanceError.value = true }
+  finally { lowBalanceLoading.value = false }
+}
+
+const loadSystemMetricsTrend = async () => {
+  systemMetricsLoading.value = true
+  try { systemMetricsTrend.value = await adminAPI.dashboard.getSystemMetricsTrend(rangeParams()) }
+  catch (error) { console.error('读取服务器资源趋势失败:', error); systemMetricsTrend.value = { source: '', points: [] } }
+  finally { systemMetricsLoading.value = false }
+}
+
+// 顶部刷新只读取指标快照，不重复加载趋势图和消费榜。
+const loadTopMetricStats = async () => {
+  const response = await adminAPI.dashboard.getSnapshotV2({
+    include_stats: true,
+    include_trend: false,
+    include_model_stats: false,
+    include_group_stats: false,
+    include_users_trend: false
+  })
+  if (response.stats) applyDashboardStats(response.stats)
+}
+
+const refreshTopMetrics = async () => {
+  if (topMetricsLoading.value) return
+  topMetricsLoading.value = true
+  try {
+    await loadTopMetricStats()
+  } catch (error) {
+    console.error('刷新仪表盘顶部指标失败:', error)
+    appStore.showError(t('admin.dashboard.failedToLoad'))
+  } finally {
+    topMetricsLoading.value = false
+  }
 }
 
 // Load data
@@ -663,7 +852,7 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
     })
     if (currentSeq !== chartLoadSeq) return
     if (includeStats && response.stats) {
-      stats.value = response.stats
+      applyDashboardStats(response.stats)
     }
     trendData.value = response.trend || []
     modelStats.value = response.models || []
@@ -750,7 +939,10 @@ const loadChartData = async () => {
 
 onMounted(() => {
   void refreshBatchImageAccess()
-  loadDashboardStats()
+  void loadDashboardStats()
+  void loadBusinessSummary()
+  void loadLowBalanceAccounts()
+  void loadSystemMetricsTrend()
 })
 </script>
 

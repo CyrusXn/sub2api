@@ -161,6 +161,7 @@ const DataTableStub = {
   emits: ['sort'],
   template: `
     <div>
+      <button data-test="sort-concurrency" @click="$emit('sort', 'capacity', 'desc')">sort concurrency</button>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
       <div data-test="columns-meta">{{ JSON.stringify(columns.map((col) => ({ key: col.key, width: col.width }))) }}</div>
       <div data-test="rows">{{ data.map((row) => row.name).join(',') }}</div>
@@ -340,6 +341,24 @@ describe('admin GroupsView column settings', () => {
       sortable: boolean
     }>
     expect(columns.find((column) => column.key === 'sort_order')).toMatchObject({ sortable: true })
+  })
+
+  it('defaults concurrency sorting to current usage', async () => {
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="sort-concurrency"]').trigger('click')
+    await flushPromises()
+
+    expect(listGroups).toHaveBeenLastCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        sort_by: 'concurrency',
+        concurrency_metric: 'current',
+        sort_order: 'desc',
+      }),
+      expect.any(Object),
+    )
   })
 
   it('only allows drag sorting within the same platform', async () => {

@@ -24,7 +24,7 @@
             type="button"
             @click="clearUser"
             class="absolute right-2 top-9 text-gray-400"
-            aria-label="Clear user filter"
+            aria-label="清除用户筛选"
           >
             ✕
           </button>
@@ -65,7 +65,7 @@
             type="button"
             @click="onClearApiKey"
             class="absolute right-2 top-9 text-gray-400"
-            aria-label="Clear API key filter"
+            aria-label="清除 API 密钥筛选"
           >
             ✕
           </button>
@@ -112,7 +112,7 @@
             type="button"
             @click="clearAccount"
             class="absolute right-2 top-9 text-gray-400"
-            aria-label="Clear account filter"
+            aria-label="清除账号筛选"
           >
             ✕
           </button>

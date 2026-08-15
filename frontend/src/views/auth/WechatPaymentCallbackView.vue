@@ -43,6 +43,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores'
+import { extractApiErrorMessage } from '@/utils/apiError'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -103,7 +104,10 @@ onMounted(async () => {
   const errorDescription = readParam('error_description') || readParam('message')
 
   if (error) {
-    errorMessage.value = errorDescription || error
+    errorMessage.value = extractApiErrorMessage(
+      { message: errorDescription || error },
+      t('auth.wechatPayment.callbackFailed')
+    )
     return
   }
 

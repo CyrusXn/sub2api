@@ -146,21 +146,21 @@ var (
 		redis.call('ZREMRANGEBYSCORE', userLive, '-inf', liveExpireBefore)
 		redis.call('ZREMRANGEBYSCORE', apiLive, '-inf', liveExpireBefore)
 		if redis.call('ZSCORE', accountLive, leaseID) ~= false then
-			return 1
+			return {1, now}
 		end
 		local accountCount = redis.call('ZCARD', accountRegular) + redis.call('ZCARD', accountLive)
 		local userCount = redis.call('ZCARD', userRegular) + redis.call('ZCARD', userLive)
 		local allowance = 0
 		if replacing == 1 then allowance = 1 end
-		if accountMax > 0 and accountCount >= accountMax + allowance then return 0 end
-		if userMax > 0 and userCount >= userMax + allowance then return 0 end
+		if accountMax > 0 and accountCount >= accountMax + allowance then return {0, now} end
+		if userMax > 0 and userCount >= userMax + allowance then return {0, now} end
 		redis.call('ZADD', accountLive, now, leaseID)
 		redis.call('ZADD', userLive, now, leaseID)
 		redis.call('ZADD', apiLive, now, leaseID)
 		redis.call('EXPIRE', accountLive, ttl)
 		redis.call('EXPIRE', userLive, ttl)
 		redis.call('EXPIRE', apiLive, ttl)
-		return 1
+		return {1, now}
 	`)
 
 	refreshLiveLeaseScript = redis.NewScript(`
@@ -428,12 +428,13 @@ func (c *concurrencyCache) redisUnixSeconds(ctx context.Context) (int64, error) 
 type slotIndexSpec struct {
 	indexKey string
 	slotKey  func(int64) string
+	liveKey  func(int64) string
 	waitKey  func(int64) string
 }
 
 var (
-	accountSlotIndex = slotIndexSpec{indexKey: accountActiveIndexKey, slotKey: accountSlotKey, waitKey: accountWaitKey}
-	userSlotIndex    = slotIndexSpec{indexKey: userActiveIndexKey, slotKey: userSlotKey, waitKey: waitQueueKey}
+	accountSlotIndex = slotIndexSpec{indexKey: accountActiveIndexKey, slotKey: accountSlotKey, liveKey: liveAccountSlotKey, waitKey: accountWaitKey}
+	userSlotIndex    = slotIndexSpec{indexKey: userActiveIndexKey, slotKey: userSlotKey, liveKey: liveUserSlotKey, waitKey: waitQueueKey}
 )
 
 // touchActiveIndexAt 是写路径上的轻量标记：主操作已成功时，尽力把 ID 放入活跃索引，
@@ -452,17 +453,17 @@ func (c *concurrencyCache) touchActiveIndexAt(ctx context.Context, indexKey stri
 }
 
 func (c *concurrencyCache) refreshAccountActiveIndex(ctx context.Context, accountID int64) {
-	c.refreshActiveIndex(ctx, accountActiveIndexKey, accountID, accountSlotKey(accountID), accountWaitKey(accountID))
+	c.refreshActiveIndex(ctx, accountActiveIndexKey, accountID, accountSlotKey(accountID), liveAccountSlotKey(accountID), accountWaitKey(accountID))
 }
 
 func (c *concurrencyCache) refreshUserActiveIndex(ctx context.Context, userID int64) {
-	c.refreshActiveIndex(ctx, userActiveIndexKey, userID, userSlotKey(userID), waitQueueKey(userID))
+	c.refreshActiveIndex(ctx, userActiveIndexKey, userID, userSlotKey(userID), liveUserSlotKey(userID), waitQueueKey(userID))
 }
 
 // refreshActiveIndex 以 Redis 中的真实槽位/等待数为准重建索引状态。
 // 释放槽位、等待计数减少、清理过期成员后都会调用它，防止索引残留。
 // 索引维护是 best-effort：失败只记日志，不影响主流程。
-func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, indexKey string, id int64, slotKey, waitKey string) {
+func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, indexKey string, id int64, slotKey, liveKey, waitKey string) {
 	if c == nil || c.rdb == nil || id <= 0 {
 		return
 	}
@@ -472,7 +473,7 @@ func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, indexKey stri
 		return
 	}
 
-	load, err := c.readActiveLoadForKey(ctx, id, slotKey, waitKey, now)
+	load, err := c.readActiveLoadForKey(ctx, id, slotKey, liveKey, waitKey, now)
 	if err != nil {
 		logger.LegacyPrintf("repository.concurrency", "Warning: refresh active index %s for %d failed: %v", indexKey, id, err)
 		return
@@ -513,11 +514,13 @@ func (c *concurrencyCache) activeIndexTTL(slotCount int, waitCount int) int {
 }
 
 // readActiveLoadForKey 读取单个 ID 的当前负载，并顺手清理该槽位集合中的过期成员。
-func (c *concurrencyCache) readActiveLoadForKey(ctx context.Context, id int64, slotKey, waitKey string, now int64) (activeIndexLoad, error) {
+func (c *concurrencyCache) readActiveLoadForKey(ctx context.Context, id int64, slotKey, liveKey, waitKey string, now int64) (activeIndexLoad, error) {
 	cutoffTime := now - int64(c.slotTTLSeconds)
 	pipe := c.rdb.Pipeline()
 	pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
+	pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now-int64(liveLeaseTTLSeconds), 10))
 	zcardCmd := pipe.ZCard(ctx, slotKey)
+	liveCmd := pipe.ZCard(ctx, liveKey)
 	getCmd := pipe.Get(ctx, waitKey)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return activeIndexLoad{}, fmt.Errorf("pipeline exec: %w", err)
@@ -530,7 +533,7 @@ func (c *concurrencyCache) readActiveLoadForKey(ctx context.Context, id int64, s
 	return activeIndexLoad{
 		id:        id,
 		member:    strconv.FormatInt(id, 10),
-		slotCount: int(zcardCmd.Val()),
+		slotCount: int(zcardCmd.Val() + liveCmd.Val()),
 		waitCount: waitCount,
 	}, nil
 }
@@ -562,16 +565,20 @@ func (c *concurrencyCache) readIndexLoads(ctx context.Context, spec slotIndexSpe
 		type loadCmd struct {
 			activeIndexLoad
 			zcardCmd *redis.IntCmd
+			liveCmd  *redis.IntCmd
 			getCmd   *redis.StringCmd
 		}
 		cmds := make([]loadCmd, 0, len(chunk))
 		for _, candidate := range chunk {
 			slotKey := spec.slotKey(candidate.id)
+			liveKey := spec.liveKey(candidate.id)
 			waitKey := spec.waitKey(candidate.id)
 			pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
+			pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now-int64(liveLeaseTTLSeconds), 10))
 			cmds = append(cmds, loadCmd{
 				activeIndexLoad: candidate,
 				zcardCmd:        pipe.ZCard(ctx, slotKey),
+				liveCmd:         pipe.ZCard(ctx, liveKey),
 				getCmd:          pipe.Get(ctx, waitKey),
 			})
 		}
@@ -586,13 +593,44 @@ func (c *concurrencyCache) readIndexLoads(ctx context.Context, spec slotIndexSpe
 			loads = append(loads, activeIndexLoad{
 				id:        cmd.id,
 				member:    cmd.member,
-				slotCount: int(cmd.zcardCmd.Val()),
+				slotCount: int(cmd.zcardCmd.Val() + cmd.liveCmd.Val()),
 				waitCount: waitCount,
 			})
 		}
 	}
 
 	return loads, staleMembers, nil
+}
+
+// GetTotalActiveConcurrency 从账号活跃索引批量汇总真实槽位，不扫描账号表或 Redis 全键空间。
+func (c *concurrencyCache) GetTotalActiveConcurrency(ctx context.Context) (int, error) {
+	if c == nil || c.rdb == nil {
+		return 0, errors.New("并发缓存不可用")
+	}
+	members, err := c.rdb.ZRange(ctx, accountActiveIndexKey, 0, -1).Result()
+	if err != nil {
+		return 0, fmt.Errorf("读取账号活跃索引失败: %w", err)
+	}
+	accountIDs := make([]int64, 0, len(members))
+	staleMembers := make([]string, 0)
+	for _, member := range members {
+		id, parseErr := strconv.ParseInt(member, 10, 64)
+		if parseErr != nil || id <= 0 {
+			staleMembers = append(staleMembers, member)
+			continue
+		}
+		accountIDs = append(accountIDs, id)
+	}
+	loads, err := c.GetAccountConcurrencyBatch(ctx, accountIDs)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, count := range loads {
+		total += count
+	}
+	c.removeActiveIndexMembers(ctx, accountActiveIndexKey, staleMembers)
+	return total, nil
 }
 
 // removeActiveIndexMembers 清理无效 member；这是辅助索引的维护动作，调用方无需因为失败中断主流程。
@@ -809,14 +847,22 @@ func (c *concurrencyCache) AcquireLiveLease(
 	if replacingRegularSlots {
 		replacing = 1
 	}
-	result, err := acquireLiveLeaseScript.Run(ctx, c.rdb, []string{
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireLiveLeaseScript, []string{
 		accountSlotKey(accountID),
 		liveAccountSlotKey(accountID),
 		userSlotKey(userID),
 		liveUserSlotKey(userID),
 		liveAPIKeySlotKey(apiKeyID),
-	}, accountMax, userMax, liveLeaseTTLSeconds, leaseID, replacing).Int()
-	return result == 1, err
+	}, accountMax, userMax, liveLeaseTTLSeconds, leaseID, replacing)
+	if err != nil {
+		return false, err
+	}
+	if result == 1 {
+		expiresAt := now + int64(liveLeaseTTLSeconds)
+		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, expiresAt)
+		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, expiresAt)
+	}
+	return result == 1, nil
 }
 
 func (c *concurrencyCache) RefreshLiveLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) (bool, error) {
@@ -840,6 +886,10 @@ func (c *concurrencyCache) ReleaseLiveLease(ctx context.Context, accountID, user
 	pipe.ZRem(ctx, liveUserSlotKey(userID), leaseID)
 	pipe.ZRem(ctx, liveAPIKeySlotKey(apiKeyID), leaseID)
 	_, err := pipe.Exec(ctx)
+	if err == nil {
+		c.refreshAccountActiveIndex(ctx, accountID)
+		c.refreshUserActiveIndex(ctx, userID)
+	}
 	return err
 }
 

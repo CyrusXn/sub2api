@@ -21,6 +21,11 @@
         </div>
       </div>
 
+      <!-- 管理员全局实时性能，宽度不足时隐藏以免遮挡右侧操作。 -->
+      <div v-if="authStore.isAdmin" class="hidden min-w-0 flex-1 items-center justify-center 2xl:flex">
+        <AdminRealtimeStatus @refresh-dashboard-metrics="handleAdminMetricsRefresh" />
+      </div>
+
       <!-- Right: Announcements + Docs + Language + Subscriptions + Balance + User Dropdown -->
       <div class="flex min-w-0 items-center gap-1 sm:gap-3">
         <!-- Announcement Bell -->
@@ -259,6 +264,7 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminRealtimeStatus from './AdminRealtimeStatus.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 
@@ -269,6 +275,9 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const adminSettingsStore = useAdminSettingsStore()
 const onboardingStore = useOnboardingStore()
+const emit = defineEmits<{
+  'refresh-admin-metrics': []
+}>()
 
 const user = computed(() => authStore.user)
 const dropdownOpen = ref(false)
@@ -359,6 +368,10 @@ async function handleLogout() {
 function handleReplayGuide() {
   closeDropdown()
   onboardingStore.replay()
+}
+
+function handleAdminMetricsRefresh() {
+  emit('refresh-admin-metrics')
 }
 
 function formatHeaderMoney(value: number) {

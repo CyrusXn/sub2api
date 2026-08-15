@@ -243,8 +243,15 @@ export default {
     loginFailed: 'Login failed. Please check your credentials and try again.',
     errors: {
       USER_NOT_ACTIVE: 'Account has been disabled.',
+      EMAIL_EXISTS: 'This account is already registered.',
     },
     registrationFailed: 'Registration failed. Please try again.',
+    accountLabel: 'Account',
+    accountPlaceholder: 'Enter your account',
+    accountRequired: 'Account is required',
+    wechatGroupContactPrefix: 'WeChat:',
+    wechatGroupContactId: 'ncwqwert',
+    wechatGroupContactSuffix: 'to join the group',
     emailDomainRegistrationLimit:
       'This email domain cannot register another account. Please use a mainstream email, or contact support to add your enterprise domain to the allowlist.',
     emailSuffixNotAllowed: 'This email domain is not allowed for registration.',
@@ -272,10 +279,6 @@ export default {
     resendCode: 'Resend verification code',
     sendCodeDesc: "We'll send a verification code to",
     codeSentSuccess: 'Verification code sent! Please check your inbox.',
-    verificationCodeSupportIssue: 'If you do not receive the verification code, there may be an email service issue.',
-    verificationCodeSupportContactPrefix: 'For urgent help,',
-    verificationCodeSupportWeChat: 'contact WeChat: ncwqwert',
-    verificationCodeSupportContactSuffix: '. We can add your account from the admin panel.',
     verifying: 'Verifying...',
     verifyAndCreate: 'Verify & Create Account',
     resendCountdown: 'Resend code in {countdown}s',
@@ -404,6 +407,7 @@ export default {
       callbackTitle: 'Resuming WeChat payment',
       callbackProcessing: 'Resuming WeChat payment...',
       backToPayment: 'Back to payment',
+      callbackFailed: 'Failed to process the WeChat payment callback. Return to the payment page and try again.',
       callbackMissingResumeToken: 'The WeChat payment callback is missing the resume token.'
     },
     oauth: {

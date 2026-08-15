@@ -5019,7 +5019,8 @@ const sortState = reactive({
   sort_order: "asc" as "asc" | "desc",
 });
 type ConcurrencyMetric = "total" | "current";
-const concurrencyMetric = ref<ConcurrencyMetric>("total");
+// 并发列默认按实时占用排序，管理员仍可显式切换为总并发。
+const concurrencyMetric = ref<ConcurrencyMetric>("current");
 const concurrencyMetricMenuOpen = ref(false);
 const setConcurrencyMetric = (metric: ConcurrencyMetric) => {
   concurrencyMetric.value = metric;
@@ -5030,6 +5031,7 @@ const setConcurrencyMetric = (metric: ConcurrencyMetric) => {
 };
 
 let abortController: AbortController | null = null;
+let initialGroupTablePreferenceLoad: Promise<void> | null = null;
 
 const showCreateModal = ref(false);
 const showEditModal = ref(false);
@@ -5755,6 +5757,22 @@ const cancelUnsupportedLive = () => {
   pendingLiveForm.value = null;
 };
 
+const loadVisibleGroupSecondaryData = async (signal: AbortSignal) => {
+  // 主列表先返回；汇总接口等待远程列偏好后，仅为最终可见列发起请求。
+  if (initialGroupTablePreferenceLoad) {
+    await initialGroupTablePreferenceLoad;
+  }
+  if (signal.aborted) return;
+  if (hasVisibleUsageSummaryConsumer.value) {
+    void loadUsageSummary();
+  } else {
+    usageLoading.value = false;
+  }
+  if (hasVisibleCapacityColumn.value) {
+    void loadCapacitySummary();
+  }
+};
+
 const loadGroups = async () => {
   if (abortController) {
     abortController.abort();
@@ -5787,14 +5805,7 @@ const loadGroups = async () => {
     groups.value = response.items;
     pagination.total = response.total;
     pagination.pages = response.pages;
-    if (hasVisibleUsageSummaryConsumer.value) {
-      loadUsageSummary();
-    } else {
-      usageLoading.value = false;
-    }
-    if (hasVisibleCapacityColumn.value) {
-      loadCapacitySummary();
-    }
+    void loadVisibleGroupSecondaryData(signal);
   } catch (error: any) {
     if (
       signal.aborted ||
@@ -6927,25 +6938,29 @@ const saveSortOrder = async () => {
   }
 };
 
-onMounted(async () => {
-  const restoredHiddenColumns = await loadTablePreference({
-    hiddenColumns: [...hiddenColumns],
-    columnWidths: {},
-    columnOrder: [],
-  }, {
-    columnWidthStorageKey: GROUP_COLUMN_WIDTH_STORAGE_KEY,
-    columnOrderStorageKey: GROUP_COLUMN_ORDER_STORAGE_KEY,
-  });
-  if (restoredHiddenColumns) {
-    hiddenColumns.clear();
-    restoredHiddenColumns.forEach((key) => hiddenColumns.add(key));
-    saveColumnsToStorage();
-  } else {
-    updateHiddenColumns([...hiddenColumns]);
-  }
-  loadGroups();
+onMounted(() => {
+  initialGroupTablePreferenceLoad = (async () => {
+    const restoredHiddenColumns = await loadTablePreference({
+      hiddenColumns: [...hiddenColumns],
+      columnWidths: {},
+      columnOrder: [],
+    }, {
+      columnWidthStorageKey: GROUP_COLUMN_WIDTH_STORAGE_KEY,
+      columnOrderStorageKey: GROUP_COLUMN_ORDER_STORAGE_KEY,
+    });
+    if (restoredHiddenColumns) {
+      hiddenColumns.clear();
+      restoredHiddenColumns.forEach((key) => hiddenColumns.add(key));
+      saveColumnsToStorage();
+    } else {
+      updateHiddenColumns([...hiddenColumns]);
+    }
+  })();
+
+  // 主列表与远程列偏好并行，避免先显示“暂无数据”再进入查询状态。
+  void loadGroups();
   void loadLiveCapability();
-  loadModelsListCandidates("create", 0, createForm.platform);
+  void loadModelsListCandidates("create", 0, createForm.platform);
   document.addEventListener("click", handleClickOutside);
 });
 

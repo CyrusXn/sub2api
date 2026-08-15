@@ -1,15 +1,34 @@
 export default {
   balanceCenter: {
-    title: 'Balance Center', description: 'Upstream balances, rates, recharges, reconciliation and alerts',
-    tabs: { overview: 'Overview', snapshots: 'History', recharge: 'Recharges', manual: 'Manual Baseline', reconciliation: 'Automatic & Reconciliation', alerts: 'Alerts' },
-    settings: 'Runtime Settings', enabled: 'Enable Balance Center', eventProbe: 'Event-triggered Probes', email: 'Email Alerts', threshold: 'Low Balance Threshold',
-    saveSettings: 'Save Settings', probeSelected: 'Probe Selected', filters: 'Filters', site: 'Site', accountId: 'Account ID', status: 'Status',
-    startTime: 'Start', endTime: 'End', all: 'All', siteName: 'Site', domain: 'Domain', account: 'Account', balance: 'Balance',
-    convertedBalance: 'Converted Balance', multiplier: 'Multiplier', probedAt: 'Last Probe', lastUsedAt: 'Last Used', source: 'Source', reason: 'Reason',
-    expression: 'Expression', amount: 'Amount', actions: 'Actions', saveManual: 'Save Baseline', addRow: 'Add Row', rechargeAt: 'Recharge Time',
-    note: 'Note', addRecharge: 'Add Recharge', delete: 'Delete', expected: 'Expected', actual: 'Actual', difference: 'Difference', createdAt: 'Created',
-    addReconciliation: 'Add Reconciliation', automaticSync: 'Sync Automatic Records', liandongCurl: 'Paste Liandong curl', saveSession: 'Save Session',
-    liandongSync: 'Sync Liandong Orders', alertType: 'Alert Type', recipient: 'Recipient', oldValue: 'Old', newValue: 'New', thresholdValue: 'Threshold',
-    attemptedAt: 'Attempted', empty: 'No data', saved: 'Saved', probeComplete: 'Probe completed', operationComplete: 'Operation completed'
+    title: 'Recharge statistics',
+    description: 'Record recharge amounts by site and review totals by time or site',
+    accountCenter: 'Upstream accounts and billing',
+    addRecharge: 'Add recharge',
+    addRechargeHint: 'Enter an amount and press Enter. The current minute is used by default.',
+    rechargeAt: 'Recharge time',
+    siteName: 'Site',
+    domain: 'Domain',
+    amount: 'Amount',
+    amountPlaceholder: 'Amount, then press Enter',
+    rechargeAdded: 'Recharge record added',
+    totalAmount: 'Filtered total',
+    records: 'records',
+    recordsTitle: 'Recharge records',
+    timeRange: 'Time range',
+    customDate: 'Choose date',
+    dimension: 'View dimension',
+    byTime: 'By time',
+    bySite: 'By site',
+    delete: 'Delete record',
+    deleteConfirm: 'Delete this recharge record? The total will be recalculated immediately.',
+    noSites: 'No upstream sites are available',
+    noRecords: 'No recharge records in this time range',
+    unassignedSite: 'Unassigned site',
+    ranges: {
+      '24h': '24 hours',
+      today: 'Today',
+      yesterday: 'Yesterday',
+      all: 'All'
+    }
   }
 }

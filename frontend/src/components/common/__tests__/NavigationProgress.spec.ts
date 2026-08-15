@@ -46,7 +46,7 @@ describe('NavigationProgress', () => {
 
     const progressBar = wrapper.find('.navigation-progress')
     expect(progressBar.attributes('role')).toBe('progressbar')
-    expect(progressBar.attributes('aria-label')).toBe('Loading')
+    expect(progressBar.attributes('aria-label')).toBe('正在加载')
     expect(progressBar.attributes('aria-valuemin')).toBe('0')
     expect(progressBar.attributes('aria-valuemax')).toBe('100')
   })

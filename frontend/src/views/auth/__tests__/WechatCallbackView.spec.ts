@@ -7,8 +7,6 @@ const {
   completeWeChatOAuthRegistrationMock,
   login2FAMock,
   apiClientPostMock,
-  sendVerifyCodeMock,
-  sendPendingOAuthVerifyCodeMock,
   getPublicSettingsMock,
   prepareOAuthBindAccessTokenCookieMock,
   getAuthTokenMock,
@@ -27,8 +25,6 @@ const {
   completeWeChatOAuthRegistrationMock: vi.fn(),
   login2FAMock: vi.fn(),
   apiClientPostMock: vi.fn(),
-  sendVerifyCodeMock: vi.fn(),
-  sendPendingOAuthVerifyCodeMock: vi.fn(),
   getPublicSettingsMock: vi.fn(),
   prepareOAuthBindAccessTokenCookieMock: vi.fn(),
   getAuthTokenMock: vi.fn(),
@@ -142,8 +138,6 @@ vi.mock('@/api/auth', async () => {
     exchangePendingOAuthCompletion: (...args: any[]) => exchangePendingOAuthCompletionMock(...args),
     completeWeChatOAuthRegistration: (...args: any[]) => completeWeChatOAuthRegistrationMock(...args),
     login2FA: (...args: any[]) => login2FAMock(...args),
-    sendVerifyCode: (...args: any[]) => sendVerifyCodeMock(...args),
-    sendPendingOAuthVerifyCode: (...args: any[]) => sendPendingOAuthVerifyCodeMock(...args),
     getPublicSettings: (...args: any[]) => getPublicSettingsMock(...args),
     prepareOAuthBindAccessTokenCookie: (...args: any[]) => prepareOAuthBindAccessTokenCookieMock(...args),
     getAuthToken: (...args: any[]) => getAuthTokenMock(...args),
@@ -156,8 +150,6 @@ describe('WechatCallbackView', () => {
     completeWeChatOAuthRegistrationMock.mockReset()
     login2FAMock.mockReset()
     apiClientPostMock.mockReset()
-    sendVerifyCodeMock.mockReset()
-    sendPendingOAuthVerifyCodeMock.mockReset()
     getPublicSettingsMock.mockReset()
     replaceMock.mockReset()
     setTokenMock.mockReset()
@@ -647,7 +639,7 @@ describe('WechatCallbackView', () => {
     await wrapper.get('[data-testid="existing-account-submit"]').trigger('click').catch(() => undefined)
     await flushPromises()
 
-    expect(showErrorMock).toHaveBeenCalledWith('bind token failed')
+    expect(showErrorMock).toHaveBeenCalledWith('操作失败，请稍后重试。')
     expect(locationState.current.href).toBe('http://localhost/auth/wechat/callback')
   })
 
@@ -692,7 +684,6 @@ describe('WechatCallbackView', () => {
     await checkboxes[1].setValue(false)
     await wrapper.get('[data-testid="wechat-create-account-email"]').setValue('  new@example.com  ')
     await wrapper.get('[data-testid="wechat-create-account-password"]').setValue('secret-123')
-    await wrapper.get('[data-testid="wechat-create-account-verify-code"]').setValue('246810')
     await wrapper.get('[data-testid="wechat-create-account-invitation-code"]').setValue(' INVITE123 ')
     await wrapper.get('[data-testid="wechat-create-account-submit"]').trigger('click')
     await flushPromises()
@@ -700,7 +691,6 @@ describe('WechatCallbackView', () => {
     expect(apiClientPostMock).toHaveBeenCalledWith('/auth/oauth/pending/create-account', {
       email: 'new@example.com',
       password: 'secret-123',
-      verify_code: '246810',
       invitation_code: 'INVITE123',
       adopt_display_name: true,
       adopt_avatar: false,
@@ -796,40 +786,8 @@ describe('WechatCallbackView', () => {
     await wrapper.get('[data-testid="wechat-create-account-submit"]').trigger('click')
     await flushPromises()
 
-    expect(showErrorMock).toHaveBeenCalledWith('create failed')
+    expect(showErrorMock).toHaveBeenCalledWith('操作失败，请稍后重试。')
     expect(wrapper.text()).not.toContain('create failed')
-  })
-
-  it('sends a verify code for pending oauth account creation', async () => {
-    exchangePendingOAuthCompletionMock.mockResolvedValue({
-      error: 'email_required',
-      redirect: '/welcome',
-    })
-    sendPendingOAuthVerifyCodeMock.mockResolvedValue({
-      message: 'sent',
-      countdown: 60,
-    })
-
-    const wrapper = mount(WechatCallbackView, {
-      global: {
-        stubs: {
-          AuthLayout: { template: '<div><slot /></div>' },
-          Icon: true,
-          RouterLink: { template: '<a><slot /></a>' },
-          transition: false,
-        },
-      },
-    })
-
-    await flushPromises()
-
-    await wrapper.get('[data-testid="wechat-create-account-email"]').setValue('  new@example.com  ')
-    await wrapper.get('[data-testid="wechat-create-account-send-code"]').trigger('click')
-    await flushPromises()
-
-    expect(sendPendingOAuthVerifyCodeMock).toHaveBeenCalledWith({
-      email: 'new@example.com',
-    })
   })
 
   it('shows bind-login form for existing account binding and submits credentials with adoption decisions', async () => {

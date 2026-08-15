@@ -59,7 +59,7 @@ describe('HelpTooltip', () => {
     expect(tooltip.style.display).not.toBe('none')
     expect(tooltip.textContent).toContain('click details')
 
-    const closeButton = tooltip.querySelector('button[aria-label="Close"]')
+    const closeButton = tooltip.querySelector('button[aria-label="关闭提示"]')
     if (!(closeButton instanceof HTMLButtonElement)) {
       throw new Error('close button not found')
     }

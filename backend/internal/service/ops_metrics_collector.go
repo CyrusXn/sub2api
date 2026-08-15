@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -57,6 +58,7 @@ type OpsMetricsCollector struct {
 
 	lastCgroupCPUUsageNanos uint64
 	lastCgroupCPUSampleAt   time.Time
+	lastNodeExporterSample  *nodeExporterSample
 
 	stopCh    chan struct{}
 	startOnce sync.Once
@@ -337,10 +339,16 @@ func (c *OpsMetricsCollector) collectAndPersist(ctx context.Context) error {
 		TTFTAvgMs: ttft.avg,
 		TTFTMaxMs: ttft.max,
 
-		CPUUsagePercent:    sys.cpuUsagePercent,
-		MemoryUsedMB:       sys.memoryUsedMB,
-		MemoryTotalMB:      sys.memoryTotalMB,
-		MemoryUsagePercent: sys.memoryUsagePercent,
+		CPUUsagePercent:               sys.cpuUsagePercent,
+		MemoryUsedMB:                  sys.memoryUsedMB,
+		MemoryTotalMB:                 sys.memoryTotalMB,
+		MemoryUsagePercent:            sys.memoryUsagePercent,
+		ResourceSource:                sys.resourceSource,
+		NetworkReceiveBytesPerSecond:  sys.networkReceiveBytesPerSecond,
+		NetworkTransmitBytesPerSecond: sys.networkTransmitBytesPerSecond,
+		DiskUsedBytes:                 sys.diskUsedBytes,
+		DiskTotalBytes:                sys.diskTotalBytes,
+		DiskUsagePercent:              sys.diskUsagePercent,
 
 		DBOK:    boolPtr(dbOK),
 		RedisOK: boolPtr(redisOK),
@@ -587,10 +595,16 @@ WHERE o.created_at >= $1 AND o.created_at < $2
 }
 
 type opsCollectedSystemStats struct {
-	cpuUsagePercent    *float64
-	memoryUsedMB       *int64
-	memoryTotalMB      *int64
-	memoryUsagePercent *float64
+	cpuUsagePercent               *float64
+	memoryUsedMB                  *int64
+	memoryTotalMB                 *int64
+	memoryUsagePercent            *float64
+	resourceSource                *string
+	networkReceiveBytesPerSecond  *float64
+	networkTransmitBytesPerSecond *float64
+	diskUsedBytes                 *int64
+	diskTotalBytes                *int64
+	diskUsagePercent              *float64
 }
 
 func (c *OpsMetricsCollector) collectSystemStats(ctx context.Context) (*opsCollectedSystemStats, error) {
@@ -600,6 +614,29 @@ func (c *OpsMetricsCollector) collectSystemStats(ctx context.Context) (*opsColle
 	}
 
 	sampleAt := time.Now().UTC()
+	if c.cfg != nil && strings.TrimSpace(c.cfg.Ops.NodeExporterURL) != "" {
+		sample, err := c.fetchNodeExporterSample(ctx, sampleAt)
+		if err == nil {
+			stats := deriveNodeExporterStats(c.lastNodeExporterSample, sample)
+			c.lastNodeExporterSample = sample
+			source := stats.resourceSource
+			return &opsCollectedSystemStats{
+				cpuUsagePercent:               stats.cpuUsagePercent,
+				memoryUsedMB:                  stats.memoryUsedMB,
+				memoryTotalMB:                 stats.memoryTotalMB,
+				memoryUsagePercent:            stats.memoryUsagePercent,
+				resourceSource:                &source,
+				networkReceiveBytesPerSecond:  stats.networkReceiveBytesPerSecond,
+				networkTransmitBytesPerSecond: stats.networkTransmitBytesPerSecond,
+				diskUsedBytes:                 stats.diskUsedBytes,
+				diskTotalBytes:                stats.diskTotalBytes,
+				diskUsagePercent:              stats.diskUsagePercent,
+			}, nil
+		}
+		log.Printf("[OpsMetricsCollector] Node Exporter 读取失败，使用容器指标: %v", err)
+	}
+	containerSource := "container"
+	out.resourceSource = &containerSource
 
 	// Prefer cgroup (container) metrics when available.
 	if cpuPct := c.tryCgroupCPUPercent(sampleAt); cpuPct != nil {
@@ -650,6 +687,22 @@ func (c *OpsMetricsCollector) collectSystemStats(ctx context.Context) (*opsColle
 	}
 
 	return out, nil
+}
+
+func (c *OpsMetricsCollector) fetchNodeExporterSample(ctx context.Context, sampledAt time.Time) (*nodeExporterSample, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(c.cfg.Ops.NodeExporterURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Node Exporter 返回状态码 %d", response.StatusCode)
+	}
+	return parseNodeExporterSample(response.Body, sampledAt)
 }
 
 func (c *OpsMetricsCollector) tryCgroupCPUPercent(now time.Time) *float64 {

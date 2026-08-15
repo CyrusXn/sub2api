@@ -48,9 +48,8 @@ func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userSe
 
 // RegisterRequest represents the registration request payload
 type RegisterRequest struct {
-	Email                 string `json:"email" binding:"required,email"`
+	Email                 string `json:"email" binding:"required,max=255"`
 	Password              string `json:"password" binding:"required,min=6"`
-	VerifyCode            string `json:"verify_code"`
 	TurnstileToken        string `json:"turnstile_token"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
 	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
@@ -59,23 +58,9 @@ type RegisterRequest struct {
 	AffCode               string `json:"aff_code"`        // 邀请返利码
 }
 
-// SendVerifyCodeRequest 发送验证码请求
-type SendVerifyCodeRequest struct {
-	Email                 string `json:"email" binding:"required,email"`
-	TurnstileToken        string `json:"turnstile_token"`
-	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
-	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
-}
-
-// SendVerifyCodeResponse 发送验证码响应
-type SendVerifyCodeResponse struct {
-	Message   string `json:"message"`
-	Countdown int    `json:"countdown"` // 倒计时秒数
-}
-
 // LoginRequest represents the login request payload
 type LoginRequest struct {
-	Email                 string `json:"email" binding:"required,email"`
+	Email                 string `json:"email" binding:"required,max=255"`
 	Password              string `json:"password" binding:"required"`
 	TurnstileToken        string `json:"turnstile_token"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
@@ -183,18 +168,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// 验证当前启用的验证码（邮箱验证码注册场景避免重复校验一次性票据）
+	// 注册仅保留防机器人验证，不再依赖邮件系统发送验证码。
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
-	if err := h.authService.VerifyCaptchaForRegister(c.Request.Context(), proof, ip.GetClientIP(c), req.VerifyCode); err != nil {
+	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	_, user, err := h.authService.RegisterWithVerification(
+	_, user, err := h.authService.RegisterWithOptions(
 		c.Request.Context(),
 		req.Email,
 		req.Password,
-		req.VerifyCode,
 		req.PromoCode,
 		req.InvitationCode,
 		req.AffCode,
@@ -205,33 +189,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	h.respondWithTokenPair(c, user)
-}
-
-// SendVerifyCode 发送邮箱验证码
-// POST /api/v1/auth/send-verify-code
-func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
-	var req SendVerifyCodeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request: "+err.Error())
-		return
-	}
-
-	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
-	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	result, err := h.authService.SendVerifyCodeAsync(c.Request.Context(), req.Email, c.GetHeader("Accept-Language"))
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	response.Success(c, SendVerifyCodeResponse{
-		Message:   "Verification code sent successfully",
-		Countdown: result.Countdown,
-	})
 }
 
 // Login handles user login

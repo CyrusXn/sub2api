@@ -65,6 +65,12 @@ INSERT INTO ops_system_metrics (
   memory_used_mb,
   memory_total_mb,
   memory_usage_percent,
+  resource_source,
+  network_receive_bytes_per_second,
+  network_transmit_bytes_per_second,
+  disk_used_bytes,
+  disk_total_bytes,
+  disk_usage_percent,
 
   db_ok,
   redis_ok,
@@ -85,11 +91,11 @@ INSERT INTO ops_system_metrics (
   $12,$13,$14,$15,
   $16,$17,$18,$19,$20,$21,
   $22,$23,$24,$25,$26,$27,
-  $28,$29,$30,$31,
-  $32,$33,
-  $34,$35,
-  $36,$37,$38,
-  $39,$40
+  $28,$29,$30,$31,$32,$33,$34,$35,$36,$37,
+  $38,$39,
+  $40,$41,
+  $42,$43,$44,
+  $45,$46
 )`
 
 	_, err := r.db.ExecContext(
@@ -132,6 +138,12 @@ INSERT INTO ops_system_metrics (
 		opsNullInt(input.MemoryUsedMB),
 		opsNullInt(input.MemoryTotalMB),
 		opsNullFloat64(input.MemoryUsagePercent),
+		opsNullString(input.ResourceSource),
+		opsNullFloat64(input.NetworkReceiveBytesPerSecond),
+		opsNullFloat64(input.NetworkTransmitBytesPerSecond),
+		opsNullInt64(input.DiskUsedBytes),
+		opsNullInt64(input.DiskTotalBytes),
+		opsNullFloat64(input.DiskUsagePercent),
 
 		opsNullBool(input.DBOK),
 		opsNullBool(input.RedisOK),
@@ -167,6 +179,12 @@ SELECT
   memory_used_mb,
   memory_total_mb,
   memory_usage_percent,
+  resource_source,
+  network_receive_bytes_per_second,
+  network_transmit_bytes_per_second,
+  disk_used_bytes,
+  disk_total_bytes,
+  disk_usage_percent,
 
   db_ok,
   redis_ok,
@@ -193,6 +211,9 @@ LIMIT 1`
 	var memUsed sql.NullInt64
 	var memTotal sql.NullInt64
 	var memPct sql.NullFloat64
+	var resourceSource sql.NullString
+	var networkReceive, networkTransmit, diskPct sql.NullFloat64
+	var diskUsed, diskTotal sql.NullInt64
 	var dbOK sql.NullBool
 	var redisOK sql.NullBool
 	var redisTotal sql.NullInt64
@@ -212,6 +233,12 @@ LIMIT 1`
 		&memUsed,
 		&memTotal,
 		&memPct,
+		&resourceSource,
+		&networkReceive,
+		&networkTransmit,
+		&diskUsed,
+		&diskTotal,
+		&diskPct,
 		&dbOK,
 		&redisOK,
 		&redisTotal,
@@ -241,6 +268,29 @@ LIMIT 1`
 	if memPct.Valid {
 		v := memPct.Float64
 		out.MemoryUsagePercent = &v
+	}
+	if resourceSource.Valid {
+		out.ResourceSource = resourceSource.String
+	}
+	if networkReceive.Valid {
+		v := networkReceive.Float64
+		out.NetworkReceiveBytesPerSecond = &v
+	}
+	if networkTransmit.Valid {
+		v := networkTransmit.Float64
+		out.NetworkTransmitBytesPerSecond = &v
+	}
+	if diskUsed.Valid {
+		v := diskUsed.Int64
+		out.DiskUsedBytes = &v
+	}
+	if diskTotal.Valid {
+		v := diskTotal.Int64
+		out.DiskTotalBytes = &v
+	}
+	if diskPct.Valid {
+		v := diskPct.Float64
+		out.DiskUsagePercent = &v
 	}
 	if dbOK.Valid {
 		v := dbOK.Bool

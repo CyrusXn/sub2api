@@ -92,7 +92,7 @@ apiClient.interceptors.response.use(
         return Promise.reject({
           status: response.status,
           code: apiResponse.code,
-          message: apiResponse.message || 'Unknown error',
+          message: apiResponse.message || '发生未知错误。',
           reason: resp.reason,
           metadata: resp.metadata,
         })
@@ -196,7 +196,7 @@ apiClient.interceptors.response.use(
               return Promise.reject({
                 status: 401,
                 code: 'AUTH_SESSION_CHANGED',
-                message: 'Authentication session changed while refreshing.'
+                message: '登录会话已发生变化，请重试。'
               })
             }
 
@@ -214,7 +214,7 @@ apiClient.interceptors.response.use(
             return Promise.reject({
               status: 401,
               code: 'TOKEN_REFRESH_FAILED',
-              message: 'Session expired. Please log in again.'
+              message: '会话已过期，请重新登录。'
             })
           }
         }
@@ -254,10 +254,10 @@ apiClient.interceptors.response.use(
       })
     }
 
-    // Network error
+    // 网络错误统一返回中文，避免调用方直接展示英文默认文案。
     return Promise.reject({
       status: 0,
-      message: 'Network error. Please check your connection.'
+      message: '网络错误，请检查网络连接。'
     })
   }
 )

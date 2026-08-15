@@ -8,7 +8,7 @@
       :aria-expanded="isOpen"
       :aria-haspopup="true"
       :id="id"
-      :aria-label="ariaLabel ?? 'Select option'"
+      :aria-label="ariaLabel ?? '选择选项'"
       :aria-describedby="ariaDescribedby"
       :class="[
         'select-trigger',
@@ -29,7 +29,7 @@
         class="select-clear"
         role="button"
         tabindex="-1"
-        aria-label="Clear selection"
+        aria-label="清除选择"
         @click.stop="clearSelection"
         @mousedown.stop
         @keydown.enter.stop.prevent="clearSelection"

@@ -26,7 +26,7 @@ import (
 var (
 	ErrInvalidCredentials           = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
 	ErrUserNotActive                = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
-	ErrEmailExists                  = infraerrors.Conflict("EMAIL_EXISTS", "email already exists")
+	ErrEmailExists                  = infraerrors.Conflict("EMAIL_EXISTS", "这个账号已注册")
 	ErrEmailReserved                = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
 	ErrInvalidToken                 = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
 	ErrTokenExpired                 = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
@@ -156,14 +156,18 @@ func (s *AuthService) SetAliyunCaptchaService(aliyunCaptchaService *AliyunCaptch
 
 // Register 用户注册，返回token和用户
 func (s *AuthService) Register(ctx context.Context, email, password string) (string, *User, error) {
-	return s.RegisterWithVerification(ctx, email, password, "", "", "", "")
+	return s.RegisterWithOptions(ctx, email, password, "", "", "")
 }
 
-// RegisterWithVerification 用户注册（支持邮件验证、优惠码、邀请码和邀请返利码），返回token和用户。
-func (s *AuthService) RegisterWithVerification(ctx context.Context, email, password, verifyCode, promoCode, invitationCode, affiliateCode string) (string, *User, error) {
+// RegisterWithOptions 使用账号和密码注册，并处理优惠码、邀请码和邀请返利码。
+func (s *AuthService) RegisterWithOptions(ctx context.Context, email, password, promoCode, invitationCode, affiliateCode string) (string, *User, error) {
 	// 检查是否开放注册（默认关闭：settingService 未配置时不允许注册）
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
+	}
+	email = strings.TrimSpace(email)
+	if email == "" || len(email) > 255 {
+		return "", nil, infraerrors.BadRequest("INVALID_ACCOUNT", "请输入有效账号")
 	}
 
 	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。
@@ -190,34 +194,14 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		invitationRedeemCode = redeemCode
 	}
 
-	// 检查是否需要邮件验证
-	if s.settingService != nil && s.settingService.IsEmailVerifyEnabled(ctx) {
-		// 如果邮件验证已开启但邮件服务未配置，拒绝注册
-		// 这是一个配置错误，不应该允许绕过验证
-		if s.emailService == nil {
-			logger.LegacyPrintf("service.auth", "%s", "[Auth] Email verification enabled but email service not configured, rejecting registration")
-			return "", nil, ErrServiceUnavailable
-		}
-		if verifyCode == "" {
-			return "", nil, ErrEmailVerifyRequired
-		}
-		// 验证邮箱验证码
-		if err := s.emailService.VerifyCode(ctx, email, verifyCode); err != nil {
-			return "", nil, fmt.Errorf("verify code: %w", err)
-		}
-	}
-
-	// 检查邮箱是否已存在（含 +别名 / Gmail 点号变体归一化，防止单个收件箱批量派生注册）
-	existsEmail, err := s.existsByEmailOrAlias(ctx, email)
+	// 注册字段作为普通账号处理，只按账号本身做大小写不敏感查重。
+	existsEmail, err := s.userRepo.ExistsByEmail(ctx, email)
 	if err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Database error checking email exists: %v", err)
 		return "", nil, ErrServiceUnavailable
 	}
 	if existsEmail {
 		return "", nil, ErrEmailExists
-	}
-	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
-		return "", nil, err
 	}
 
 	// 密码哈希
@@ -245,13 +229,10 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		Status:       StatusActive,
 	}
 
-	if err := s.createUserWithRegistrationEmailGuard(ctx, user); err != nil {
-		// 优先检查邮箱冲突错误（竞态条件下可能发生）
+	if err := s.userRepo.Create(ctx, user); err != nil {
 		switch {
 		case errors.Is(err, ErrEmailExists):
 			return "", nil, ErrEmailExists
-		case errors.Is(err, ErrEmailDomainRegistrationLimit):
-			return "", nil, ErrEmailDomainRegistrationLimit
 		default:
 			logger.LegacyPrintf("service.auth", "[Auth] Database error creating user: %v", err)
 			return "", nil, ErrServiceUnavailable
@@ -300,111 +281,6 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	}
 
 	return token, user, nil
-}
-
-// SendVerifyCodeResult 发送验证码返回结果
-type SendVerifyCodeResult struct {
-	Countdown int `json:"countdown"` // 倒计时秒数
-}
-
-// SendVerifyCode 发送邮箱验证码（同步方式）
-func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale ...string) error {
-	// 检查是否开放注册（默认关闭）
-	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
-		return ErrRegDisabled
-	}
-
-	if isReservedEmail(email) {
-		return ErrEmailReserved
-	}
-	// 检查邮箱是否已存在（含 +别名 / Gmail 点号变体归一化，防止单个收件箱批量派生注册）
-	existsEmail, err := s.existsByEmailOrAlias(ctx, email)
-	if err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Database error checking email exists: %v", err)
-		return ErrServiceUnavailable
-	}
-	if existsEmail {
-		return ErrEmailExists
-	}
-	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
-		return err
-	}
-
-	// 发送验证码
-	if s.emailService == nil {
-		return errors.New("email service not configured")
-	}
-
-	// 获取网站名称
-	siteName := "Sub2API"
-	if s.settingService != nil {
-		siteName = s.settingService.GetSiteName(ctx)
-	}
-
-	return s.emailService.SendVerifyCode(ctx, email, siteName, firstEmailLocale(locale))
-}
-
-// SendVerifyCodeAsync 异步发送邮箱验证码并返回倒计时
-func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, locale ...string) (*SendVerifyCodeResult, error) {
-	logger.LegacyPrintf("service.auth", "[Auth] SendVerifyCodeAsync called for email: %s", email)
-
-	// 检查是否开放注册（默认关闭）
-	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
-		logger.LegacyPrintf("service.auth", "%s", "[Auth] Registration is disabled")
-		return nil, ErrRegDisabled
-	}
-
-	if isReservedEmail(email) {
-		return nil, ErrEmailReserved
-	}
-	// 检查邮箱是否已存在（含 +别名 / Gmail 点号变体归一化；在发信前拦截，避免批量脚本消耗发信配额）
-	existsEmail, err := s.existsByEmailOrAlias(ctx, email)
-	if err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Database error checking email exists: %v", err)
-		return nil, ErrServiceUnavailable
-	}
-	if existsEmail {
-		logger.LegacyPrintf("service.auth", "[Auth] Email already exists: %s", email)
-		return nil, ErrEmailExists
-	}
-	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
-		return nil, err
-	}
-
-	// 检查邮件队列服务是否配置
-	if s.emailQueueService == nil {
-		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email queue service not configured")
-		return nil, errors.New("email queue service not configured")
-	}
-
-	// 获取网站名称
-	siteName := "Sub2API"
-	if s.settingService != nil {
-		siteName = s.settingService.GetSiteName(ctx)
-	}
-
-	// 异步发送
-	logger.LegacyPrintf("service.auth", "[Auth] Enqueueing verify code for: %s", email)
-	if err := s.emailQueueService.EnqueueVerifyCode(email, siteName, firstEmailLocale(locale)); err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to enqueue: %v", err)
-		return nil, fmt.Errorf("enqueue verify code: %w", err)
-	}
-
-	logger.LegacyPrintf("service.auth", "[Auth] Verify code enqueued successfully for: %s", email)
-	return &SendVerifyCodeResult{
-		Countdown: 60, // 60秒倒计时
-	}, nil
-}
-
-// VerifyCaptchaForRegister 在注册场景下验证当前启用的验证码。
-// 当邮箱验证开启且已提交验证码时，说明验证码发送阶段已完成验证码校验，
-// 此处跳过二次校验，避免一次性 token 在注册提交时重复使用导致误报失败。
-func (s *AuthService) VerifyCaptchaForRegister(ctx context.Context, proof CaptchaProof, remoteIP, verifyCode string) error {
-	if s.IsEmailVerifyEnabled(ctx) && strings.TrimSpace(verifyCode) != "" {
-		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email verify flow detected, skip duplicate captcha check on register")
-		return nil
-	}
-	return s.VerifyCaptcha(ctx, proof, remoteIP)
 }
 
 func (s *AuthService) VerifyCaptcha(ctx context.Context, proof CaptchaProof, remoteIP string) error {
@@ -498,11 +374,6 @@ func (s *AuthService) VerifyActionCaptchaIfEnabled(ctx context.Context, proof Ca
 		proof.TencentRandstr,
 		remoteIP,
 	)
-}
-
-// VerifyTurnstileForRegister 保留旧内部接口，生产 handler 使用 VerifyCaptchaForRegister。
-func (s *AuthService) VerifyTurnstileForRegister(ctx context.Context, token, remoteIP, verifyCode string) error {
-	return s.VerifyCaptchaForRegister(ctx, CaptchaProof{TurnstileToken: token}, remoteIP, verifyCode)
 }
 
 // VerifyTurnstile 保留旧内部接口，生产 handler 使用 VerifyCaptcha。

@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type userConcurrencyListCacheStub struct {
+	service.ConcurrencyCache
+	loads map[int64]*service.UserLoadInfo
+}
+
+func (s *userConcurrencyListCacheStub) GetUsersLoadBatch(_ context.Context, _ []service.UserWithConcurrency) (map[int64]*service.UserLoadInfo, error) {
+	return s.loads, nil
+}
 
 func TestUserHandlerListIncludesActivityFieldsAndSortParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -66,6 +76,44 @@ func TestUserHandlerListIncludesActivityFieldsAndSortParams(t *testing.T) {
 	require.Len(t, resp.Data.Items, 1)
 	require.WithinDuration(t, lastActiveAt, *resp.Data.Items[0].LastActiveAt, time.Second)
 	require.WithinDuration(t, lastUsedAt, *resp.Data.Items[0].LastUsedAt, time.Second)
+}
+
+func TestUserHandlerListSortsByAvailableConcurrencyDescending(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	adminSvc := newStubAdminService()
+	adminSvc.users = []service.User{
+		{ID: 1, Email: "nearly-full@example.com", Concurrency: 10},
+		{ID: 2, Email: "available@example.com", Concurrency: 5},
+	}
+	concurrencySvc := service.NewConcurrencyService(&userConcurrencyListCacheStub{
+		loads: map[int64]*service.UserLoadInfo{
+			1: {UserID: 1, CurrentConcurrency: 9},
+			2: {UserID: 2, CurrentConcurrency: 1},
+		},
+	})
+	handler := NewUserHandler(adminSvc, concurrencySvc, nil, nil, nil, nil, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/admin/users?sort_by=concurrency&concurrency_metric=available&sort_order=desc",
+		nil,
+	)
+
+	handler.List(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp struct {
+		Data struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, []int64{2, 1}, []int64{resp.Data.Items[0].ID, resp.Data.Items[1].ID})
 }
 
 func TestUserHandlerGetByIDIncludesActivityFields(t *testing.T) {

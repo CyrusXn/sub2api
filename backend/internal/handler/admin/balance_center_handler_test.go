@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,11 @@ type balanceCenterHandlerServiceStub struct {
 	filter         service.BalanceCenterListFilter
 	liandongCurl   string
 	automaticCount int
+}
+
+func (s *balanceCenterHandlerServiceStub) GetRechargeSummary(_ context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterRechargeSummary, error) {
+	s.filter = filter
+	return &service.BalanceCenterRechargeSummary{Items: []service.BalanceCenterRechargeEvent{}, Sites: []service.BalanceCenterRechargeSiteSummary{}}, nil
 }
 
 func (s *balanceCenterHandlerServiceStub) ListSnapshots(_ context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterSnapshot], error) {
@@ -64,6 +70,51 @@ func TestBalanceCenterHandlerParsesSnapshotFilters(t *testing.T) {
 	require.Equal(t, int64(3), stub.filter.SiteID)
 	require.Equal(t, int64(7), stub.filter.AccountID)
 	require.Equal(t, "ok", stub.filter.Status)
+}
+
+func TestBalanceCenterHandlerParsesRechargeSummaryTimeFilters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/?page=2&page_size=50&site_id=3&start_time=2026-08-01T00:00:00Z&end_time=2026-08-31T23:59:59Z", nil)
+	stub := &balanceCenterHandlerServiceStub{}
+	h := &BalanceCenterHandler{service: stub}
+
+	h.RechargeSummary(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 2, stub.filter.Page)
+	require.Equal(t, 50, stub.filter.PageSize)
+	require.Equal(t, int64(3), stub.filter.SiteID)
+	require.Equal(t, "2026-08-01T00:00:00Z", stub.filter.StartTime.Format(time.RFC3339))
+	require.Equal(t, "2026-08-31T23:59:59Z", stub.filter.EndTime.Format(time.RFC3339))
+	require.Contains(t, recorder.Body.String(), `"total_amount":0`)
+	require.Contains(t, recorder.Body.String(), `"sites":[]`)
+}
+
+func TestBalanceCenterHandlerRejectsInvalidRechargeSummaryTime(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/?start_time=invalid", nil)
+	h := &BalanceCenterHandler{service: &balanceCenterHandlerServiceStub{}}
+
+	h.RechargeSummary(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestBalanceCenterHandlerRejectsReversedRechargeSummaryTimeRange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/?start_time=2026-08-02T00:00:00Z&end_time=2026-08-01T00:00:00Z", nil)
+	h := &BalanceCenterHandler{service: &balanceCenterHandlerServiceStub{}}
+
+	h.RechargeSummary(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "开始时间不能晚于结束时间")
 }
 
 func TestBalanceCenterHandlerSavesLiandongSessionWithoutReturningCurl(t *testing.T) {

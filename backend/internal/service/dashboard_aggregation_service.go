@@ -178,6 +178,20 @@ func (s *DashboardAggregationService) TriggerRecomputeRange(start, end time.Time
 	return nil
 }
 
+// PreserveBusinessRange 在使用明细删除前同步固化经营汇总；失败时调用方必须停止清理。
+func (s *DashboardAggregationService) PreserveBusinessRange(ctx context.Context, start, end time.Time) error {
+	if s == nil || s.repo == nil {
+		return errors.New("聚合服务未初始化")
+	}
+	preserver, ok := s.repo.(interface {
+		PreserveBusinessRange(context.Context, time.Time, time.Time) error
+	})
+	if !ok {
+		return errors.New("经营汇总固化能力不可用")
+	}
+	return preserver.PreserveBusinessRange(ctx, start, end)
+}
+
 func (s *DashboardAggregationService) recomputeRecentDays() {
 	days := s.cfg.RecomputeDays
 	if days <= 0 {

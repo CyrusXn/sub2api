@@ -1,3 +1,5 @@
+import { normalizeUserFacingErrorMessage } from '@/utils/userFacingMessage'
+
 interface APIErrorLike {
   message?: string
   response?: {
@@ -21,5 +23,5 @@ export function buildAuthErrorMessage(
 ): string {
   const { fallback } = options
   const message = extractErrorMessage(error)
-  return message || fallback
+  return normalizeUserFacingErrorMessage(message, fallback)
 }

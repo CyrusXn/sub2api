@@ -122,6 +122,8 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		"today_cache_creation_tokens": stats.TodayCacheCreationTokens,
 		"today_cache_read_tokens":     stats.TodayCacheReadTokens,
 		"today_tokens":                stats.TodayTokens,
+		"last_24_hour_tokens":         stats.Last24HourTokens,
+		"last_24_hour_actual_cost":    stats.Last24HourActualCost,
 		"today_cost":                  stats.TodayCost,       // 今日标准计费
 		"today_actual_cost":           stats.TodayActualCost, // 今日实际扣除
 
@@ -190,13 +192,45 @@ func (h *DashboardHandler) BackfillAggregation(c *gin.Context) {
 // GetRealtimeMetrics handles getting real-time system metrics
 // GET /api/v1/admin/dashboard/realtime
 func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
-	// Return mock data for now
-	response.Success(c, gin.H{
-		"active_requests":       0,
-		"requests_per_minute":   0,
-		"average_response_time": 0,
-		"error_rate":            0.0,
-	})
+	metrics, err := h.dashboardService.GetRealtimeMetrics(c.Request.Context())
+	if err != nil {
+		response.InternalError(c, "读取实时性能指标失败")
+		return
+	}
+	response.Success(c, metrics)
+}
+
+// GetBusinessSummary 返回不会随 usage_logs 清理丢失的经营汇总。
+func (h *DashboardHandler) GetBusinessSummary(c *gin.Context) {
+	start, end := parseTimeRange(c)
+	summary, err := h.dashboardService.GetBusinessSummary(c.Request.Context(), start, end)
+	if err != nil {
+		response.InternalError(c, "读取历史经营汇总失败")
+		return
+	}
+	response.Success(c, summary)
+}
+
+// GetLowBalanceAccounts 只读取已持久化的上游余额快照，不触发上游请求。
+func (h *DashboardHandler) GetLowBalanceAccounts(c *gin.Context) {
+	const threshold = 5.0
+	accounts, err := h.dashboardService.GetLowBalanceAccounts(c.Request.Context(), threshold, 20)
+	if err != nil {
+		response.InternalError(c, "读取低余额账号失败")
+		return
+	}
+	response.Success(c, gin.H{"accounts": accounts, "threshold": threshold})
+}
+
+// GetSystemMetricsTrend 返回当前时间范围内的主机资源趋势。
+func (h *DashboardHandler) GetSystemMetricsTrend(c *gin.Context) {
+	start, end := parseTimeRange(c)
+	trend, err := h.dashboardService.GetSystemMetricTrend(c.Request.Context(), start, end, 240)
+	if err != nil {
+		response.InternalError(c, "读取服务器资源趋势失败")
+		return
+	}
+	response.Success(c, trend)
 }
 
 // GetUsageTrend handles getting usage trend data

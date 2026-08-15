@@ -5,6 +5,8 @@
  * This utility extracts the user-facing message from any error shape.
  */
 
+import { normalizeUserFacingErrorMessage } from '@/utils/userFacingMessage'
+
 interface ApiErrorLike {
   status?: number
   code?: number | string
@@ -122,32 +124,38 @@ export function extractI18nErrorMessage(
  */
 export function extractApiErrorMessage(
   err: unknown,
-  fallback = 'Unknown error',
+  fallback = '发生未知错误。',
   i18nMap?: Record<string, string>,
 ): string {
-  if (!err) return fallback
+  if (!err) return normalizeUserFacingErrorMessage(undefined, fallback)
 
   // Try i18n mapping by error code first
   if (i18nMap) {
     const code = extractApiErrorCode(err)
-    if (code && i18nMap[code]) return i18nMap[code]
+    if (code && i18nMap[code]) {
+      return normalizeUserFacingErrorMessage(i18nMap[code], fallback)
+    }
   }
 
   // Plain object from API client interceptor (most common case)
   if (typeof err === 'object' && err !== null) {
     const e = err as ApiErrorLike
     // Interceptor shape: { message, error }
-    if (e.message) return e.message
-    if (e.error) return e.error
+    if (e.message) return normalizeUserFacingErrorMessage(e.message, fallback)
+    if (e.error) return normalizeUserFacingErrorMessage(e.error, fallback)
     // Legacy axios shape: { response.data.detail }
-    if (e.response?.data?.detail) return e.response.data.detail
-    if (e.response?.data?.message) return e.response.data.message
+    if (e.response?.data?.detail) {
+      return normalizeUserFacingErrorMessage(e.response.data.detail, fallback)
+    }
+    if (e.response?.data?.message) {
+      return normalizeUserFacingErrorMessage(e.response.data.message, fallback)
+    }
   }
 
   // Standard Error
-  if (err instanceof Error) return err.message
+  if (err instanceof Error) return normalizeUserFacingErrorMessage(err.message, fallback)
 
   // Last resort
   const str = String(err)
-  return str === '[object Object]' ? fallback : str
+  return normalizeUserFacingErrorMessage(str === '[object Object]' ? undefined : str, fallback)
 }

@@ -11,11 +11,30 @@ import (
 
 type accountRequestAlertRepoMock struct {
 	*opsRepoMock
-	rule      *OpsAlertRule
-	latest    map[string]*OpsAlertEvent
-	created   []*OpsAlertEvent
-	details   []*OpsAlertAccountDetail
-	errorLogs map[int64]*OpsErrorLogDetail
+	rule       *OpsAlertRule
+	latest     map[string]*OpsAlertEvent
+	created    []*OpsAlertEvent
+	details    []*OpsAlertAccountDetail
+	errorLogs  map[int64]*OpsErrorLogDetail
+	deliveries []*OpsAlertEmailDeliveryInput
+}
+
+func (m *accountRequestAlertRepoMock) InsertAlertEmailDelivery(_ context.Context, input *OpsAlertEmailDeliveryInput) error {
+	clone := *input
+	m.deliveries = append(m.deliveries, &clone)
+	return nil
+}
+
+func (m *accountRequestAlertRepoMock) ListAlertEmailDeliveries(context.Context, *OpsAlertEmailDeliveryFilter) (*OpsAlertEmailDeliveryList, error) {
+	return &OpsAlertEmailDeliveryList{}, nil
+}
+
+func (m *accountRequestAlertRepoMock) ListPendingQuietAlertEmails(context.Context, time.Time) ([]*OpsAlertEmailDelivery, error) {
+	return nil, nil
+}
+
+func (m *accountRequestAlertRepoMock) MarkQuietAlertEmailsDigested(context.Context, []int64, time.Time) error {
+	return nil
 }
 
 func newAccountRequestAlertRepoMock() *accountRequestAlertRepoMock {
@@ -196,4 +215,28 @@ func TestAccountRequestAlertEmailUsesDirectSubjectAndReasonFirst(t *testing.T) {
 	body := buildOpsAlertEmailBody(rule, event, "<div>DETAIL</div>")
 	require.NotContains(t, body, "P1")
 	require.Less(t, strings.Index(body, "503：上游服务异常"), strings.Index(body, "OpenAI 主账号异常"))
+}
+
+func TestAccountRequestAlertEmailEnqueuesPersistentAggregationInsteadOfSendingDirectly(t *testing.T) {
+	repo := newAccountRequestAlertRepoMock()
+	settings := &balanceCenterSettingRepoStub{values: map[string]string{
+		SettingKeyOpsEmailNotificationConfig: `{"alert":{"enabled":true,"recipients":["ops@example.com"],"min_severity":"P2","rate_limit_per_hour":100}}`,
+	}}
+	opsService := &OpsService{opsRepo: repo, settingRepo: settings}
+	evaluator := NewOpsAlertEvaluatorService(opsService, repo, &EmailService{}, nil, nil, nil)
+	outbox := &balanceCenterAlertOutboxStub{}
+	evaluator.SetAlertEmailOutbox(outbox)
+	rule := &OpsAlertRule{ID: 18, Name: "账号请求异常", MetricType: OpsAlertMetricAccountRequestFailure, Severity: "P1", NotifyEmail: true}
+	event := &OpsAlertEvent{ID: 27, RuleID: 18, Severity: "P1", Title: "OpenAI 主账号异常", Description: "503：上游服务异常", FiredAt: time.Now().UTC()}
+
+	queued := evaluator.maybeSendAlertEmail(context.Background(), nil, rule, event, nil, nil)
+
+	require.True(t, queued)
+	require.Len(t, outbox.inputs, 1)
+	require.Equal(t, AlertEmailSourceOpsAlert, outbox.inputs[0].SourceType)
+	require.Equal(t, "27", outbox.inputs[0].SourceID)
+	require.Equal(t, OpsAlertMetricAccountRequestFailure, outbox.inputs[0].AlertType)
+	require.Len(t, repo.deliveries, 1)
+	require.Equal(t, OpsAlertEmailStatusQueued, repo.deliveries[0].Status)
+	require.False(t, event.EmailSent, "成功入队不等于 SMTP 已发送")
 }

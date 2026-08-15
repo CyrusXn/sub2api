@@ -130,89 +130,61 @@ describe('RegisterView invitation layout', () => {
     expect(wrapper.get('#promo_code').exists()).toBe(true)
   })
 
-  it('submits a non-whitelist email domain so the backend can enforce its registration quota', async () => {
+  it('accepts an arbitrary account and registers it directly even when email verification is enabled', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       ...publicSettings,
       turnstile_enabled: false,
+      email_verify_enabled: true,
       registration_email_suffix_whitelist: ['allowed.com'],
-      registration_email_domain_quota_enabled: true
+      registration_email_domain_quota_enabled: false
     })
 
     const wrapper = mountRegister()
     await flushPromises()
-    await wrapper.get('#email').setValue('first@custom.example')
+    await wrapper.get('#email').setValue('  任意账号  ')
     await wrapper.get('#password').setValue('secret-123')
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()
 
     expect(registerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ email: 'first@custom.example' })
+      expect.objectContaining({ email: '任意账号' })
     )
     expect(showErrorMock).not.toHaveBeenCalled()
   })
 
-  it('shows the localized registration domain quota message returned by the backend', async () => {
-    getPublicSettingsMock.mockResolvedValueOnce({
-      ...publicSettings,
-      turnstile_enabled: false,
-      registration_email_suffix_whitelist: ['allowed.com'],
-      registration_email_domain_quota_enabled: true
-    })
+  it('shows the localized duplicate account message returned by the backend', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({ ...publicSettings, turnstile_enabled: false })
     registerMock.mockRejectedValueOnce({
-      reason: 'EMAIL_DOMAIN_REGISTRATION_LIMIT',
+      reason: 'EMAIL_EXISTS',
       message: 'raw backend message'
     })
 
     const wrapper = mountRegister()
     await flushPromises()
-    await wrapper.get('#email').setValue('second@custom.example')
+    await wrapper.get('#email').setValue('existing-account')
     await wrapper.get('#password').setValue('secret-123')
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(showErrorMock).toHaveBeenCalledWith(
-      '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
-    )
+    expect(showErrorMock).toHaveBeenCalledWith('auth.errors.EMAIL_EXISTS')
   })
 
-  // 域名限量注册开关默认关闭：恢复 PR5423 之前的客户端白名单预检，非白名单域名不发起注册请求。
-  it('rejects a non-whitelist email domain locally when the domain quota switch is disabled', async () => {
-    getPublicSettingsMock.mockResolvedValueOnce({
-      ...publicSettings,
-      turnstile_enabled: false,
-      registration_email_suffix_whitelist: ['allowed.com']
-    })
-
+  it('renders account fields and the WeChat group contact on the registration page', async () => {
     const wrapper = mountRegister()
     await flushPromises()
-    await wrapper.get('#email').setValue('first@custom.example')
-    await wrapper.get('#password').setValue('secret-123')
-    await wrapper.get('form').trigger('submit.prevent')
-    await flushPromises()
 
-    expect(registerMock).not.toHaveBeenCalled()
-    // 校验失败通过 validationToastMessage watcher 弹 toast
-    expect(showErrorMock).toHaveBeenCalledWith('auth.emailSuffixNotAllowedWithAllowed')
-    expect(wrapper.get('#email').classes()).toContain('input-error')
-  })
+    expect(wrapper.get('#email').attributes('type')).toBe('text')
+    expect(wrapper.text()).toContain('auth.accountLabel')
 
-  it('still submits whitelisted email domains when the domain quota switch is disabled', async () => {
-    getPublicSettingsMock.mockResolvedValueOnce({
-      ...publicSettings,
-      turnstile_enabled: false,
-      registration_email_suffix_whitelist: ['allowed.com']
-    })
-
-    const wrapper = mountRegister()
-    await flushPromises()
-    await wrapper.get('#email').setValue('user@allowed.com')
-    await wrapper.get('#password').setValue('secret-123')
-    await wrapper.get('form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(registerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ email: 'user@allowed.com' })
+    const contactNotice = wrapper.get('[data-testid="wechat-contact-notice"]')
+    expect(contactNotice.classes()).toEqual(
+      expect.arrayContaining(['text-base', 'font-semibold', 'border-red-200', 'bg-red-50'])
     )
-    expect(showErrorMock).not.toHaveBeenCalled()
+
+    const contactID = wrapper.get('[data-testid="wechat-contact-id"]')
+    expect(contactID.text()).toBe('auth.wechatGroupContactId')
+    expect(contactID.classes()).toEqual(
+      expect.arrayContaining(['text-xl', 'font-extrabold', 'text-red-600'])
+    )
   })
 })

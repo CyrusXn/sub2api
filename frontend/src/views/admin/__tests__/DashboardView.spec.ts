@@ -1,14 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 import type { DashboardStats } from '@/types'
+import { useAdminRealtimeMetricsStore } from '@/stores/adminRealtimeMetrics'
 import DashboardView from '../DashboardView.vue'
 
-const { getSnapshotV2, getUserUsageTrend, getUserSpendingRanking } = vi.hoisted(() => ({
+const {
+  getSnapshotV2,
+  getUserUsageTrend,
+  getUserSpendingRanking,
+  getBusinessSummary,
+  getLowBalanceAccounts,
+  getSystemMetricsTrend,
+  getRealtimeMetrics
+} = vi.hoisted(() => ({
   getSnapshotV2: vi.fn(),
   getUserUsageTrend: vi.fn(),
-  getUserSpendingRanking: vi.fn()
+  getUserSpendingRanking: vi.fn(),
+  getBusinessSummary: vi.fn(),
+  getLowBalanceAccounts: vi.fn(),
+  getSystemMetricsTrend: vi.fn(),
+  getRealtimeMetrics: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -16,7 +29,11 @@ vi.mock('@/api/admin', () => ({
     dashboard: {
       getSnapshotV2,
       getUserUsageTrend,
-      getUserSpendingRanking
+      getUserSpendingRanking,
+      getBusinessSummary,
+      getLowBalanceAccounts,
+      getSystemMetricsTrend,
+      getRealtimeMetrics
     }
   }
 }))
@@ -93,6 +110,10 @@ describe('admin DashboardView', () => {
     getSnapshotV2.mockReset()
     getUserUsageTrend.mockReset()
     getUserSpendingRanking.mockReset()
+    getBusinessSummary.mockReset()
+    getLowBalanceAccounts.mockReset()
+    getSystemMetricsTrend.mockReset()
+    getRealtimeMetrics.mockReset()
 
     getSnapshotV2.mockResolvedValue({
       stats: createDashboardStats(),
@@ -113,6 +134,24 @@ describe('admin DashboardView', () => {
       start_date: '',
       end_date: ''
     })
+    getBusinessSummary.mockResolvedValue({
+      lifetime: {},
+      range: {},
+      daily: []
+    })
+    getLowBalanceAccounts.mockResolvedValue({ accounts: [], threshold: 5 })
+    getSystemMetricsTrend.mockResolvedValue({ points: [], source: 'host' })
+    getRealtimeMetrics.mockResolvedValue({
+      active_requests: 3,
+      requests_per_minute: 12,
+      tokens_per_minute: 1200,
+      average_response_time: 500,
+      error_rate: 0
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('uses last 24 hours as default dashboard range', async () => {
@@ -143,4 +182,203 @@ describe('admin DashboardView', () => {
       granularity: 'hour'
     }))
   })
+
+  it('uses dashboard RPM and TPM as compatibility values for older realtime responses', async () => {
+    const dashboardStats = createDashboardStats()
+    dashboardStats.rpm = 18
+    dashboardStats.tpm = 4567
+    getSnapshotV2.mockResolvedValue({ stats: dashboardStats, trend: [], models: [] })
+
+    mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          Icon: true,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          SystemMetricTrendCard: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(useAdminRealtimeMetricsStore().metrics?.requests_per_minute).toBe(18)
+    expect(useAdminRealtimeMetricsStore().metrics?.tokens_per_minute).toBe(4567)
+  })
+
+  it('loads business, low-balance and host trend blocks independently', async () => {
+    mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          Icon: true,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          SystemMetricTrendCard: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getBusinessSummary).toHaveBeenCalledTimes(1)
+    expect(getLowBalanceAccounts).toHaveBeenCalledTimes(1)
+    expect(getSystemMetricsTrend).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows independent error states instead of reporting failed metrics as zero', async () => {
+    getBusinessSummary.mockRejectedValueOnce(new Error('business failed'))
+    getLowBalanceAccounts.mockRejectedValueOnce(new Error('balance failed'))
+
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          Icon: true,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          SystemMetricTrendCard: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.dashboard.businessSummaryLoadFailed')
+    expect(wrapper.text()).toContain('admin.dashboard.lowBalanceLoadFailed')
+    expect(wrapper.text()).not.toContain('admin.dashboard.noLowBalanceAccounts')
+  })
+
+  it('shows all permanent business metrics for the selected range', async () => {
+    getBusinessSummary.mockResolvedValueOnce({
+      lifetime: {
+        recharge_amount: 100,
+        actual_cost: 80,
+        actual_cost_excluding_admin: 70
+      },
+      range: {
+        recharge_amount: 11.11,
+        total_tokens: 22222,
+        actual_cost: 33.33,
+        actual_cost_excluding_admin: 22.22,
+        account_cost: 9.99
+      },
+      daily: []
+    })
+
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          Icon: true,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          SystemMetricTrendCard: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('admin.dashboard.selectedRange')
+    expect(text).toContain('admin.dashboard.rangeRecharge')
+    expect(text).toContain('admin.dashboard.rangeTokens')
+    expect(text).toContain('admin.dashboard.rangeConsumption')
+    expect(text).toContain('admin.dashboard.rangeAccountCost')
+    expect(text).toContain('$11.11')
+    expect(text).toContain('22.22K')
+    expect(text).toContain('$33.33')
+    expect(text).toContain('$22.22')
+    expect(text).toContain('$9.99')
+  })
+
+  it('shows today and last 24 hour consumption and refreshes the whole top metric block', async () => {
+    const dashboardStats = createDashboardStats()
+    dashboardStats.today_tokens = 1234
+    dashboardStats.last_24_hour_tokens = 5678
+    dashboardStats.today_actual_cost = 12.34
+    ;(dashboardStats as DashboardStats & { last_24_hour_actual_cost: number }).last_24_hour_actual_cost = 56.78
+    getSnapshotV2.mockResolvedValue({ stats: dashboardStats, trend: [], models: [] })
+
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: {
+            emits: ['refresh-admin-metrics'],
+            template: '<div><button data-testid="dashboard-top-metrics-refresh" @click="$emit(\'refresh-admin-metrics\')" /><slot /></div>'
+          },
+          LoadingSpinner: true,
+          Icon: true,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          SystemMetricTrendCard: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.dashboard.todayTotalConsumption')
+    expect(wrapper.text()).toContain('admin.dashboard.last24HourTotalConsumption')
+    expect(wrapper.text()).toContain('$12.34')
+    expect(wrapper.text()).toContain('$56.78')
+
+    const refreshButton = wrapper.get('[data-testid="dashboard-top-metrics-refresh"]')
+    await refreshButton.trigger('click')
+    await flushPromises()
+
+    expect(getSnapshotV2).toHaveBeenCalledTimes(2)
+    expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({
+      include_stats: true,
+      include_trend: false,
+      include_model_stats: false,
+      include_group_stats: false,
+      include_users_trend: false
+    }))
+  })
+
+  it('shows a placeholder when the online backend has not returned 24-hour tokens yet', async () => {
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot name="header-status" /><slot /></div>' },
+          LoadingSpinner: true,
+          Icon: true,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          SystemMetricTrendCard: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const label = wrapper.findAll('p').find(node => node.text() === 'admin.dashboard.last24HourTokens')
+    expect(label?.element.nextElementSibling?.textContent).toBe('--')
+  })
+
 })

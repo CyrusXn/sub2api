@@ -7,6 +7,7 @@ import (
 
 const (
 	OpsAlertEmailStatusSent        = "sent"
+	OpsAlertEmailStatusQueued      = "queued"
 	OpsAlertEmailStatusFailed      = "failed"
 	OpsAlertEmailStatusQuietHours  = "quiet_hours"
 	OpsAlertEmailStatusDisabled    = "disabled"

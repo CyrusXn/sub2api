@@ -156,6 +156,10 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		return err
 	}
 	if err := ensureEmailAuthIdentityWithClient(txCtx, txClient, created.ID, created.Email, "user_repo_create"); err != nil {
+		// 账号按大小写不敏感规则共用身份 subject；并发注册时统一返回账号已存在。
+		if errors.Is(err, ErrAuthIdentityOwnershipConflict) {
+			return service.ErrEmailExists
+		}
 		return err
 	}
 

@@ -99,6 +99,7 @@ func provideCleanup(
 	pricing *service.PricingService,
 	balanceNotify *service.BalanceNotifyService,
 	emailQueue *service.EmailQueueService,
+	alertEmailOutbox *service.AlertEmailOutboxService,
 	billingCache *service.BillingCacheService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
 	subscriptionService *service.SubscriptionService,
@@ -130,6 +131,12 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
+			{"AlertEmailOutboxService", func() error {
+				if alertEmailOutbox != nil {
+					alertEmailOutbox.Stop()
+				}
+				return nil
+			}},
 			{"OpsIngressRejectAggregator", func() error {
 				if opsIngressReject != nil {
 					opsIngressReject.Stop()

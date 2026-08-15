@@ -13,6 +13,7 @@ import {
   type ReleaseInfo
 } from '@/api/admin/system'
 import { getPublicSettings as fetchPublicSettingsAPI } from '@/api/auth'
+import { normalizeUserFacingErrorMessage } from '@/utils/userFacingMessage'
 
 export const useAppStore = defineStore('app', () => {
   // ==================== State ====================
@@ -144,7 +145,8 @@ export const useAppStore = defineStore('app', () => {
    * @param duration - Auto-dismiss duration in ms (default: 5000)
    */
   function showError(message: string, duration: number = 5000): string {
-    return showToast('error', message, duration)
+    // 错误 Toast 是最后一道展示边界，避免遗漏的后端英文消息直接暴露给中国客户。
+    return showToast('error', normalizeUserFacingErrorMessage(message), duration)
   }
 
   /**

@@ -21,6 +21,10 @@ import (
 )
 
 // Account management implementations
+type accountFilteredIDLister interface {
+	ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]int64, error)
+}
+
 func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode)
@@ -35,6 +39,26 @@ func (s *adminServiceImpl) ListAccountsForSchedulerScoreFilter(ctx context.Conte
 		return nil, nil
 	}
 	return s.accountRepo.ListAllWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode)
+}
+
+// ListAccountIDsForConcurrencySort 为实时并发排序提供轻量账号 ID 集合。
+// 非生产仓储未实现轻量能力时保留完整查询回退，避免扩大现有测试替身接口。
+func (s *adminServiceImpl) ListAccountIDsForConcurrencySort(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]int64, error) {
+	if s == nil || s.accountRepo == nil {
+		return []int64{}, nil
+	}
+	if lister, ok := s.accountRepo.(accountFilteredIDLister); ok {
+		return lister.ListIDsWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode)
+	}
+	accounts, err := s.accountRepo.ListAllWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, len(accounts))
+	for i := range accounts {
+		ids[i] = accounts[i].ID
+	}
+	return ids, nil
 }
 
 func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx context.Context, groupID *int64) ([]Account, error) {

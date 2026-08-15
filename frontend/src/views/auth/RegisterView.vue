@@ -28,10 +28,10 @@
 
       <!-- Registration Form -->
       <form v-else @submit.prevent="handleRegister" class="space-y-5">
-        <!-- Email Input -->
+        <!-- Account Input -->
         <div>
           <label for="email" class="input-label">
-            {{ t('auth.emailLabel') }}
+            {{ t('auth.accountLabel') }}
           </label>
           <div class="relative">
             <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
@@ -40,14 +40,14 @@
             <input
               id="email"
               v-model="formData.email"
-              type="email"
+              type="text"
               required
               autofocus
-              autocomplete="email"
+              autocomplete="username"
               :disabled="registrationActionDisabled"
               class="input pl-11"
               :class="{ 'input-error': errors.email }"
-              :placeholder="t('auth.emailPlaceholder')"
+              :placeholder="t('auth.accountPlaceholder')"
             />
           </div>
         </div>
@@ -259,13 +259,7 @@
             ></path>
           </svg>
           <Icon v-else name="userPlus" size="md" class="mr-2" />
-          {{
-            isLoading
-              ? t('auth.processing')
-              : emailVerifyEnabled
-                ? t('auth.continue')
-                : t('auth.createAccount')
-          }}
+          {{ isLoading ? t('auth.processing') : t('auth.createAccount') }}
         </button>
 
       </form>
@@ -311,6 +305,20 @@
           @start="handleOAuthStart"
         />
       </div>
+      <!-- 联系方式重点提示：整体增强可读性，微信号使用独立的红色视觉层级。 -->
+      <p
+        data-testid="wechat-contact-notice"
+        class="flex flex-wrap items-baseline justify-center gap-x-1 gap-y-1 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-center text-base font-semibold text-gray-800 dark:border-red-800/70 dark:bg-red-950/30 dark:text-red-100"
+      >
+        <span>{{ t('auth.wechatGroupContactPrefix') }}</span>
+        <span
+          data-testid="wechat-contact-id"
+          class="break-all text-xl font-extrabold text-red-600 dark:text-red-400"
+        >
+          {{ t('auth.wechatGroupContactId') }}
+        </span>
+        <span>{{ t('auth.wechatGroupContactSuffix') }}</span>
+      </p>
     </div>
 
     <!-- Footer -->
@@ -353,18 +361,13 @@ import {
 import { buildAuthErrorMessage } from '@/utils/authError'
 import { extractApiErrorCode, extractI18nErrorMessage } from '@/utils/apiError'
 import {
-  formatRegistrationEmailSuffixWhitelistForMessage,
-  isRegistrationEmailSuffixAllowed,
-  normalizeRegistrationEmailSuffixWhitelist
-} from '@/utils/registrationEmailPolicy'
-import {
   clearAffiliateReferralCode,
   loadAffiliateReferralCode,
   resolveAffiliateReferralCode
 } from '@/utils/oauthAffiliate'
 import type { LoginAgreementDocument } from '@/types'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
 
 // ==================== Router & Stores ====================
@@ -383,7 +386,6 @@ const showPassword = ref<boolean>(false)
 
 // Public settings
 const registrationEnabled = ref<boolean>(true)
-const emailVerifyEnabled = ref<boolean>(false)
 const promoCodeEnabled = ref<boolean>(true)
 const invitationCodeEnabled = ref<boolean>(false)
 const affiliateEnabled = ref<boolean>(false)
@@ -403,9 +405,6 @@ const oidcOAuthEnabled = ref<boolean>(false)
 const oidcOAuthProviderName = ref<string>('OIDC')
 const githubOAuthEnabled = ref<boolean>(false)
 const googleOAuthEnabled = ref<boolean>(false)
-const registrationEmailSuffixWhitelist = ref<string[]>([])
-// 域名限量注册开关：开启时非白名单域名可注册 1 个账户（由后端判定），前端不做白名单预检。
-const emailDomainQuotaEnabled = ref<boolean>(false)
 const loginAgreementEnabled = ref<boolean>(false)
 const loginAgreementMode = ref<'modal' | 'checkbox' | string>('modal')
 const loginAgreementUpdatedAt = ref<string>('')
@@ -518,7 +517,6 @@ onMounted(async () => {
   try {
     const settings = await getPublicSettings()
     registrationEnabled.value = settings.registration_enabled
-    emailVerifyEnabled.value = settings.email_verify_enabled
     promoCodeEnabled.value = settings.promo_code_enabled
     invitationCodeEnabled.value = settings.invitation_code_enabled
     affiliateEnabled.value = settings.affiliate_enabled
@@ -538,10 +536,6 @@ onMounted(async () => {
     oidcOAuthProviderName.value = settings.oidc_oauth_provider_name || 'OIDC'
     githubOAuthEnabled.value = settings.github_oauth_enabled
     googleOAuthEnabled.value = settings.google_oauth_enabled
-    registrationEmailSuffixWhitelist.value = normalizeRegistrationEmailSuffixWhitelist(
-      settings.registration_email_suffix_whitelist || []
-    )
-    emailDomainQuotaEnabled.value = settings.registration_email_domain_quota_enabled === true
     applyLoginAgreementSettings(settings)
 
     if (promoCodeEnabled.value) {
@@ -849,27 +843,6 @@ async function handleOAuthStart(request: OAuthLoginStart): Promise<void> {
 
 // ==================== Validation ====================
 
-function validateEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  return emailRegex.test(email)
-}
-
-function buildEmailSuffixNotAllowedMessage(): string {
-  const normalizedWhitelist = normalizeRegistrationEmailSuffixWhitelist(
-    registrationEmailSuffixWhitelist.value
-  )
-  if (normalizedWhitelist.length === 0) {
-    return t('auth.emailSuffixNotAllowed')
-  }
-  const separator = String(locale.value || '').toLowerCase().startsWith('zh') ? '、' : ', '
-  return t('auth.emailSuffixNotAllowedWithAllowed', {
-    suffixes: formatRegistrationEmailSuffixWhitelistForMessage(normalizedWhitelist, {
-      separator,
-      more: (count) => t('auth.emailSuffixAllowedMore', { count })
-    })
-  })
-}
-
 function validateForm(): boolean {
   // Reset errors
   errors.email = ''
@@ -887,19 +860,9 @@ function validateForm(): boolean {
     return false
   }
 
-  // Email validation
+  // 账号只要求非空，具体唯一性由后端按统一规则判定。
   if (!formData.email.trim()) {
-    errors.email = t('auth.emailRequired')
-    isValid = false
-  } else if (!validateEmail(formData.email)) {
-    errors.email = t('auth.invalidEmail')
-    isValid = false
-  } else if (
-    !emailDomainQuotaEnabled.value &&
-    !isRegistrationEmailSuffixAllowed(formData.email, registrationEmailSuffixWhitelist.value)
-  ) {
-    // 域名限量注册关闭时保持严格白名单预检；开启时交给后端按域名额度判定
-    errors.email = buildEmailSuffixNotAllowedMessage()
+    errors.email = t('auth.accountRequired')
     isValid = false
   }
 
@@ -987,32 +950,8 @@ async function handleRegister(): Promise<void> {
       formData.aff_code = affCode
     }
 
-    // If email verification is enabled, redirect to verification page
-    if (emailVerifyEnabled.value) {
-      // Store registration data in sessionStorage
-      sessionStorage.setItem(
-        'register_data',
-        JSON.stringify({
-          email: formData.email,
-          password: formData.password,
-          turnstile_token:
-            turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
-          tencent_captcha_ticket: tencentCaptchaEnabled.value ? turnstileToken.value : undefined,
-          tencent_captcha_randstr: tencentCaptchaEnabled.value ? tencentCaptchaRandstr.value : undefined,
-          promo_code: formData.promo_code || undefined,
-          invitation_code: formData.invitation_code || undefined,
-          ...(affCode ? { aff_code: affCode } : {})
-        })
-      )
-
-      // Navigate to email verification page
-      await router.push('/email-verify')
-      return
-    }
-
-    // Otherwise, directly register
     await authStore.register({
-      email: formData.email,
+      email: formData.email.trim(),
       password: formData.password,
       turnstile_token:
         turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
@@ -1044,8 +983,8 @@ async function handleRegister(): Promise<void> {
 }
 
 function buildRegistrationErrorMessage(error: unknown, fallback: string): string {
-  if (extractApiErrorCode(error) === 'EMAIL_DOMAIN_REGISTRATION_LIMIT') {
-    return t('auth.emailDomainRegistrationLimit')
+  if (extractApiErrorCode(error) === 'EMAIL_EXISTS') {
+    return t('auth.errors.EMAIL_EXISTS')
   }
   return buildAuthErrorMessage(error, { fallback })
 }

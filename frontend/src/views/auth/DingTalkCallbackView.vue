@@ -163,9 +163,9 @@
               <input
                 v-model="bindLoginEmail"
                 data-testid="dingtalk-bind-login-email"
-                type="email"
+                type="text"
                 class="input w-full"
-                :placeholder="t('auth.emailPlaceholder')"
+                :placeholder="t('auth.accountPlaceholder')"
                 :disabled="isSubmitting"
                 @keyup.enter="handleBindLogin"
               />
@@ -259,6 +259,7 @@ import {
   loadOAuthAffiliateCode,
   oauthAffiliatePayload
 } from '@/utils/oauthAffiliate'
+import { extractApiErrorMessage } from '@/utils/apiError'
 
 const route = useRoute()
 const router = useRouter()
@@ -540,8 +541,7 @@ function switchToCreateAccountMode() {
 }
 
 function getRequestErrorMessage(error: unknown, fallback: string): string {
-  const err = error as { message?: string; response?: { data?: { detail?: string; message?: string } } }
-  return err.response?.data?.detail || err.response?.data?.message || err.message || fallback
+  return extractApiErrorMessage(error, fallback)
 }
 
 function isCreateAccountRecoveryError(error: unknown): boolean {
@@ -652,9 +652,7 @@ async function handleSubmitInvitation() {
     )
     await finalizePendingAccountResponse(completion)
   } catch (e: unknown) {
-    const err = e as { message?: string; response?: { data?: { message?: string } } }
-    invitationError.value =
-      err.response?.data?.message || err.message || t('auth.dingtalk.completeRegistrationFailed')
+    invitationError.value = getRequestErrorMessage(e, t('auth.dingtalk.completeRegistrationFailed'))
   } finally {
     isSubmitting.value = false
   }
@@ -682,7 +680,6 @@ async function handleCreateAccount(payload: PendingOAuthCreateAccountPayload) {
     const { data } = await apiClient.post<DingTalkPendingActionResponse>('/auth/oauth/pending/create-account', {
       email: payload.email,
       password: payload.password,
-      verify_code: payload.verifyCode || undefined,
       ...(payload.turnstileToken ? { turnstile_token: payload.turnstileToken } : {}),
       ...(payload.tencentCaptchaTicket
         ? {
@@ -779,7 +776,9 @@ onMounted(async () => {
 
     if (error) {
       const i18nKey = `auth.dingtalk.error.${error}`
-      errorMessage.value = te(i18nKey) ? t(i18nKey) : (errorDesc || error)
+      errorMessage.value = te(i18nKey)
+        ? t(i18nKey)
+        : extractApiErrorMessage({ message: errorDesc || error }, t('auth.loginFailed'))
       isProcessing.value = false
       return
     }

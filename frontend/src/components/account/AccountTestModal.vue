@@ -252,6 +252,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { adminAPI } from '@/api/admin'
 import type { Account, ClaudeModel } from '@/types'
+import { normalizeUserFacingErrorMessage } from '@/utils/userFacingMessage'
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
@@ -540,13 +541,19 @@ const handleEvent = (event: {
         status.value = 'success'
       } else {
         status.value = 'error'
-        errorMessage.value = event.error || 'Test failed'
+        errorMessage.value = normalizeUserFacingErrorMessage(
+          event.error,
+          t('admin.accounts.testFailed')
+        )
       }
       break
 
     case 'error':
       status.value = 'error'
-      errorMessage.value = event.error || 'Unknown error'
+      errorMessage.value = normalizeUserFacingErrorMessage(
+        event.error,
+        t('admin.accounts.testFailed')
+      )
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''

@@ -11,8 +11,6 @@ import type {
   RegisterRequest,
   AuthResponse,
   CurrentUserResponse,
-  SendVerifyCodeRequest,
-  SendVerifyCodeResponse,
   PublicSettings,
   ActionCaptchaRequestProof,
   TotpLoginResponse,
@@ -244,12 +242,6 @@ export interface PendingOAuthCreateAccountResponse extends OAuthTokenResponse {
   auth_result?: string
 }
 
-export interface PendingOAuthSendVerifyCodeResponse extends SendVerifyCodeResponse {
-  auth_result?: string
-  provider?: string
-  redirect?: string
-}
-
 export type OAuthCompletionKind = 'login' | 'bind'
 
 export interface OAuthAdoptionDecision {
@@ -466,28 +458,6 @@ export function resolveWeChatOAuthStartStrict(
 }
 
 /**
- * Send verification code to email
- * @param request - Email and optional Turnstile token
- * @returns Response with countdown seconds
- */
-export async function sendVerifyCode(
-  request: SendVerifyCodeRequest
-): Promise<SendVerifyCodeResponse> {
-  const { data } = await apiClient.post<SendVerifyCodeResponse>('/auth/send-verify-code', request)
-  return data
-}
-
-export async function sendPendingOAuthVerifyCode(
-  request: SendVerifyCodeRequest
-): Promise<PendingOAuthSendVerifyCodeResponse> {
-  const { data } = await apiClient.post<PendingOAuthSendVerifyCodeResponse>(
-    '/auth/oauth/pending/send-verify-code',
-    request
-  )
-  return data
-}
-
-/**
  * Validate promo code response
  */
 export interface ValidatePromoCodeResponse {
@@ -694,8 +664,6 @@ export const authAPI = {
   getTokenExpiresAt,
   clearAuthToken,
   getPublicSettings,
-  sendVerifyCode,
-  sendPendingOAuthVerifyCode,
   validatePromoCode,
   validateInvitationCode,
   forgotPassword,

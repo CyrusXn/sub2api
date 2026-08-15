@@ -98,7 +98,7 @@ export function useOpenAIOAuth() {
     proxyId?: number | null
   ): Promise<OpenAITokenInfo | null> => {
     if (!code.trim() || !currentSessionId || !state.trim()) {
-      error.value = 'Missing auth code, session ID, or state'
+      error.value = '缺少授权码、会话 ID 或状态参数'
       return null
     }
 
@@ -139,7 +139,7 @@ export function useOpenAIOAuth() {
     clientId?: string
   ): Promise<OpenAITokenInfo | null> => {
     if (!refreshToken.trim()) {
-      error.value = 'Missing refresh token'
+      error.value = '缺少刷新令牌'
       return null
     }
 

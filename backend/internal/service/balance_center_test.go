@@ -60,6 +60,20 @@ type balanceCenterEmailSenderStub struct {
 	failFor map[string]error
 }
 
+type balanceCenterAlertOutboxStub struct {
+	inputs []*AlertEmailOutboxInput
+	err    error
+}
+
+func (s *balanceCenterAlertOutboxStub) Enqueue(_ context.Context, input *AlertEmailOutboxInput) error {
+	if s.err != nil {
+		return s.err
+	}
+	clone := *input
+	s.inputs = append(s.inputs, &clone)
+	return nil
+}
+
 func (s *balanceCenterEmailSenderStub) SendEmail(_ context.Context, to, subject, body string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -285,6 +299,58 @@ func TestBalanceCenterServiceEmailDisabledKeepsNotificationStatePending(t *testi
 	require.Empty(t, email.sends)
 	require.False(t, repo.state.LowBalanceActive)
 	require.Equal(t, 0.3, *repo.state.MultiplierBaseline, "首次倍率基线与邮件开关无关")
+}
+
+func TestBalanceCenterServiceQueuesAlertBeforeAdvancingNotificationState(t *testing.T) {
+	settings := &balanceCenterSettingRepoStub{values: map[string]string{
+		SettingKeyBalanceCenterEnabled:             "true",
+		SettingKeyBalanceCenterEmailEnabled:        "true",
+		SettingKeyBalanceCenterLowBalanceThreshold: "5",
+		SettingKeyOpsEmailNotificationConfig:       `{"alert":{"recipients":["ops@example.com"]}}`,
+	}}
+	repo := &balanceCenterServiceRepositoryStub{}
+	email := &balanceCenterEmailSenderStub{}
+	outbox := &balanceCenterAlertOutboxStub{}
+	svc := NewBalanceCenterService(repo, settings)
+	svc.SetEmailSender(email)
+	svc.SetAlertEmailOutbox(outbox)
+
+	_, err := svc.PersistSnapshot(context.Background(), &BalanceCenterSnapshot{
+		SiteName: "HBY", NormalizedDomain: "hubway.cc", Source: "sub2api_probe", SourceKey: "queued",
+		Status: "ok", ConvertedBalance: float64Ptr(4), RateMultiplier: float64Ptr(0.1),
+		ConversionScale: 0.1, Currency: "USD", ProbedAt: time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, outbox.inputs, 1)
+	require.Equal(t, AlertEmailSourceBalanceCenter, outbox.inputs[0].SourceType)
+	require.Equal(t, "low_balance", outbox.inputs[0].AlertType)
+	require.Empty(t, email.sends, "探测协程只负责持久化告警，不直接发送 SMTP")
+	require.True(t, repo.state.LowBalanceActive, "成功入队后立即推进状态，避免下一轮重复入队")
+	require.Equal(t, BalanceCenterAlertDeliveryQueued, repo.deliveries[0].Status)
+}
+
+func TestBalanceCenterServiceKeepsNotificationStateWhenAlertEnqueueFails(t *testing.T) {
+	settings := &balanceCenterSettingRepoStub{values: map[string]string{
+		SettingKeyBalanceCenterEnabled:             "true",
+		SettingKeyBalanceCenterEmailEnabled:        "true",
+		SettingKeyBalanceCenterLowBalanceThreshold: "5",
+		SettingKeyOpsEmailNotificationConfig:       `{"alert":{"recipients":["ops@example.com"]}}`,
+	}}
+	baseline := 0.1
+	repo := &balanceCenterServiceRepositoryStub{state: BalanceCenterAlertState{MultiplierBaseline: &baseline}}
+	svc := NewBalanceCenterService(repo, settings)
+	svc.SetAlertEmailOutbox(&balanceCenterAlertOutboxStub{err: errors.New("database unavailable")})
+
+	_, err := svc.PersistSnapshot(context.Background(), &BalanceCenterSnapshot{
+		SiteName: "VoVo", NormalizedDomain: "vovoapi.com", Source: "sub2api_probe", SourceKey: "queue-failed",
+		Status: "ok", ConvertedBalance: float64Ptr(10), RateMultiplier: float64Ptr(0.2),
+		ConversionScale: 1, Currency: "USD", ProbedAt: time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC),
+	})
+
+	require.ErrorContains(t, err, "写入倍率变化告警邮件队列失败")
+	require.Equal(t, 0.1, *repo.state.MultiplierBaseline)
+	require.Equal(t, BalanceCenterAlertDeliveryFailed, repo.deliveries[0].Status)
 }
 
 func TestBalanceCenterServiceDisabledDoesNotPersistProbeSnapshot(t *testing.T) {

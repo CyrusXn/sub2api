@@ -58,6 +58,8 @@ type cleanupRepoStub struct {
 type dashboardRepoStub struct {
 	recomputeErr   error
 	recomputeCalls int
+	preserveErr    error
+	preserveCalls  int
 }
 
 func (s *dashboardRepoStub) AggregateRange(ctx context.Context, start, end time.Time) error {
@@ -67,6 +69,17 @@ func (s *dashboardRepoStub) AggregateRange(ctx context.Context, start, end time.
 func (s *dashboardRepoStub) RecomputeRange(ctx context.Context, start, end time.Time) error {
 	s.recomputeCalls++
 	return s.recomputeErr
+}
+
+func (s *dashboardRepoStub) PreserveBusinessRange(ctx context.Context, start, end time.Time) error {
+	s.preserveCalls++
+	return s.preserveErr
+}
+
+func newUsageCleanupDashboard(repo *dashboardRepoStub) *DashboardAggregationService {
+	return NewDashboardAggregationService(repo, nil, &config.Config{
+		DashboardAgg: config.DashboardAggregationConfig{Enabled: true},
+	})
 }
 
 func (s *dashboardRepoStub) GetAggregationWatermark(ctx context.Context) (time.Time, error) {
@@ -391,7 +404,8 @@ func TestUsageCleanupServiceRunOnceSuccess(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2, TaskTimeoutSeconds: 30}}
-	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	dashboardRepo := &dashboardRepoStub{}
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(dashboardRepo), cfg)
 
 	svc.runOnce()
 
@@ -408,6 +422,7 @@ func TestUsageCleanupServiceRunOnceSuccess(t *testing.T) {
 	require.Equal(t, 2, repo.deleteCalls[0].limit)
 	require.Equal(t, start, repo.deleteCalls[0].filters.StartTime)
 	require.Equal(t, end, repo.deleteCalls[0].filters.EndTime)
+	require.Equal(t, 1, dashboardRepo.preserveCalls)
 }
 
 func TestUsageCleanupServiceRunOnceClaimError(t *testing.T) {
@@ -438,7 +453,7 @@ func TestUsageCleanupServiceExecuteTaskFailed(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 3}}
-	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(&dashboardRepoStub{}), cfg)
 	task := &UsageCleanupTask{
 		ID: 11,
 		Filters: UsageCleanupFilters{
@@ -465,7 +480,7 @@ func TestUsageCleanupServiceExecuteTaskProgressError(t *testing.T) {
 		updateErr: errors.New("update failed"),
 	}
 	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2}}
-	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(&dashboardRepoStub{}), cfg)
 	task := &UsageCleanupTask{
 		ID: 8,
 		Filters: UsageCleanupFilters{
@@ -490,7 +505,7 @@ func TestUsageCleanupServiceExecuteTaskDeleteCanceled(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2}}
-	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(&dashboardRepoStub{}), cfg)
 	task := &UsageCleanupTask{
 		ID: 12,
 		Filters: UsageCleanupFilters{
@@ -510,7 +525,7 @@ func TestUsageCleanupServiceExecuteTaskDeleteCanceled(t *testing.T) {
 func TestUsageCleanupServiceExecuteTaskContextCanceled(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2}}
-	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(&dashboardRepoStub{}), cfg)
 	task := &UsageCleanupTask{
 		ID: 9,
 		Filters: UsageCleanupFilters{
@@ -538,7 +553,7 @@ func TestUsageCleanupServiceExecuteTaskMarkFailedUpdateError(t *testing.T) {
 		markFailedErr: errors.New("update failed"),
 	}
 	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2}}
-	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(&dashboardRepoStub{}), cfg)
 	task := &UsageCleanupTask{
 		ID: 13,
 		Filters: UsageCleanupFilters{
@@ -553,6 +568,50 @@ func TestUsageCleanupServiceExecuteTaskMarkFailedUpdateError(t *testing.T) {
 	defer repo.mu.Unlock()
 	require.Len(t, repo.markFailed, 1)
 	require.Equal(t, int64(13), repo.markFailed[0].taskID)
+}
+
+func TestUsageCleanupServiceStopsBeforeDeleteWhenBusinessPreserveFails(t *testing.T) {
+	repo := &cleanupRepoStub{deleteQueue: []cleanupDeleteResponse{{deleted: 1}}}
+	dashboardRepo := &dashboardRepoStub{preserveErr: errors.New("汇总写入失败")}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2}}
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(dashboardRepo), cfg)
+	task := &UsageCleanupTask{
+		ID: 16,
+		Filters: UsageCleanupFilters{
+			StartTime: time.Now().UTC().Add(-24 * time.Hour),
+			EndTime:   time.Now().UTC(),
+		},
+	}
+
+	svc.executeTask(context.Background(), task)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Empty(t, repo.deleteCalls)
+	require.Len(t, repo.markFailed, 1)
+	require.Contains(t, repo.markFailed[0].errMsg, "清理前固化经营汇总失败")
+	require.Equal(t, 1, dashboardRepo.preserveCalls)
+}
+
+func TestUsageCleanupServiceStopsBeforeDeleteWithoutBusinessPreserver(t *testing.T) {
+	repo := &cleanupRepoStub{deleteQueue: []cleanupDeleteResponse{{deleted: 1}}}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2}}
+	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	task := &UsageCleanupTask{
+		ID: 17,
+		Filters: UsageCleanupFilters{
+			StartTime: time.Now().UTC().Add(-24 * time.Hour),
+			EndTime:   time.Now().UTC(),
+		},
+	}
+
+	svc.executeTask(context.Background(), task)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Empty(t, repo.deleteCalls)
+	require.Len(t, repo.markFailed, 1)
+	require.Contains(t, repo.markFailed[0].errMsg, "经营汇总固化服务不可用")
 }
 
 func TestUsageCleanupServiceExecuteTaskDashboardRecomputeError(t *testing.T) {
@@ -618,7 +677,7 @@ func TestUsageCleanupServiceExecuteTaskCanceled(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 2}}
-	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+	svc := NewUsageCleanupService(repo, nil, newUsageCleanupDashboard(&dashboardRepoStub{}), cfg)
 	task := &UsageCleanupTask{
 		ID: 3,
 		Filters: UsageCleanupFilters{

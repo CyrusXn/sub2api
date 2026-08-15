@@ -242,9 +242,17 @@ export default {
     passwordMinLength: '密码至少需要 6 个字符',
     loginFailed: '登录失败，请检查您的凭据后重试。',
     errors: {
+      INVALID_CREDENTIALS: '账号或密码错误',
       USER_NOT_ACTIVE: '账号已被禁用',
+      EMAIL_EXISTS: '这个账号已注册',
     },
     registrationFailed: '注册失败，请重试。',
+    accountLabel: '账号',
+    accountPlaceholder: '请输入账号',
+    accountRequired: '请输入账号',
+    wechatGroupContactPrefix: '联系微信：',
+    wechatGroupContactId: 'ncwqwert',
+    wechatGroupContactSuffix: '进微信群',
     emailDomainRegistrationLimit:
       '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。',
     emailSuffixNotAllowed: '该邮箱域名不在允许注册范围内。',
@@ -271,10 +279,6 @@ export default {
     resendCode: '重新发送验证码',
     sendCodeDesc: '我们将发送验证码到',
     codeSentSuccess: '验证码已发送！请查收您的邮箱。',
-    verificationCodeSupportIssue: '如果收不到验证码可能是邮件服务系统出现了问题',
-    verificationCodeSupportContactPrefix: '麻烦紧急',
-    verificationCodeSupportWeChat: '联系微信：ncwqwert',
-    verificationCodeSupportContactSuffix: '，在后台帮你添加用户。',
     verifying: '验证中...',
     verifyAndCreate: '验证并创建账户',
     resendCountdown: '{countdown}秒后可重新发送',
@@ -402,6 +406,7 @@ export default {
       callbackTitle: '正在恢复微信支付',
       callbackProcessing: '正在恢复微信支付...',
       backToPayment: '返回支付页',
+      callbackFailed: '微信支付回调处理失败，请返回支付页重试。',
       callbackMissingResumeToken: '微信支付回调缺少恢复令牌。'
     },
     oauth: {

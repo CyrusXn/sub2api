@@ -57,11 +57,25 @@ export interface BalanceCenterRechargeEvent {
   source: string
   source_key: string
   site_id?: number
+  site_label?: string
   account_id?: number
   amount: number
   currency: string
   occurred_at: string
   note: string
+}
+
+export interface BalanceCenterRechargeSiteSummary {
+  site_id?: number
+  site_name: string
+  total_amount: number
+  record_count: number
+  items: BalanceCenterRechargeEvent[]
+}
+
+export interface BalanceCenterRechargeSummary extends BalanceCenterPage<BalanceCenterRechargeEvent> {
+  total_amount: number
+  sites: BalanceCenterRechargeSiteSummary[]
 }
 
 export interface BalanceCenterReconciliation {
@@ -139,6 +153,9 @@ export const balanceCenterAPI = {
   },
   async rechargeEvents(params: BalanceCenterListParams) {
     return (await apiClient.get<BalanceCenterPage<BalanceCenterRechargeEvent>>(`${base}/recharge-events`, { params })).data
+  },
+  async rechargeSummary(params: BalanceCenterListParams) {
+    return (await apiClient.get<BalanceCenterRechargeSummary>(`${base}/recharge-summary`, { params })).data
   },
   async createRechargeEvent(item: BalanceCenterRechargeEvent) {
     return (await apiClient.post<BalanceCenterRechargeEvent>(`${base}/recharge-events`, item)).data

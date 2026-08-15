@@ -3,43 +3,127 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import BalanceCenterView from '../BalanceCenterView.vue'
 
 const api = vi.hoisted(() => ({
-  getSettings: vi.fn(), sites: vi.fn(), overview: vi.fn(), updateSettings: vi.fn(), probeAccounts: vi.fn(),
-  snapshots: vi.fn(), manualRows: vi.fn(), replaceManualRows: vi.fn(), rechargeEvents: vi.fn(),
-  reconciliations: vi.fn(), alerts: vi.fn(), createRechargeEvent: vi.fn(), deleteRechargeEvent: vi.fn(),
-  createReconciliation: vi.fn(), syncAutomaticRecords: vi.fn(), saveLiandongSession: vi.fn(), syncLiandong: vi.fn()
+  sites: vi.fn(), rechargeSummary: vi.fn(), createRechargeEvent: vi.fn(), deleteRechargeEvent: vi.fn()
 }))
 const notifications = vi.hoisted(() => ({ showSuccess: vi.fn(), showError: vi.fn() }))
+
 vi.mock('@/api/admin', () => ({ adminAPI: { balanceCenter: api } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => notifications }))
-vi.mock('vue-i18n', async () => ({ ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')), useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: () => ({ t: (key: string) => key })
+}))
 
-const mountView = () => mount(BalanceCenterView, { global: { stubs: {
-  AppLayout: { template: '<div><slot /></div>' }, DataTable: { props: ['data'], template: '<div><div v-for="row in data" :key="row.account_id">{{ row.site_name }}</div></div>' },
-  Pagination: true, Toggle: { props: ['modelValue'], emits: ['update:modelValue'], template: '<button class="toggle" />' }, Icon: true
-} } })
+const sites = [
+  { id: 1, name: 'HBY', normalized_domain: 'hby.example', base_url: 'https://hby.example', source: 'sub2api', probe_supported: true, updated_at: '2026-08-14T00:00:00Z' },
+  { id: 2, name: 'VoVo', normalized_domain: 'vovo.example', base_url: 'https://vovo.example', source: 'sub2api', probe_supported: true, updated_at: '2026-08-14T00:00:00Z' }
+]
+const summary = {
+  total_amount: 80,
+  total: 2,
+  page: 1,
+  page_size: 20,
+  items: [
+    { id: 12, source: 'manual', source_key: 'tx-12', site_id: 1, amount: 50, currency: 'CNY', occurred_at: '2026-08-14T02:10:00Z', note: '' },
+    { id: 11, source: 'manual', source_key: 'tx-11', site_id: 1, amount: 30, currency: 'CNY', occurred_at: '2026-08-13T02:10:00Z', note: '' }
+  ],
+  sites: [{ site_id: 1, site_name: 'HBY', total_amount: 80, record_count: 2, items: [
+    { id: 12, source: 'manual', source_key: 'tx-12', site_id: 1, amount: 50, currency: 'CNY', occurred_at: '2026-08-14T02:10:00Z', note: '' },
+    { id: 11, source: 'manual', source_key: 'tx-11', site_id: 1, amount: 30, currency: 'CNY', occurred_at: '2026-08-13T02:10:00Z', note: '' }
+  ] }]
+}
+
+const mountView = () => mount(BalanceCenterView, {
+  global: {
+    stubs: {
+      AppLayout: { template: '<div><slot /></div>' },
+      Pagination: true,
+      Icon: true,
+      RouterLink: { props: ['to'], template: '<a><slot /></a>' }
+    }
+  }
+})
 
 describe('BalanceCenterView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    api.getSettings.mockResolvedValue({ enabled: false, event_probe_enabled: false, email_enabled: false, low_balance_threshold: 5 })
-    api.sites.mockResolvedValue([])
-    api.overview.mockResolvedValue([{ account_id: 7, site_name: 'VoVo', normalized_domain: 'vovoapi.com', account_name: 'VoVo', status: 'ok' }])
-    api.updateSettings.mockResolvedValue({})
-    api.probeAccounts.mockResolvedValue([])
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    api.sites.mockResolvedValue(sites)
+    api.rechargeSummary.mockResolvedValue(summary)
+    api.createRechargeEvent.mockResolvedValue(summary.items[0])
+    api.deleteRechargeEvent.mockResolvedValue(undefined)
   })
 
-  it('loads overview and saves the disabled-by-default settings', async () => {
-    const wrapper = mountView(); await flushPromises()
-    expect(api.overview).toHaveBeenCalledOnce(); expect(wrapper.text()).toContain('VoVo')
-    await wrapper.get('[data-test="save-settings"]').trigger('click'); await flushPromises()
-    expect(api.updateSettings).toHaveBeenCalledWith({ enabled: false, event_probe_enabled: false, email_enabled: false, low_balance_threshold: 5 })
+  it('只保留充值统计工作台并加载站点与汇总', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(api.sites).toHaveBeenCalledOnce()
+    expect(api.rechargeSummary).toHaveBeenCalledOnce()
+    expect(wrapper.findAll('[data-test="site-recharge-row"]')).toHaveLength(2)
+    expect(wrapper.get('[data-test="total-amount"]').text()).toContain('80.00')
+    expect(wrapper.text()).not.toContain('admin.balanceCenter.tabs.overview')
+    expect(wrapper.text()).not.toContain('admin.balanceCenter.tabs.manual')
+    expect(wrapper.text()).not.toContain('admin.balanceCenter.tabs.reconciliation')
   })
 
-  it('manually probes only explicit account ids', async () => {
-    const wrapper = mountView(); await flushPromises()
-    const input = wrapper.findAll('input').find(item => item.attributes('placeholder')?.includes('(1,2,3)'))
-    expect(input).toBeDefined(); await input!.setValue('7, 8')
-    await wrapper.get('[data-test="probe-accounts"]').trigger('click'); await flushPromises()
-    expect(api.probeAccounts).toHaveBeenCalledWith([7, 8])
+  it('站点金额回车后使用当前分钟新增并刷新统计', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="recharge-time"]').setValue('2026-08-14T10:20')
+    const input = wrapper.get('[data-test="recharge-amount-1"]')
+    await input.setValue('88.5')
+    await input.trigger('keyup.enter')
+    await flushPromises()
+
+    expect(api.createRechargeEvent).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'manual', site_id: 1, amount: 88.5, currency: 'CNY', occurred_at: '2026-08-14T02:20:00.000Z'
+    }))
+    expect(api.rechargeSummary).toHaveBeenCalledTimes(2)
+    expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('选择快捷时间后直接刷新且无需确定按钮', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="range-yesterday"]').trigger('click')
+    await flushPromises()
+
+    expect(api.rechargeSummary).toHaveBeenCalledTimes(2)
+    const params = api.rechargeSummary.mock.calls[1][0]
+    expect(params.start_time).toBeTruthy()
+    expect(params.end_time).toBeTruthy()
+    expect(wrapper.find('[data-test="apply-range"]').exists()).toBe(false)
+  })
+
+  it('时间维度删除后重查总额，站点维度可展开多个时间节点', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="delete-recharge-12"]').trigger('click')
+    await flushPromises()
+
+    expect(api.deleteRechargeEvent).toHaveBeenCalledWith(12)
+    expect(api.rechargeSummary).toHaveBeenCalledTimes(2)
+
+    await wrapper.get('[data-test="dimension-site"]').trigger('click')
+    await wrapper.get('[data-test="expand-site-1"]').trigger('click')
+    expect(wrapper.findAll('[data-test="site-history-item"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('HBY')
+  })
+
+  it('未绑定账号的旧站点仍按独立标签展示', async () => {
+    api.rechargeSummary.mockResolvedValue({
+      ...summary,
+      total_amount: 10,
+      total: 1,
+      items: [{ id: 21, source: 'legacy_opening', source_key: 'opening:fox', site_label: 'Fox', amount: 10, currency: 'CNY', occurred_at: '2026-08-11T00:00:00Z', note: '旧系统期初累计，历史日期未知' }],
+      sites: [{ site_name: 'Fox', total_amount: 10, record_count: 1, items: [] }]
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Fox')
+    expect(wrapper.text()).not.toContain('admin.balanceCenter.unassignedSite')
   })
 })

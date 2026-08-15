@@ -19,7 +19,9 @@ import (
 
 const (
 	BalanceCenterLegacySource          = "legacy_sqlite"
-	BalanceCenterLegacyManifestVersion = 1
+	BalanceCenterLegacyManifestVersion = 2
+	legacyOpeningRechargeSource        = "legacy_opening"
+	legacyOpeningRechargeNote          = "旧系统期初累计，历史日期未知"
 )
 
 type BalanceCenterLegacyImportOptions struct {
@@ -39,13 +41,21 @@ type BalanceCenterLegacyImportManifest struct {
 	LegacyKeys              int     `json:"legacy_keys"`
 	EnabledKeys             int     `json:"enabled_keys"`
 	Snapshots               int     `json:"snapshots"`
+	SourceSnapshots         int     `json:"source_snapshots"`
 	ManualRows              int     `json:"manual_rows"`
 	ManualTotal             float64 `json:"manual_total"`
 	ManualRechargeEvents    int     `json:"manual_recharge_events"`
+	ActualRechargeEvents    int     `json:"actual_recharge_events"`
+	OpeningRechargeEvents   int     `json:"opening_recharge_events"`
 	AutomaticRecords        int     `json:"automatic_records"`
 	LiandongOrders          int     `json:"liandong_orders"`
 	Reconciliations         int     `json:"reconciliations"`
+	SourceReconciliations   int     `json:"source_reconciliations"`
 	MatchedKeys             int     `json:"matched_keys"`
+	UnmatchedKeys           int     `json:"unmatched_keys"`
+	AmbiguousKeys           int     `json:"ambiguous_keys"`
+	ActualRechargeTotal     float64 `json:"actual_recharge_total"`
+	OpeningRechargeTotal    float64 `json:"opening_recharge_total"`
 	ImportedSiteCredentials int     `json:"imported_site_credentials"`
 	SkippedSiteCredentials  int     `json:"skipped_site_credentials"`
 }
@@ -56,13 +66,21 @@ type BalanceCenterLegacyImportReport struct {
 	LegacyKeys               int     `json:"legacy_keys"`
 	EnabledKeys              int     `json:"enabled_keys"`
 	MatchedKeys              int     `json:"matched_keys"`
+	UnmatchedKeys            int     `json:"unmatched_keys"`
+	AmbiguousKeys            int     `json:"ambiguous_keys"`
 	Snapshots                int     `json:"snapshots"`
+	SourceSnapshots          int     `json:"source_snapshots"`
 	ManualRows               int     `json:"manual_rows"`
 	ManualTotal              float64 `json:"manual_total"`
 	ManualRechargeEvents     int     `json:"manual_recharge_events"`
+	ActualRechargeEvents     int     `json:"actual_recharge_events"`
+	OpeningRechargeEvents    int     `json:"opening_recharge_events"`
+	ActualRechargeTotal      float64 `json:"actual_recharge_total"`
+	OpeningRechargeTotal     float64 `json:"opening_recharge_total"`
 	AutomaticRecords         int     `json:"automatic_records"`
 	LiandongOrders           int     `json:"liandong_orders"`
 	Reconciliations          int     `json:"reconciliations"`
+	SourceReconciliations    int     `json:"source_reconciliations"`
 	ImportedSiteCredentials  int     `json:"imported_site_credentials"`
 	SkippedSiteCredentials   int     `json:"skipped_site_credentials"`
 	InsertedSites            int     `json:"inserted_sites"`
@@ -76,15 +94,17 @@ type BalanceCenterLegacyImportReport struct {
 }
 
 type legacyBalanceCenterData struct {
-	Sites                []legacyBalanceSite
-	Keys                 []legacyBalanceKey
-	Snapshots            []legacyBalanceSnapshot
-	ManualRows           []legacyManualRow
-	ManualRechargeEvents []legacyManualRechargeEvent
-	AutomaticRecords     []legacyAutomaticRecord
-	LiandongOrders       []legacyLiandongOrder
-	Reconciliations      []legacyReconciliation
-	Settings             map[string]string
+	Sites                 []legacyBalanceSite
+	Keys                  []legacyBalanceKey
+	Snapshots             []legacyBalanceSnapshot
+	ManualRows            []legacyManualRow
+	ManualRechargeEvents  []legacyManualRechargeEvent
+	AutomaticRecords      []legacyAutomaticRecord
+	LiandongOrders        []legacyLiandongOrder
+	Reconciliations       []legacyReconciliation
+	Settings              map[string]string
+	SourceSnapshots       int
+	SourceReconciliations int
 }
 
 type legacyBalanceSite struct {
@@ -132,6 +152,7 @@ type legacyManualRechargeEvent struct {
 	SiteLabel string
 	Amount    float64
 	CreatedAt time.Time
+	Opening   bool
 }
 
 type legacyAutomaticRecord struct {
@@ -193,7 +214,7 @@ func ImportLegacyBalanceCenterSQLite(ctx context.Context, sqliteDB *sql.DB, targ
 		_ = tx.Rollback()
 		return report, fmt.Errorf("读取目标账号匹配指纹失败: %w", err)
 	}
-	report.MatchedKeys = countLegacyMatchedKeys(data, accounts, options.OldMasterKey)
+	report.MatchedKeys, report.UnmatchedKeys, report.AmbiguousKeys = summarizeLegacyKeyMatches(data, accounts, options.OldMasterKey)
 	if err := previewLegacySiteCredentials(ctx, tx, data, accounts, options, report); err != nil {
 		_ = tx.Rollback()
 		return report, err
@@ -220,21 +241,32 @@ func ImportLegacyBalanceCenterSQLite(ctx context.Context, sqliteDB *sql.DB, targ
 	return report, nil
 }
 
-func countLegacyMatchedKeys(data *legacyBalanceCenterData, accounts []targetAccountFingerprint, oldMasterKey string) int {
+func summarizeLegacyKeyMatches(data *legacyBalanceCenterData, accounts []targetAccountFingerprint, oldMasterKey string) (matched, unmatched, ambiguous int) {
 	if data == nil {
-		return 0
+		return 0, 0, 0
 	}
 	sites := make(map[string]legacyBalanceSite, len(data.Sites))
 	for _, site := range data.Sites {
 		sites[site.ID] = site
 	}
-	matched := 0
 	for _, key := range data.Keys {
-		if matchLegacyKeyAccount(sites[key.SiteID].Domain, key.SecretCipher, oldMasterKey, accounts) != nil {
+		plain, err := decryptLegacySub2WebSecret(key.SecretCipher, oldMasterKey)
+		if err != nil {
+			unmatched++
+			continue
+		}
+		accountID, isAmbiguous := uniqueLegacyAccountIDWithStatus(sites[key.SiteID].Domain, legacySecretFingerprint(plain), accounts)
+		if isAmbiguous {
+			ambiguous++
+			continue
+		}
+		if accountID != nil {
 			matched++
+		} else {
+			unmatched++
 		}
 	}
-	return matched
+	return matched, unmatched, ambiguous
 }
 
 func previewLegacySiteCredentials(ctx context.Context, tx *sql.Tx, data *legacyBalanceCenterData, accounts []targetAccountFingerprint, options BalanceCenterLegacyImportOptions, report *BalanceCenterLegacyImportReport) error {
@@ -284,13 +316,21 @@ func LegacyImportManifestFromReport(report *BalanceCenterLegacyImportReport, sou
 		LegacyKeys:              report.LegacyKeys,
 		EnabledKeys:             report.EnabledKeys,
 		Snapshots:               report.Snapshots,
+		SourceSnapshots:         report.SourceSnapshots,
 		ManualRows:              report.ManualRows,
 		ManualTotal:             roundLegacyMoney(report.ManualTotal),
 		ManualRechargeEvents:    report.ManualRechargeEvents,
+		ActualRechargeEvents:    report.ActualRechargeEvents,
+		OpeningRechargeEvents:   report.OpeningRechargeEvents,
 		AutomaticRecords:        report.AutomaticRecords,
 		LiandongOrders:          report.LiandongOrders,
 		Reconciliations:         report.Reconciliations,
+		SourceReconciliations:   report.SourceReconciliations,
 		MatchedKeys:             report.MatchedKeys,
+		UnmatchedKeys:           report.UnmatchedKeys,
+		AmbiguousKeys:           report.AmbiguousKeys,
+		ActualRechargeTotal:     roundLegacyMoney(report.ActualRechargeTotal),
+		OpeningRechargeTotal:    roundLegacyMoney(report.OpeningRechargeTotal),
 		ImportedSiteCredentials: report.ImportedSiteCredentials,
 		SkippedSiteCredentials:  report.SkippedSiteCredentials,
 	}
@@ -324,13 +364,21 @@ func legacyImportManifestMismatches(actual, expected BalanceCenterLegacyImportMa
 		{"legacy_keys", actual.LegacyKeys, expected.LegacyKeys},
 		{"enabled_keys", actual.EnabledKeys, expected.EnabledKeys},
 		{"snapshots", actual.Snapshots, expected.Snapshots},
+		{"source_snapshots", actual.SourceSnapshots, expected.SourceSnapshots},
 		{"manual_rows", actual.ManualRows, expected.ManualRows},
 		{"manual_total", actual.ManualTotal, expected.ManualTotal},
 		{"manual_recharge_events", actual.ManualRechargeEvents, expected.ManualRechargeEvents},
+		{"actual_recharge_events", actual.ActualRechargeEvents, expected.ActualRechargeEvents},
+		{"opening_recharge_events", actual.OpeningRechargeEvents, expected.OpeningRechargeEvents},
 		{"automatic_records", actual.AutomaticRecords, expected.AutomaticRecords},
 		{"liandong_orders", actual.LiandongOrders, expected.LiandongOrders},
 		{"reconciliations", actual.Reconciliations, expected.Reconciliations},
+		{"source_reconciliations", actual.SourceReconciliations, expected.SourceReconciliations},
 		{"matched_keys", actual.MatchedKeys, expected.MatchedKeys},
+		{"unmatched_keys", actual.UnmatchedKeys, expected.UnmatchedKeys},
+		{"ambiguous_keys", actual.AmbiguousKeys, expected.AmbiguousKeys},
+		{"actual_recharge_total", actual.ActualRechargeTotal, expected.ActualRechargeTotal},
+		{"opening_recharge_total", actual.OpeningRechargeTotal, expected.OpeningRechargeTotal},
 		{"imported_site_credentials", actual.ImportedSiteCredentials, expected.ImportedSiteCredentials},
 		{"skipped_site_credentials", actual.SkippedSiteCredentials, expected.SkippedSiteCredentials},
 	}
@@ -347,11 +395,13 @@ func summarizeLegacyBalanceCenterData(data *legacyBalanceCenterData) *BalanceCen
 		Sites:                  len(data.Sites),
 		LegacyKeys:             len(data.Keys),
 		Snapshots:              len(data.Snapshots),
+		SourceSnapshots:        data.SourceSnapshots,
 		ManualRows:             len(data.ManualRows),
 		ManualRechargeEvents:   len(data.ManualRechargeEvents),
 		AutomaticRecords:       len(data.AutomaticRecords),
 		LiandongOrders:         len(data.LiandongOrders),
 		Reconciliations:        len(data.Reconciliations),
+		SourceReconciliations:  data.SourceReconciliations,
 		SkippedSiteCredentials: 0,
 	}
 	for _, key := range data.Keys {
@@ -362,6 +412,17 @@ func summarizeLegacyBalanceCenterData(data *legacyBalanceCenterData) *BalanceCen
 	for _, row := range data.ManualRows {
 		report.ManualTotal += row.Amount
 	}
+	for _, event := range data.ManualRechargeEvents {
+		if event.Opening {
+			report.OpeningRechargeEvents++
+			report.OpeningRechargeTotal += event.Amount
+		} else {
+			report.ActualRechargeEvents++
+			report.ActualRechargeTotal += event.Amount
+		}
+	}
+	report.ActualRechargeTotal = roundLegacyMoney(report.ActualRechargeTotal)
+	report.OpeningRechargeTotal = roundLegacyMoney(report.OpeningRechargeTotal)
 	report.ManualTotal = roundLegacyMoney(report.ManualTotal)
 	return report
 }
@@ -372,6 +433,12 @@ func loadLegacyBalanceCenterData(ctx context.Context, db *sql.DB) (*legacyBalanc
 	}
 	data := &legacyBalanceCenterData{Settings: map[string]string{}}
 	var err error
+	if data.SourceSnapshots, err = legacySQLiteTableCount(ctx, db, "snapshots"); err != nil {
+		return nil, err
+	}
+	if data.SourceReconciliations, err = legacySQLiteTableCount(ctx, db, "reconcile_runs"); err != nil {
+		return nil, err
+	}
 	if data.Sites, err = loadLegacySites(ctx, db); err != nil {
 		return nil, err
 	}
@@ -397,10 +464,7 @@ func loadLegacyBalanceCenterData(ctx context.Context, db *sql.DB) (*legacyBalanc
 			return nil, err
 		}
 	}
-	if data.LiandongOrders, err = loadLegacyLiandongOrders(ctx, db); err != nil {
-		return nil, err
-	}
-	if data.Reconciliations, data.AutomaticRecords, err = loadLegacyReconciliations(ctx, db); err != nil {
+	if data.ManualRechargeEvents, err = appendLegacyOpeningRechargeEvents(data.ManualRows, data.ManualRechargeEvents, data.Snapshots); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -451,9 +515,18 @@ func loadLegacyKeys(ctx context.Context, db *sql.DB) ([]legacyBalanceKey, error)
 func loadLegacySnapshots(ctx context.Context, db *sql.DB) ([]legacyBalanceSnapshot, error) {
 	errorCodeExpr := "''"
 	if legacySQLiteHasColumn(ctx, db, "snapshots", "error_code") {
-		errorCodeExpr = "COALESCE(error_code, '')"
+		errorCodeExpr = "COALESCE(s.error_code, '')"
 	}
-	query := fmt.Sprintf(`SELECT id, site_id, key_id, remaining, COALESCE(unit, ''), rate_multiplier, status, %s, fetched_at FROM snapshots ORDER BY fetched_at ASC, id ASC`, errorCodeExpr)
+	query := fmt.Sprintf(`WITH ranked AS (
+SELECT s.id, s.site_id, s.key_id, s.remaining, COALESCE(s.unit, '') AS unit,
+       s.rate_multiplier, s.status, %s AS error_code, s.fetched_at,
+       ROW_NUMBER() OVER (PARTITION BY s.key_id ORDER BY s.fetched_at DESC, s.rowid DESC) AS snapshot_rank
+FROM snapshots s
+INNER JOIN site_keys k ON k.id = s.key_id
+WHERE s.key_id IS NOT NULL AND LOWER(TRIM(s.status)) = 'ok'
+)
+SELECT id, site_id, key_id, remaining, unit, rate_multiplier, status, error_code, fetched_at
+FROM ranked WHERE snapshot_rank = 1 ORDER BY fetched_at DESC, id DESC`, errorCodeExpr)
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("读取旧历史快照失败: %w", err)
@@ -528,6 +601,58 @@ func loadLegacyManualRechargeEvents(ctx context.Context, db *sql.DB) ([]legacyMa
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func appendLegacyOpeningRechargeEvents(rows []legacyManualRow, actual []legacyManualRechargeEvent, snapshots []legacyBalanceSnapshot) ([]legacyManualRechargeEvent, error) {
+	result := append([]legacyManualRechargeEvent(nil), actual...)
+	actualByLabel := make(map[string]float64)
+	for _, event := range actual {
+		key := canonicalLegacyLabel(event.SiteLabel)
+		actualByLabel[key] = roundLegacyMoney(actualByLabel[key] + event.Amount)
+	}
+
+	openingAt := time.Unix(0, 0).UTC()
+	for _, event := range actual {
+		if !event.CreatedAt.IsZero() && (openingAt.Equal(time.Unix(0, 0).UTC()) || event.CreatedAt.Before(openingAt)) {
+			openingAt = event.CreatedAt
+		}
+	}
+	if openingAt.Equal(time.Unix(0, 0).UTC()) {
+		for _, snapshot := range snapshots {
+			if !snapshot.FetchedAt.IsZero() && (openingAt.Equal(time.Unix(0, 0).UTC()) || snapshot.FetchedAt.Before(openingAt)) {
+				openingAt = snapshot.FetchedAt
+			}
+		}
+	}
+	openingAt = openingAt.Add(-time.Minute)
+
+	seenLabels := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		key := canonicalLegacyLabel(row.Label)
+		if key == "" {
+			return nil, errors.New("旧系统手工累计包含空站点标签")
+		}
+		if _, exists := seenLabels[key]; exists {
+			return nil, fmt.Errorf("旧系统手工累计包含重复站点标签: %s", row.Label)
+		}
+		seenLabels[key] = struct{}{}
+		opening := roundLegacyMoney(row.Amount - actualByLabel[key])
+		if opening < 0 {
+			return nil, fmt.Errorf("旧系统站点 %s 的真实充值合计超过手工累计", row.Label)
+		}
+		if opening == 0 {
+			continue
+		}
+		result = append(result, legacyManualRechargeEvent{
+			ID:        "opening:" + row.ID,
+			RowID:     row.ID,
+			SiteLabel: row.Label,
+			Amount:    opening,
+			CreatedAt: openingAt,
+			Opening:   true,
+		})
+	}
+	return result, nil
 }
 
 func loadLegacyLiandongOrders(ctx context.Context, db *sql.DB) ([]legacyLiandongOrder, error) {
@@ -760,15 +885,6 @@ func writeLegacyBalanceCenterData(ctx context.Context, tx *sql.Tx, data *legacyB
 			}
 		}
 	}
-	for _, row := range data.ManualRows {
-		inserted, err := insertLegacyManualRow(ctx, tx, siteIDForLabel(siteIDs, siteByLegacyID, row.Label), row)
-		if err != nil {
-			return err
-		}
-		if inserted {
-			report.InsertedManualRows++
-		}
-	}
 	for _, event := range data.ManualRechargeEvents {
 		inserted, err := insertLegacyRechargeEvent(ctx, tx, siteIDForLabel(siteIDs, siteByLegacyID, event.SiteLabel), event)
 		if err != nil {
@@ -776,33 +892,6 @@ func writeLegacyBalanceCenterData(ctx context.Context, tx *sql.Tx, data *legacyB
 		}
 		if inserted {
 			report.InsertedRechargeEvents++
-		}
-	}
-	for _, record := range data.AutomaticRecords {
-		inserted, err := insertLegacyAutomaticRecord(ctx, tx, siteIDForLabel(siteIDs, siteByLegacyID, record.SiteLabel), record)
-		if err != nil {
-			return err
-		}
-		if inserted {
-			report.InsertedAutomaticRecords++
-		}
-	}
-	for _, order := range data.LiandongOrders {
-		inserted, err := insertLegacyLiandongOrder(ctx, tx, order)
-		if err != nil {
-			return err
-		}
-		if inserted {
-			report.InsertedLiandongOrders++
-		}
-	}
-	for _, item := range data.Reconciliations {
-		inserted, err := insertLegacyReconciliation(ctx, tx, item)
-		if err != nil {
-			return err
-		}
-		if inserted {
-			report.InsertedReconciliations++
 		}
 	}
 	return nil
@@ -845,14 +934,27 @@ func matchLegacyKeyAccount(domain, cipherText, oldMasterKey string, accounts []t
 	if err != nil {
 		return nil
 	}
-	fp := legacySecretFingerprint(plain)
+	return uniqueLegacyAccountID(domain, legacySecretFingerprint(plain), accounts)
+}
+
+func uniqueLegacyAccountID(domain, fingerprint string, accounts []targetAccountFingerprint) *int64 {
+	matched, _ := uniqueLegacyAccountIDWithStatus(domain, fingerprint, accounts)
+	return matched
+}
+
+func uniqueLegacyAccountIDWithStatus(domain, fingerprint string, accounts []targetAccountFingerprint) (*int64, bool) {
+	var matched *int64
 	for _, account := range accounts {
-		if account.Domain == domain && account.Fingerprint == fp {
-			id := account.AccountID
-			return &id
+		if account.Domain != domain || account.Fingerprint != fingerprint {
+			continue
 		}
+		if matched != nil && *matched != account.AccountID {
+			return nil, true
+		}
+		id := account.AccountID
+		matched = &id
 	}
-	return nil
+	return matched, false
 }
 
 func insertLegacySite(ctx context.Context, tx *sql.Tx, site legacyBalanceSite) (int64, bool, error) {
@@ -949,9 +1051,13 @@ VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (source, source_key) DO NOTHING RETURN
 }
 
 func insertLegacyRechargeEvent(ctx context.Context, tx *sql.Tx, siteID *int64, event legacyManualRechargeEvent) (bool, error) {
-	err := tx.QueryRowContext(ctx, `INSERT INTO balance_center_recharge_events (source, source_key, site_id, amount, currency, occurred_at, note)
-VALUES ($1,$2,$3,$4,'CNY',$5,$6) ON CONFLICT (source, source_key) DO NOTHING RETURNING id`,
-		"legacy_manual_recharge", event.ID, siteID, event.Amount, event.CreatedAt, event.SiteLabel).Scan(new(int64))
+	source, note := "legacy_manual_recharge", ""
+	if event.Opening {
+		source, note = legacyOpeningRechargeSource, legacyOpeningRechargeNote
+	}
+	err := tx.QueryRowContext(ctx, `INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, amount, currency, occurred_at, note)
+VALUES ($1,$2,$3,$4,$5,'CNY',$6,$7) ON CONFLICT (source, source_key) DO NOTHING RETURNING id`,
+		source, event.ID, siteID, event.SiteLabel, event.Amount, event.CreatedAt, note).Scan(new(int64))
 	if err == nil {
 		return true, nil
 	}
@@ -1201,7 +1307,11 @@ func siteIDForLabel(ids map[string]int64, sites map[string]legacyBalanceSite, la
 }
 
 func canonicalLegacyLabel(value string) string {
-	return strings.NewReplacer("api", "", "API", "", " ", "", "_", "", "-", "", ".", "").Replace(strings.ToLower(strings.TrimSpace(value)))
+	key := strings.NewReplacer("api", "", " ", "", "_", "", "-", "", ".", "", "【", "", "】", "").Replace(strings.ToLower(strings.TrimSpace(value)))
+	if key == "vovo" {
+		return "沃沃"
+	}
+	return key
 }
 
 func parseLegacyTime(value string) (time.Time, error) {
@@ -1221,6 +1331,17 @@ func legacySQLiteHasTable(ctx context.Context, db *sql.DB, table string) bool {
 	var exists int
 	_ = db.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists)
 	return exists > 0
+}
+
+func legacySQLiteTableCount(ctx context.Context, db *sql.DB, table string) (int, error) {
+	if !legacySQLiteHasTable(ctx, db, table) {
+		return 0, nil
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
+		return 0, fmt.Errorf("统计旧表 %s 失败: %w", table, err)
+	}
+	return count, nil
 }
 
 func legacySQLiteHasColumn(ctx context.Context, db *sql.DB, table, column string) bool {

@@ -109,6 +109,13 @@ describe('useAppStore', () => {
       expect(store.toasts[0].message).toBe('出错了')
     })
 
+    it('showError 不向用户直接展示纯英文错误', () => {
+      const store = useAppStore()
+      store.showError('Unexpected server failure')
+
+      expect(store.toasts[0].message).toBe('操作失败，请稍后重试。')
+    })
+
     it('showWarning 创建 warning 类型 toast', () => {
       const store = useAppStore()
       store.showWarning('警告信息')

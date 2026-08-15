@@ -81,7 +81,7 @@ describe('PromptAuditView', () => {
     expect(mocks.listGroups).toHaveBeenCalledOnce()
     expect(mocks.listEvents).toHaveBeenCalledOnce()
     await flushPromises()
-    expect(wrapper.get('[data-test="runtime"]').text()).toContain('runtime offline')
+    expect(wrapper.get('[data-test="runtime"]').text()).toContain('操作失败，请稍后重试。')
     expect(wrapper.find('[data-test="endpoint"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="events"]').exists()).toBe(true)
   })

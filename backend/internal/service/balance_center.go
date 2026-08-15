@@ -22,6 +22,7 @@ const (
 
 	BalanceCenterAlertLowBalance        = "low_balance"
 	BalanceCenterAlertMultiplierChanged = "multiplier_changed"
+	BalanceCenterAlertDeliveryQueued    = "queued"
 	BalanceCenterAlertDeliveryAccepted  = "accepted"
 	BalanceCenterAlertDeliveryFailed    = "failed"
 
@@ -57,6 +58,7 @@ type BalanceCenterService struct {
 	repository        BalanceCenterRepository
 	settingRepo       SettingRepository
 	emailSender       BalanceCenterEmailSender
+	alertEmailOutbox  AlertEmailOutboxEnqueuer
 	liandongEncryptor SecretEncryptor
 	liandongClient    *http.Client
 }
@@ -118,9 +120,10 @@ func NewBalanceCenterService(repository BalanceCenterRepository, settingRepo Set
 	return &BalanceCenterService{repository: repository, settingRepo: settingRepo}
 }
 
-func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository, emailService *EmailService, encryptor SecretEncryptor) *BalanceCenterService {
+func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository, emailService *EmailService, encryptor SecretEncryptor, alertOutbox *AlertEmailOutboxService) *BalanceCenterService {
 	service := NewBalanceCenterService(repository, settingRepo)
 	service.SetEmailSender(emailService)
+	service.SetAlertEmailOutbox(alertOutbox)
 	service.SetLiandongDependencies(encryptor, nil)
 	return service
 }
@@ -128,6 +131,13 @@ func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo
 func (s *BalanceCenterService) SetEmailSender(sender BalanceCenterEmailSender) {
 	if s != nil {
 		s.emailSender = sender
+	}
+}
+
+// SetAlertEmailOutbox 将告警投递切换为持久化汇总队列，探测协程不再直接等待 SMTP。
+func (s *BalanceCenterService) SetAlertEmailOutbox(outbox AlertEmailOutboxEnqueuer) {
+	if s != nil {
+		s.alertEmailOutbox = outbox
 	}
 }
 
@@ -162,7 +172,7 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 	if err := alertRepo.SaveAlertState(ctx, identityKey, persisted.SiteID, persisted.AccountID, persisted.ID, next, nil, persisted.ProbedAt); err != nil {
 		return persisted, fmt.Errorf("保存余额告警基线失败: %w", err)
 	}
-	if len(decisions) == 0 || !settings.EmailEnabled || s.emailSender == nil {
+	if len(decisions) == 0 || !settings.EmailEnabled || (s.alertEmailOutbox == nil && s.emailSender == nil) {
 		return persisted, nil
 	}
 	recipients, err := s.balanceCenterAlertRecipients(ctx)
@@ -187,7 +197,25 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 				OldValue: decision.OldValue, NewValue: decision.NewValue, Threshold: decision.Threshold,
 				Status: BalanceCenterAlertDeliveryAccepted, AttemptedAt: attemptedAt,
 			}
-			if sendErr := s.emailSender.SendEmail(ctx, recipient, subject, body); sendErr != nil {
+			if s.alertEmailOutbox != nil {
+				delivery.Status = BalanceCenterAlertDeliveryQueued
+				enqueueErr := s.alertEmailOutbox.Enqueue(ctx, &AlertEmailOutboxInput{
+					SourceType: AlertEmailSourceBalanceCenter,
+					SourceID:   strconv.FormatInt(persisted.ID, 10),
+					SourceKey:  fmt.Sprintf("snapshot:%d:%s", persisted.ID, decision.Type),
+					AlertType:  decision.Type,
+					Recipient:  recipient,
+					Subject:    subject,
+					BodyHTML:   body,
+					CreatedAt:  attemptedAt,
+				})
+				if enqueueErr != nil {
+					accepted = false
+					delivery.Status = BalanceCenterAlertDeliveryFailed
+					delivery.FailureReason = "告警邮件入队失败"
+					sendErrors = append(sendErrors, fmt.Errorf("写入%s告警邮件队列失败: %w", balanceCenterAlertTypeName(decision.Type), enqueueErr))
+				}
+			} else if sendErr := s.emailSender.SendEmail(ctx, recipient, subject, body); sendErr != nil {
 				accepted = false
 				delivery.Status = BalanceCenterAlertDeliveryFailed
 				delivery.FailureReason = "SMTP 未接受"
@@ -196,7 +224,6 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 				delivery.AcceptedAt = &attemptedAt
 			}
 			if auditErr := alertRepo.RecordAlertDelivery(ctx, delivery); auditErr != nil {
-				accepted = false
 				sendErrors = append(sendErrors, fmt.Errorf("记录余额告警投递失败: %w", auditErr))
 			}
 		}
@@ -208,6 +235,13 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 		}
 	}
 	return persisted, errors.Join(sendErrors...)
+}
+
+func balanceCenterAlertTypeName(alertType string) string {
+	if alertType == BalanceCenterAlertMultiplierChanged {
+		return "倍率变化"
+	}
+	return "余额不足"
 }
 
 func (s *BalanceCenterService) balanceCenterAlertRecipients(ctx context.Context) ([]string, error) {

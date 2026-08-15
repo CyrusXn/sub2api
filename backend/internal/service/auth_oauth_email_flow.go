@@ -26,38 +26,6 @@ func normalizeOAuthSignupSource(signupSource string) string {
 	}
 }
 
-// SendPendingOAuthVerifyCode sends a local verification code for pending OAuth
-// account-creation flows without relying on the public registration gate.
-func (s *AuthService) SendPendingOAuthVerifyCode(ctx context.Context, email string, locale ...string) (*SendVerifyCodeResult, error) {
-	email = strings.TrimSpace(strings.ToLower(email))
-	if email == "" {
-		return nil, ErrEmailVerifyRequired
-	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		return nil, ErrEmailVerifyRequired
-	}
-	if isReservedEmail(email) {
-		return nil, ErrEmailReserved
-	}
-	if s == nil || s.emailService == nil {
-		return nil, ErrServiceUnavailable
-	}
-	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
-		return nil, err
-	}
-
-	siteName := "Sub2API"
-	if s.settingService != nil {
-		siteName = s.settingService.GetSiteName(ctx)
-	}
-	if err := s.emailService.SendVerifyCode(ctx, email, siteName, firstEmailLocale(locale)); err != nil {
-		return nil, err
-	}
-	return &SendVerifyCodeResult{
-		Countdown: int(verifyCodeCooldown / time.Second),
-	}, nil
-}
-
 func (s *AuthService) validateOAuthRegistrationInvitation(ctx context.Context, invitationCode string) (*RedeemCode, error) {
 	if s == nil || s.settingService == nil || !s.settingService.IsInvitationCodeEnabled(ctx) {
 		return nil, nil
@@ -100,13 +68,11 @@ func (s *AuthService) VerifyOAuthEmailCode(ctx context.Context, email, verifyCod
 	return s.emailService.VerifyCode(ctx, email, verifyCode)
 }
 
-// RegisterOAuthEmailAccount creates a local account from a third-party first
-// login after the user has verified a local email address.
-func (s *AuthService) RegisterOAuthEmailAccount(
+// RegisterOAuthAccount creates a local account from a third-party first login.
+func (s *AuthService) RegisterOAuthAccount(
 	ctx context.Context,
 	email string,
 	password string,
-	verifyCode string,
 	invitationCode string,
 	signupSource string,
 ) (*TokenPair, *User, error) {
@@ -118,12 +84,14 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" || len(email) > 255 {
+		return nil, nil, infraerrors.BadRequest("INVALID_ACCOUNT", "请输入有效账号")
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		return nil, nil, infraerrors.BadRequest("INVALID_ACCOUNT", "请输入有效账号")
+	}
 	if isReservedEmail(email) {
 		return nil, nil, ErrEmailReserved
-	}
-	if err := s.VerifyOAuthEmailCode(ctx, email, verifyCode); err != nil {
-		slog.Error("oauth email register: verify code failed", "email", email, "error", err.Error())
-		return nil, nil, err
 	}
 
 	if _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode); err != nil {
@@ -131,7 +99,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		return nil, nil, err
 	}
 
-	// 含 +别名 / Gmail 点号 / FQDN 根点变体归一化：该路径同样发放注册赠额，不能被单个收件箱刷号。
+	// 去掉验证码不改变注册安全策略：别名防刷、后缀白名单和域名限额仍需生效。
 	existsEmail, err := s.existsByEmailOrAlias(ctx, email)
 	if err != nil {
 		slog.Error("oauth email register: ExistsByEmail failed", "email", email, "error", err.Error())
@@ -144,7 +112,6 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		slog.Error("oauth email register: policy rejected", "email", email, "error", err.Error())
 		return nil, nil, err
 	}
-
 	hashedPassword, err := s.HashPassword(password)
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash password: %w", err)

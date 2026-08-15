@@ -67,6 +67,10 @@ type AccountHandler struct {
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 }
 
+type accountConcurrencySortIDLister interface {
+	ListAccountIDsForConcurrencySort(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]int64, error)
+}
+
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
 func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamBillingProbeService) {
 	h.upstreamBillingProbe = probe
@@ -526,6 +530,72 @@ func (h *AccountHandler) listAccountSchedulerScoreFilterPool(
 	return accounts
 }
 
+func (h *AccountHandler) listAccountsByCurrentConcurrency(
+	ctx context.Context,
+	page, pageSize int,
+	platform, accountType, status, search string,
+	groupID int64,
+	privacyMode, sortOrder string,
+) ([]service.Account, int64, map[int64]int, error) {
+	if h.concurrencyService == nil {
+		return nil, 0, nil, errors.New("账号并发服务不可用")
+	}
+
+	if idLister, ok := h.adminService.(accountConcurrencySortIDLister); ok {
+		accountIDs, err := idLister.ListAccountIDsForConcurrencySort(ctx, platform, accountType, status, search, groupID, privacyMode)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		concurrencyCounts, err := h.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		sort.SliceStable(accountIDs, func(i, j int) bool {
+			left, right := concurrencyCounts[accountIDs[i]], concurrencyCounts[accountIDs[j]]
+			if left == right {
+				return compareConcurrencyTie(accountIDs[i], accountIDs[j], sortOrder)
+			}
+			return compareConcurrencyValue(left, right, sortOrder)
+		})
+
+		total := int64(len(accountIDs))
+		pageIDs := paginateSlice(accountIDs, page, pageSize)
+		accountPointers, err := h.adminService.GetAccountsByIDs(ctx, pageIDs)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		accounts := make([]service.Account, 0, len(accountPointers))
+		for _, account := range accountPointers {
+			if account != nil {
+				accounts = append(accounts, *account)
+			}
+		}
+		return accounts, total, concurrencyCounts, nil
+	}
+
+	// 兼容未实现轻量 ID 能力的测试替身和旧扩展实现。
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, platform, accountType, status, search, groupID, privacyMode)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	accountIDs := make([]int64, len(accounts))
+	for i := range accounts {
+		accountIDs[i] = accounts[i].ID
+	}
+	concurrencyCounts, err := h.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	sort.SliceStable(accounts, func(i, j int) bool {
+		left, right := concurrencyCounts[accounts[i].ID], concurrencyCounts[accounts[j].ID]
+		if left == right {
+			return compareConcurrencyTie(accounts[i].ID, accounts[j].ID, sortOrder)
+		}
+		return compareConcurrencyValue(left, right, sortOrder)
+	})
+	return paginateSlice(accounts, page, pageSize), int64(len(accounts)), concurrencyCounts, nil
+}
+
 // List handles listing all accounts with pagination
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {
@@ -569,33 +639,10 @@ func (h *AccountHandler) List(c *gin.Context) {
 	var accounts []service.Account
 	var total int64
 	var err error
-	if sortBy == "concurrency" {
-		accounts, err = h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
-		if err == nil {
-			accountIDs := make([]int64, len(accounts))
-			for i := range accounts {
-				accountIDs[i] = accounts[i].ID
-			}
-			if h.concurrencyService == nil {
-				err = errors.New("account concurrency service is unavailable")
-			} else {
-				concurrencyCounts, err = h.concurrencyService.GetAccountConcurrencyBatch(c.Request.Context(), accountIDs)
-			}
-		}
-		if err == nil {
-			sort.SliceStable(accounts, func(i, j int) bool {
-				left, right := accounts[i].Concurrency, accounts[j].Concurrency
-				if concurrencyMetric == "current" {
-					left, right = concurrencyCounts[accounts[i].ID], concurrencyCounts[accounts[j].ID]
-				}
-				if left == right {
-					return compareConcurrencyTie(accounts[i].ID, accounts[j].ID, sortOrder)
-				}
-				return compareConcurrencyValue(left, right, sortOrder)
-			})
-			total = int64(len(accounts))
-			accounts = paginateSlice(accounts, page, pageSize)
-		}
+	if sortBy == "concurrency" && concurrencyMetric == "current" {
+		accounts, total, concurrencyCounts, err = h.listAccountsByCurrentConcurrency(
+			c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortOrder,
+		)
 	} else {
 		accounts, total, err = h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
 	}
@@ -639,7 +686,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	}
 
 	// 始终获取并发数（Redis ZCARD，极低开销）
-	if sortBy != "concurrency" && h.concurrencyService != nil {
+	if (sortBy != "concurrency" || concurrencyMetric != "current") && h.concurrencyService != nil {
 		if cc, ccErr := h.concurrencyService.GetAccountConcurrencyBatch(c.Request.Context(), accountIDs); ccErr == nil && cc != nil {
 			concurrencyCounts = cc
 		}

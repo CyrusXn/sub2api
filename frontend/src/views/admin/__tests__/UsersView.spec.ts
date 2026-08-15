@@ -85,6 +85,7 @@ const DataTableStub = {
       <div data-test="row-order">{{ data.map(row => row.email).join(',') }}</div>
       <div data-test="selected-keys">{{ (selectedKeys || []).join(',') }}</div>
       <button data-test="sort-last-used" @click="$emit('sort', 'last_used_at', 'desc')">sort</button>
+      <button data-test="sort-concurrency" @click="$emit('sort', 'concurrency', 'desc')">sort concurrency</button>
       <button
         v-for="row in data"
         :key="'select-' + row.id"
@@ -198,7 +199,10 @@ describe('admin UsersView', () => {
         status: '',
         group_name: undefined,
         api_key_group_id: undefined,
-        attributes: undefined
+        attributes: undefined,
+        sort_by: 'concurrency',
+        concurrency_metric: 'available',
+        sort_order: 'desc'
       }),
       expect.any(Object)
     )
@@ -210,6 +214,20 @@ describe('admin UsersView', () => {
     expect(search.attributes('autocorrect')).toBe('off')
     expect(search.attributes('autocapitalize')).toBe('none')
     expect(search.attributes('spellcheck')).toBe('false')
+
+    await wrapper.get('[data-test="sort-concurrency"]').trigger('click')
+    await flushPromises()
+
+    expect(listUsers).toHaveBeenLastCalledWith(
+      1,
+      20,
+      expect.objectContaining({
+        sort_by: 'concurrency',
+        concurrency_metric: 'current',
+        sort_order: 'desc'
+      }),
+      expect.any(Object)
+    )
   })
 
   it('shows active, used, and created activity columns in order and requests last_used_at sort', async () => {

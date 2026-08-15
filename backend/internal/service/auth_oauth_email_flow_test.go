@@ -147,7 +147,7 @@ func newOAuthEmailFlowAuthService(
 	)
 }
 
-func TestRegisterOAuthEmailAccountRollsBackCreatedUserWhenTokenPairGenerationFails(t *testing.T) {
+func TestRegisterOAuthAccountRollsBackCreatedUserWhenTokenPairGenerationFails(t *testing.T) {
 	userRepo := &userRepoStub{nextID: 42}
 	redeemRepo := &redeemCodeRepoStub{
 		codesByCode: map[string]*RedeemCode{
@@ -180,11 +180,10 @@ func TestRegisterOAuthEmailAccountRollsBackCreatedUserWhenTokenPairGenerationFai
 		nil,
 	)
 
-	tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+	tokenPair, user, err := authService.RegisterOAuthAccount(
 		context.Background(),
 		"fresh@example.com",
 		"secret-123",
-		"246810",
 		"INVITE123",
 		"oidc",
 	)
@@ -199,7 +198,7 @@ func TestRegisterOAuthEmailAccountRollsBackCreatedUserWhenTokenPairGenerationFai
 	require.Empty(t, redeemRepo.updateCalls)
 }
 
-func TestRegisterOAuthEmailAccount_NonWhitelistDomainLimit(t *testing.T) {
+func TestRegisterOAuthAccount_NonWhitelistDomainLimit(t *testing.T) {
 	userRepo := &userRepoStub{domainCounts: map[string]int{"custom.example": 1}}
 	authService := newOAuthEmailFlowAuthService(
 		userRepo,
@@ -218,16 +217,16 @@ func TestRegisterOAuthEmailAccount_NonWhitelistDomainLimit(t *testing.T) {
 		nil,
 	)
 
-	_, _, err := authService.RegisterOAuthEmailAccount(
+	_, _, err := authService.RegisterOAuthAccount(
 		context.Background(),
 		"second@custom.example",
 		"secret-123",
-		"246810",
 		"",
 		"oidc",
 	)
 
 	require.ErrorIs(t, err, ErrEmailDomainRegistrationLimit)
+	require.Zero(t, userRepo.domainLimitedCreates)
 }
 
 func TestRegisterVerifiedOAuthEmailAccount_NonWhitelistDomainLimit(t *testing.T) {
@@ -256,53 +255,7 @@ func TestRegisterVerifiedOAuthEmailAccount_NonWhitelistDomainLimit(t *testing.T)
 	require.ErrorIs(t, err, ErrEmailDomainRegistrationLimit)
 }
 
-func TestSendPendingOAuthVerifyCode_NonWhitelistDomainLimit(t *testing.T) {
-	userRepo := &userRepoStub{domainCounts: map[string]int{"custom.example": 1}}
-	authService := newOAuthEmailFlowAuthService(
-		userRepo,
-		nil,
-		nil,
-		map[string]string{
-			SettingKeyRegistrationEnabled:                 "true",
-			SettingKeyRegistrationEmailSuffixWhitelist:    `["@example.com"]`,
-			SettingKeyRegistrationEmailDomainQuotaEnabled: "true",
-		},
-		&emailCacheStub{},
-		nil,
-	)
-
-	_, err := authService.SendPendingOAuthVerifyCode(context.Background(), "second@custom.example")
-	require.ErrorIs(t, err, ErrEmailDomainRegistrationLimit)
-}
-
-// 域名限量注册开关默认关闭：白名单外域名在 pending OAuth 发码阶段即被严格拒绝。
-func TestSendPendingOAuthVerifyCode_NonWhitelistDomainRejectedWhenQuotaDisabled(t *testing.T) {
-	userRepo := &userRepoStub{domainCounts: map[string]int{"custom.example": 0}}
-	authService := newOAuthEmailFlowAuthService(
-		userRepo,
-		nil,
-		nil,
-		map[string]string{
-			SettingKeyRegistrationEnabled:              "true",
-			SettingKeyRegistrationEmailSuffixWhitelist: `["@example.com"]`,
-		},
-		&emailCacheStub{},
-		nil,
-	)
-
-	_, err := authService.SendPendingOAuthVerifyCode(context.Background(), "first@custom.example")
-	require.ErrorIs(t, err, ErrEmailSuffixNotAllowed)
-}
-
-func TestSendPendingOAuthVerifyCode_NilServiceReturnsUnavailable(t *testing.T) {
-	var authService *AuthService
-
-	_, err := authService.SendPendingOAuthVerifyCode(context.Background(), "fresh@example.com")
-
-	require.ErrorIs(t, err, ErrServiceUnavailable)
-}
-
-func TestRegisterOAuthEmailAccountSetsNormalizedSignupSourceOnCreatedUser(t *testing.T) {
+func TestRegisterOAuthAccountSetsNormalizedSignupSourceOnCreatedUser(t *testing.T) {
 	userRepo := &userRepoStub{nextID: 42}
 	emailCache := &emailCacheStub{
 		data: &VerificationCodeData{
@@ -324,11 +277,10 @@ func TestRegisterOAuthEmailAccountSetsNormalizedSignupSourceOnCreatedUser(t *tes
 		nil,
 	)
 
-	tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+	tokenPair, user, err := authService.RegisterOAuthAccount(
 		context.Background(),
 		"fresh@example.com",
 		"secret-123",
-		"246810",
 		"",
 		" OIDC ",
 	)
@@ -340,7 +292,7 @@ func TestRegisterOAuthEmailAccountSetsNormalizedSignupSourceOnCreatedUser(t *tes
 	require.Equal(t, "oidc", userRepo.created[0].SignupSource)
 }
 
-func TestRegisterOAuthEmailAccountKeepsGitHubAndGoogleSignupSource(t *testing.T) {
+func TestRegisterOAuthAccountKeepsGitHubAndGoogleSignupSource(t *testing.T) {
 	tests := []struct {
 		name         string
 		email        string
@@ -384,11 +336,10 @@ func TestRegisterOAuthEmailAccountKeepsGitHubAndGoogleSignupSource(t *testing.T)
 				nil,
 			)
 
-			tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+			tokenPair, user, err := authService.RegisterOAuthAccount(
 				context.Background(),
 				tt.email,
 				"secret-123",
-				"246810",
 				"",
 				tt.signupSource,
 			)
@@ -402,7 +353,7 @@ func TestRegisterOAuthEmailAccountKeepsGitHubAndGoogleSignupSource(t *testing.T)
 	}
 }
 
-func TestRegisterOAuthEmailAccountFallsBackUnknownSignupSourceToEmail(t *testing.T) {
+func TestRegisterOAuthAccountFallsBackUnknownSignupSourceToEmail(t *testing.T) {
 	userRepo := &userRepoStub{nextID: 43}
 	emailCache := &emailCacheStub{
 		data: &VerificationCodeData{
@@ -424,11 +375,10 @@ func TestRegisterOAuthEmailAccountFallsBackUnknownSignupSourceToEmail(t *testing
 		nil,
 	)
 
-	tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+	tokenPair, user, err := authService.RegisterOAuthAccount(
 		context.Background(),
 		"fallback@example.com",
 		"secret-123",
-		"246810",
 		"",
 		"unknown-provider",
 	)

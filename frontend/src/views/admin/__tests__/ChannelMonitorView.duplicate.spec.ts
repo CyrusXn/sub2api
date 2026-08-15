@@ -169,7 +169,7 @@ describe('ChannelMonitorView duplicate action', () => {
     await flushPromises()
 
     expect(showSuccess).toHaveBeenCalledWith('admin.channelMonitor.duplicateSuccess')
-    expect(showError).toHaveBeenCalledWith('refresh failed')
+    expect(showError).toHaveBeenCalledWith('操作失败，请稍后重试。')
     expect(showError).not.toHaveBeenCalledWith('admin.channelMonitor.duplicateFailed')
     wrapper.unmount()
   })
@@ -202,7 +202,7 @@ describe('ChannelMonitorView duplicate action', () => {
     wrapper.findComponent(MonitorActionsCell).vm.$emit('duplicate', monitor)
     await flushPromises()
 
-    expect(showError).toHaveBeenCalledWith('duplicate failed')
+    expect(showError).toHaveBeenCalledWith('操作失败，请稍后重试。')
     wrapper.unmount()
   })
 

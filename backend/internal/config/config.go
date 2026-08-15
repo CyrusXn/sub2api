@@ -1526,6 +1526,9 @@ type OpsConfig struct {
 	// This config flag is the "hard switch" for deployments that want to disable ops completely.
 	Enabled bool `mapstructure:"enabled"`
 
+	// NodeExporterURL 是仅内部网络可访问的主机指标端点；为空时沿用容器指标。
+	NodeExporterURL string `mapstructure:"node_exporter_url"`
+
 	// UsePreaggregatedTables prefers ops_metrics_hourly/daily for long-window dashboard queries.
 	UsePreaggregatedTables bool `mapstructure:"use_preaggregated_tables"`
 
@@ -2205,6 +2208,7 @@ func setDefaults() {
 
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)
+	viper.SetDefault("ops.node_exporter_url", "")
 	viper.SetDefault("ops.use_preaggregated_tables", true)
 	viper.SetDefault("ops.cleanup.enabled", true)
 	viper.SetDefault("ops.cleanup.schedule", "0 2 * * *")

@@ -21,6 +21,7 @@ type balanceCenterAdminService interface {
 	ListManualRows(context.Context) ([]service.BalanceCenterManualRow, error)
 	ReplaceManualRows(context.Context, []service.BalanceCenterManualRow) error
 	ListRechargeEvents(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterRechargeEvent], error)
+	GetRechargeSummary(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterRechargeSummary, error)
 	CreateRechargeEvent(context.Context, *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, error)
 	DeleteRechargeEvent(context.Context, int64) error
 	ListReconciliations(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterReconciliation], error)
@@ -131,6 +132,16 @@ func (h *BalanceCenterHandler) RechargeEvents(c *gin.Context) {
 		return
 	}
 	result, err := h.service.ListRechargeEvents(c.Request.Context(), filter)
+	h.respond(c, result, err)
+}
+
+func (h *BalanceCenterHandler) RechargeSummary(c *gin.Context) {
+	filter, err := parseBalanceCenterFilter(c, true)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.service.GetRechargeSummary(c.Request.Context(), filter)
 	h.respond(c, result, err)
 }
 

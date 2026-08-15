@@ -29,18 +29,80 @@ export async function getStats(): Promise<DashboardStats> {
  * Get real-time metrics
  * @returns Real-time system metrics
  */
-export async function getRealtimeMetrics(): Promise<{
+export interface DashboardRealtimeMetrics {
   active_requests: number
   requests_per_minute: number
+  tokens_per_minute: number
   average_response_time: number
   error_rate: number
-}> {
-  const { data } = await apiClient.get<{
-    active_requests: number
-    requests_per_minute: number
-    average_response_time: number
-    error_rate: number
-  }>('/admin/dashboard/realtime')
+}
+
+export async function getRealtimeMetrics(): Promise<DashboardRealtimeMetrics> {
+  const { data } = await apiClient.get<DashboardRealtimeMetrics>('/admin/dashboard/realtime')
+  return data
+}
+
+export interface DashboardBusinessTotals {
+  recharge_amount: number
+  total_requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  total_tokens: number
+  total_cost: number
+  actual_cost: number
+  actual_cost_excluding_admin: number
+  account_cost: number
+  account_cost_excluding_admin: number
+}
+
+export interface DashboardBusinessSummary {
+  lifetime: DashboardBusinessTotals
+  range: DashboardBusinessTotals
+  daily: Array<DashboardBusinessTotals & { bucket_date: string }>
+}
+
+export interface DashboardLowBalanceAccount {
+  id: number
+  name: string
+  platform: string
+  balance: number
+  unit: string
+  received_at: string | null
+}
+
+export interface DashboardSystemMetricPoint {
+  time: string
+  cpu_usage_percent: number | null
+  memory_used_mb: number | null
+  memory_total_mb: number | null
+  memory_usage_percent: number | null
+  network_receive_bytes_per_second: number | null
+  network_transmit_bytes_per_second: number | null
+  disk_used_bytes: number | null
+  disk_total_bytes: number | null
+  disk_usage_percent: number | null
+  resource_source: string
+}
+
+export interface DashboardSystemMetricTrend {
+  source: string
+  points: DashboardSystemMetricPoint[]
+}
+
+export async function getBusinessSummary(params?: Pick<TrendParams, 'start_date' | 'end_date'>): Promise<DashboardBusinessSummary> {
+  const { data } = await apiClient.get<DashboardBusinessSummary>('/admin/dashboard/business-summary', { params })
+  return data
+}
+
+export async function getLowBalanceAccounts(): Promise<{ accounts: DashboardLowBalanceAccount[]; threshold: number }> {
+  const { data } = await apiClient.get<{ accounts: DashboardLowBalanceAccount[]; threshold: number }>('/admin/dashboard/low-balance-accounts')
+  return data
+}
+
+export async function getSystemMetricsTrend(params?: Pick<TrendParams, 'start_date' | 'end_date'>): Promise<DashboardSystemMetricTrend> {
+  const { data } = await apiClient.get<DashboardSystemMetricTrend>('/admin/dashboard/system-metrics-trend', { params })
   return data
 }
 
@@ -330,6 +392,9 @@ export async function getBatchApiKeysUsage(
 export const dashboardAPI = {
   getStats,
   getRealtimeMetrics,
+  getBusinessSummary,
+  getLowBalanceAccounts,
+  getSystemMetricsTrend,
   getUsageTrend,
   getModelStats,
   getGroupStats,

@@ -1,0 +1,85 @@
+package repository
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
+
+	totalColumns := []string{
+		"recharge_amount", "total_requests", "input_tokens", "output_tokens",
+		"cache_creation_tokens", "cache_read_tokens", "total_cost", "actual_cost",
+		"account_cost", "admin_actual_cost", "admin_account_cost",
+	}
+	mock.ExpectQuery(`(?s)FROM dashboard_business_daily`).
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows(append(totalColumns, totalColumns...)).AddRow(
+			100.0, int64(20), int64(100), int64(50), int64(10), int64(5), 8.0, 12.0, 3.0, 2.0, 0.5,
+			40.0, int64(8), int64(40), int64(20), int64(4), int64(2), 3.0, 5.0, 1.0, 1.0, 0.2,
+		))
+	mock.ExpectQuery(`(?s)FROM dashboard_business_daily`).
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bucket_date", "recharge_amount", "total_requests", "total_tokens",
+			"actual_cost", "actual_cost_excluding_admin", "account_cost", "account_cost_excluding_admin",
+		}).AddRow(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC), 10.0, int64(2), int64(30), 2.0, 1.5, 0.6, 0.5))
+	mock.ExpectClose()
+
+	summary, err := repo.GetDashboardBusinessSummary(context.Background(), start, end)
+	require.NoError(t, err)
+	require.Equal(t, float64(100), summary.Lifetime.RechargeAmount)
+	require.Equal(t, float64(10), summary.Lifetime.ActualCostExcludingAdmin)
+	require.Equal(t, int64(165), summary.Lifetime.TotalTokens)
+	require.Equal(t, float64(40), summary.Range.RechargeAmount)
+	require.Len(t, summary.Daily, 1)
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardLast24HourUsageUsesHourlyBucketsAndExactBoundaryDetails(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	start := time.Date(2026, 8, 13, 15, 37, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	mock.ExpectQuery(`(?s)WITH bounds AS .*FROM usage_dashboard_hourly.*actual_cost.*FROM usage_logs`).
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"tokens", "actual_cost"}).AddRow(int64(12345), 67.89))
+
+	tokens, actualCost, err := repo.GetDashboardLast24HourUsage(context.Background(), start, end)
+	require.NoError(t, err)
+	require.Equal(t, int64(12345), tokens)
+	require.InDelta(t, 67.89, actualCost, 0.0001)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCleanupUsageLogsFinalizesBusinessRollupBeforeDeletingDetails(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	cutoff := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec(`(?s)UPDATE dashboard_business_daily.*SET finalized_at`).
+		WithArgs(cutoff, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 90))
+	mock.ExpectQuery(`(?s)SELECT EXISTS.*pg_partitioned_table`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectExec(`(?s)WITH victims AS .*DELETE FROM usage_logs`).
+		WithArgs(cutoff, usageLogsCleanupBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	require.NoError(t, repo.CleanupUsageLogs(context.Background(), cutoff))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

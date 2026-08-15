@@ -71,7 +71,10 @@ shasum -a 256 sub2api-xnkaixin-0.1.163-YYYYMMDD-full.tar.gz > sub2api-xnkaixin-0
 
 ## 生产环境
 
-- SSH：`root@64.83.14.17`
+- 当前生产 SSH：`root@152.53.166.154`（主机名：`v2202608397111498776.happysrv.de`）
+- 旧服务器 `64.83.14.17` 和 `38.246.232.188` 已停用，后续开发、部署和自动化禁止访问。
+- 完整服务器连接信息保存在项目根目录 `sub2api-production-server.local`。该文件包含敏感凭据，受 `*.local` 忽略规则保护；只允许本机读取，禁止提交、输出、写入日志或截图传播。
+- 首次连接或主机密钥变化时，必须对照本地配置中的 SSH SHA-256 指纹核验，禁止跳过主机身份检查。
 - Compose 目录：`/home/docker/sub2api`
 - 应用服务和容器：`sub2api`
 - PostgreSQL 容器：`sub2api-postgres`

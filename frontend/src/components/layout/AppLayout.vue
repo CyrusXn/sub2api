@@ -12,7 +12,7 @@
       :class="[sidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-64']"
     >
       <!-- Header -->
-      <AppHeader />
+      <AppHeader @refresh-admin-metrics="emit('refresh-admin-metrics')" />
 
       <!-- Main Content -->
       <main class="p-4 md:p-6 lg:p-8">
@@ -43,6 +43,9 @@ const { replayTour } = useOnboardingTour({
 })
 
 const onboardingStore = useOnboardingStore()
+const emit = defineEmits<{
+  'refresh-admin-metrics': []
+}>()
 
 onMounted(() => {
   onboardingStore.setReplayCallback(replayTour)

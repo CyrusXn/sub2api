@@ -44,3 +44,23 @@ func TestBalanceCenterLiandongSessionMigrationStoresCiphertextOnly(t *testing.T)
 	require.NotContains(t, sql, "cookie")
 	require.NotContains(t, sql, "request_headers")
 }
+
+func TestAlertEmailOutboxMigrationDefinesPersistentAggregationQueue(t *testing.T) {
+	content, err := FS.ReadFile("229_add_alert_email_outbox.sql")
+	require.NoError(t, err)
+
+	sql := strings.Join(strings.Fields(string(content)), " ")
+	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS alert_email_outbox")
+	require.Contains(t, sql, "UNIQUE (source_type, source_key, recipient_email)")
+	require.Contains(t, sql, "available_at TIMESTAMPTZ NOT NULL")
+	require.Contains(t, sql, "WHERE status = 'pending'")
+}
+
+func TestRechargeSiteLabelMigrationPreservesUnboundLegacySites(t *testing.T) {
+	content, err := FS.ReadFile("230_add_recharge_event_site_label.sql")
+	require.NoError(t, err)
+
+	sql := strings.Join(strings.Fields(string(content)), " ")
+	require.Contains(t, sql, "ALTER TABLE balance_center_recharge_events")
+	require.Contains(t, sql, "site_label VARCHAR(255) NOT NULL DEFAULT ''")
+}

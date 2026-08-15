@@ -642,12 +642,12 @@ const togglingSchedulable = ref<number | null>(null)
 const menu = reactive<{show:boolean, acc:Account|null, pos:{top:number, left:number}|null}>({ show: false, acc: null, pos: null })
 const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
-const upstreamBillingRefreshInFlight = ref(false)
 const upstreamBillingChangeDirections = reactive(new Map<number, 'up' | 'down'>())
 // 同一页面会话中，每个已过期快照只静默探测一次，失败也不循环打上游。
 const attemptedExpiredUpstreamBilling = new Set<number>()
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
 const upstreamBillingNow = ref(Date.now())
+const DEFAULT_ACCOUNT_GROUP_NAME = '【GPT】plus 低并发稳定'
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 
 // Account tools dropdown
@@ -744,7 +744,8 @@ const loadInitialAccountSortState = (): AccountSortState => {
 }
 const sortState = reactive<AccountSortState>(loadInitialAccountSortState())
 type ConcurrencyMetric = 'total' | 'current'
-const concurrencyMetric = ref<ConcurrencyMetric>('total')
+// 并发列默认按实时占用排序，管理员仍可显式切换为总并发。
+const concurrencyMetric = ref<ConcurrencyMetric>('current')
 const concurrencyMetricMenuOpen = ref(false)
 const setConcurrencyMetric = (metric: ConcurrencyMetric) => {
   concurrencyMetric.value = metric
@@ -1249,6 +1250,18 @@ const resetAutoRefreshCache = () => {
 
 const isFirstLoad = ref(true)
 const isReadOnlyPreview = () => import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
+let activeUpstreamBillingProbeAccountID: number | null = null
+let upstreamBillingProbeWorker: Promise<boolean> | null = null
+let pendingUpstreamBillingProbeRequest: UpstreamBillingProbeRequest | null = null
+let activeUpstreamBillingProbeRequest: UpstreamBillingProbeRequest | null = null
+let upstreamBillingProbeWorkerDisposed = false
+
+interface UpstreamBillingProbeRequest {
+  accountIDs: number[]
+  force: boolean
+  superseded: boolean
+  reservedAccountIDs: Set<number>
+}
 
 const probeTimestampIsDue = (value: unknown, now: number) => {
   if (typeof value !== 'string' || value.trim() === '') return true
@@ -1273,39 +1286,101 @@ const visibleUpstreamBillingAccountIDs = (options: { force?: boolean } = {}) => 
     .map(account => account.id)
 }
 
-const refreshVisibleUpstreamBillingRates = async (options: { force?: boolean } = {}) => {
-  // 本地只读预览连接线上 API 时禁止触发探测，避免写线上快照或访问上游站点。
-  if (isReadOnlyPreview()) return false
-  if (upstreamBillingRefreshInFlight.value) return false
-  const accountIDs = visibleUpstreamBillingAccountIDs(options)
-  if (accountIDs.length === 0) return false
+const releaseQueuedUpstreamBillingProbes = (request: UpstreamBillingProbeRequest | null) => {
+  if (!request) return
+  request.reservedAccountIDs.forEach((accountID) => {
+    if (accountID !== activeUpstreamBillingProbeAccountID) {
+      probingUpstreamBilling.delete(accountID)
+      request.reservedAccountIDs.delete(accountID)
+    }
+  })
+}
 
-  upstreamBillingRefreshInFlight.value = true
+const runUpstreamBillingProbeWorker = async () => {
   let patched = false
-  try {
-    // 后端批量接口单次最多接收 20 个账号；串行分批可避免刷新时同时压满上游站点。
-    for (let index = 0; index < accountIDs.length; index += 20) {
-      const batch = accountIDs.slice(index, index + 20)
-      if (options.force !== true) batch.forEach(id => attemptedExpiredUpstreamBilling.add(id))
-      batch.forEach(id => probingUpstreamBilling.add(id))
+  while (!upstreamBillingProbeWorkerDisposed && pendingUpstreamBillingProbeRequest) {
+    const request = pendingUpstreamBillingProbeRequest
+    pendingUpstreamBillingProbeRequest = null
+    activeUpstreamBillingProbeRequest = request
+
+    // 页面自动刷新逐账号串行探测；新列表到达后立即跳过旧列表尚未执行的账号。
+    for (const accountID of request.accountIDs) {
+      if (upstreamBillingProbeWorkerDisposed || request.superseded) break
+      if (!accounts.value.some(account => account.id === accountID)) {
+        continue
+      }
+      if (!request.reservedAccountIDs.has(accountID)) {
+        if (probingUpstreamBilling.has(accountID)) continue
+        probingUpstreamBilling.add(accountID)
+        request.reservedAccountIDs.add(accountID)
+      }
+      if (!request.force) attemptedExpiredUpstreamBilling.add(accountID)
+      activeUpstreamBillingProbeAccountID = accountID
       try {
-        const results = await adminAPI.accounts.probeUpstreamBillingBatch(batch)
-        results.forEach(result => {
-          if (!result.snapshot) return
-          patchUpstreamBillingSnapshot(result.account_id, result.snapshot)
+        const result = await adminAPI.accounts.probeUpstreamBilling(accountID)
+        if (
+          result.snapshot &&
+          !upstreamBillingProbeWorkerDisposed &&
+          accounts.value.some(account => account.id === accountID)
+        ) {
+          patchUpstreamBillingSnapshot(accountID, result.snapshot)
           patched = true
-        })
+        }
+      } catch (error) {
+        // 单个上游失败只影响当前单元格，不能中断后续账号的串行探测。
+        console.error(`Failed to refresh upstream billing for account ${accountID}:`, error)
       } finally {
-        batch.forEach(id => probingUpstreamBilling.delete(id))
+        activeUpstreamBillingProbeAccountID = null
+        request.reservedAccountIDs.delete(accountID)
+        probingUpstreamBilling.delete(accountID)
       }
     }
-  } catch (error) {
-    // 自动刷新保持静默，单个账号的失败状态由倍率单元格直接展示。
-    console.error('Failed to refresh visible upstream billing rates:', error)
-  } finally {
-    upstreamBillingRefreshInFlight.value = false
+    releaseQueuedUpstreamBillingProbes(request)
+    activeUpstreamBillingProbeRequest = null
   }
   return patched
+}
+
+const startUpstreamBillingProbeWorker = () => {
+  if (upstreamBillingProbeWorker) return upstreamBillingProbeWorker
+  upstreamBillingProbeWorker = runUpstreamBillingProbeWorker()
+    .finally(() => {
+      upstreamBillingProbeWorker = null
+      if (!upstreamBillingProbeWorkerDisposed && pendingUpstreamBillingProbeRequest) {
+        void startUpstreamBillingProbeWorker()
+      }
+    })
+  return upstreamBillingProbeWorker
+}
+
+const refreshVisibleUpstreamBillingRates = async (options: { force?: boolean } = {}) => {
+  // 本地只读预览连接线上 API 时禁止触发探测，避免写线上快照或访问上游站点。
+  if (isReadOnlyPreview() || upstreamBillingProbeWorkerDisposed) return false
+
+  const visibleAccountIDs = visibleUpstreamBillingAccountIDs(options)
+  // loading watcher 与显式 load 可能连续触发；空请求不能覆盖正在运行的有效任务。
+  if (visibleAccountIDs.length === 0) return false
+  if (activeUpstreamBillingProbeRequest) {
+    activeUpstreamBillingProbeRequest.superseded = true
+    releaseQueuedUpstreamBillingProbes(activeUpstreamBillingProbeRequest)
+  }
+  releaseQueuedUpstreamBillingProbes(pendingUpstreamBillingProbeRequest)
+
+  // 当前正在请求的账号已经会产生最新快照，强刷只补其余可见账号，避免紧接着重复访问同一上游。
+  const accountIDs = visibleAccountIDs.filter(accountID => accountID !== activeUpstreamBillingProbeAccountID)
+  const request: UpstreamBillingProbeRequest = {
+    accountIDs,
+    force: options.force === true,
+    superseded: false,
+    reservedAccountIDs: new Set<number>()
+  }
+  accountIDs.forEach((accountID) => {
+    if (probingUpstreamBilling.has(accountID)) return
+    probingUpstreamBilling.add(accountID)
+    request.reservedAccountIDs.add(accountID)
+  })
+  pendingUpstreamBillingProbeRequest = request
+  return startUpstreamBillingProbeWorker()
 }
 
 const load = async (options: { refreshUpstreamBilling?: boolean; forceUpstreamBillingRefresh?: boolean } = {}) => {
@@ -1324,7 +1399,7 @@ const load = async (options: { refreshUpstreamBilling?: boolean; forceUpstreamBi
   }
   await refreshTodayStatsBatch()
   if (options.refreshUpstreamBilling !== false) {
-    await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
+    void refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
   }
 }
 
@@ -1336,23 +1411,8 @@ const reload = async (options: { refreshUpstreamBilling?: boolean; forceUpstream
   await baseReload()
   await refreshTodayStatsBatch()
   if (options.refreshUpstreamBilling !== false) {
-    await refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
+    void refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
   }
-}
-
-const refreshUpstreamBillingSortedList = () => {
-  if (sortState.sort_by !== 'upstream_billing_rate') return
-  const direction = sortState.sort_order === 'desc' ? -1 : 1
-  accounts.value = [...accounts.value]
-    .map((account, index) => ({ account, index, rate: effectiveUpstreamBillingRate(account.extra?.upstream_billing_probe) }))
-    .sort((left, right) => {
-      if (left.rate == null && right.rate == null) return left.index - right.index
-      if (left.rate == null) return 1
-      if (right.rate == null) return -1
-      if (left.rate !== right.rate) return (left.rate - right.rate) * direction
-      return left.index - right.index
-    })
-    .map(({ account }) => account)
 }
 
 const debouncedReload = () => {
@@ -1412,7 +1472,6 @@ watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && pendingUpstreamBillingRefresh.value) {
     pendingUpstreamBillingRefresh.value = false
     refreshVisibleUpstreamBillingRates()
-      .then(() => refreshUpstreamBillingSortedList())
       .catch((error) => {
         console.error('Failed to refresh upstream billing rates after table load:', error)
       })
@@ -1438,7 +1497,7 @@ watch(accounts, (rows) => {
 watch(upstreamBillingNow, () => {
   if (loading.value) return
   if (typeof document !== 'undefined' && document.hidden) return
-  void refreshVisibleUpstreamBillingRates().then(() => refreshUpstreamBillingSortedList())
+  void refreshVisibleUpstreamBillingRates()
 })
 
 const isAnyModalOpen = computed(() => {
@@ -1558,7 +1617,6 @@ const refreshAccountsIncrementally = async () => {
 
     await refreshTodayStatsBatch()
     await refreshVisibleUpstreamBillingRates()
-    refreshUpstreamBillingSortedList()
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
@@ -2041,14 +2099,11 @@ const handleBulkProbeUpstreamBilling = async () => {
   accountIDs.forEach(id => probingUpstreamBilling.add(id))
   try {
     const results = await adminAPI.accounts.probeUpstreamBillingBatch(accountIDs)
-    let patched = false
     results.forEach(result => {
       if (result.snapshot) {
         patchUpstreamBillingSnapshot(result.account_id, result.snapshot)
-        patched = true
       }
     })
-    if (patched) refreshUpstreamBillingSortedList()
     const failed = results.filter(result => result.error).length
     if (failed > 0) {
       appStore.showError(t('admin.accounts.upstreamBilling.batchPartial', { success: results.length - failed, failed }))
@@ -2351,17 +2406,14 @@ const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBilli
   } else {
     upstreamBillingChangeDirections.delete(accountID)
   }
-  upstreamBillingNow.value = Date.now()
   // 仅使用后端确认已写入账号表的同步倍率，避免把只读探测值误当成结算倍率。
   const syncedRate = snapshot.synced_rate_multiplier
   const rateMultiplier = typeof syncedRate === 'number' && Number.isFinite(syncedRate) && syncedRate >= 0
     ? syncedRate
     : account.rate_multiplier
-  patchAccountInList({
-    ...account,
-    rate_multiplier: rateMultiplier,
-    extra: { ...account.extra, upstream_billing_probe: snapshot }
-  })
+  // 保持账号行对象不变，只触发倍率、余额及结算倍率相关单元格的响应式更新。
+  account.rate_multiplier = rateMultiplier
+  account.extra = { ...account.extra, upstream_billing_probe: snapshot }
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
   if (isReadOnlyPreview()) {
@@ -2374,7 +2426,6 @@ const handleProbeUpstreamBilling = async (account: Account) => {
     const result = await adminAPI.accounts.probeUpstreamBilling(account.id)
     if (result.snapshot) {
       patchUpstreamBillingSnapshot(account.id, result.snapshot)
-      refreshUpstreamBillingSortedList()
     }
   } catch (error) {
     console.error('Failed to probe upstream billing:', error)
@@ -2644,7 +2695,9 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 }
 
-onMounted(async () => {
+onMounted(() => {
+  // 默认分组尚在解析时先展示加载态，避免首屏短暂出现“暂无数据”。
+  loading.value = true
   if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)
     isDesktopViewport.value = desktopViewportMediaQuery.matches
@@ -2658,32 +2711,52 @@ onMounted(async () => {
     }
   }
 
-  const restoredHiddenColumns = await loadTablePreference({
+  const schedulerScoreWasVisible = shouldIncludeSchedulerScore()
+  let initialAccountGroupResolved = false
+  void loadTablePreference({
     hiddenColumns: [...hiddenColumns],
     columnWidths: {},
     columnOrder: []
   }, {
     columnWidthStorageKey: ACCOUNT_COLUMN_WIDTH_STORAGE_KEY,
     columnOrderStorageKey: ACCOUNT_COLUMN_ORDER_STORAGE_KEY
+  }).then((restoredHiddenColumns) => {
+    if (restoredHiddenColumns) {
+      hiddenColumns.clear()
+      restoredHiddenColumns.forEach((key) => hiddenColumns.add(key))
+      saveColumnsToStorage()
+    } else {
+      updateHiddenColumns([...hiddenColumns])
+    }
+    // 跨设备列偏好改变调度分可见性时，立即让当前列表与最终列配置保持一致。
+    if (initialAccountGroupResolved && schedulerScoreWasVisible !== shouldIncludeSchedulerScore()) {
+      void load({ refreshUpstreamBilling: false })
+    }
   })
-  if (restoredHiddenColumns) {
-    hiddenColumns.clear()
-    restoredHiddenColumns.forEach((key) => hiddenColumns.add(key))
-    saveColumnsToStorage()
-  } else {
-    updateHiddenColumns([...hiddenColumns])
-  }
 
-  // 全局开关先于列表加载，避免页面刚打开时误触发已禁用的上游探测。
-  await loadUpstreamBillingProbeGlobalState()
-  load()
-  try {
-    const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
-    proxies.value = p
-    groups.value = g
-  } catch (error) {
-    console.error('Failed to load proxies/groups:', error)
-  }
+  // 默认分组是首次列表的必要条件；拿到分组后立即查询，不再串行等待列偏好和探测开关。
+  void adminAPI.groups.getAll()
+    .then((result) => {
+      groups.value = result
+      const defaultGroup = result.find(group => group.name === DEFAULT_ACCOUNT_GROUP_NAME)
+      if (defaultGroup) {
+        params.group = String(defaultGroup.id)
+      }
+    })
+    .catch((error) => { console.error('加载分组失败：', error) })
+    .finally(() => {
+      initialAccountGroupResolved = true
+      void load()
+    })
+  void loadUpstreamBillingProbeGlobalState()
+    .then(() => {
+      if (upstreamBillingProbeGloballyEnabled.value === true && accounts.value.length > 0 && !loading.value) {
+        void refreshVisibleUpstreamBillingRates()
+      }
+    })
+  void adminAPI.proxies.getAll()
+    .then(result => { proxies.value = result })
+    .catch(error => { console.error('加载代理失败：', error) })
   window.addEventListener('scroll', handleScroll, true)
   window.addEventListener('resize', handleViewportResize)
   document.addEventListener('click', handleClickOutside)
@@ -2697,6 +2770,13 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  upstreamBillingProbeWorkerDisposed = true
+  if (activeUpstreamBillingProbeRequest) {
+    activeUpstreamBillingProbeRequest.superseded = true
+    releaseQueuedUpstreamBillingProbes(activeUpstreamBillingProbeRequest)
+  }
+  releaseQueuedUpstreamBillingProbes(pendingUpstreamBillingProbeRequest)
+  pendingUpstreamBillingProbeRequest = null
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)
     usageBatchFlushTimer = null

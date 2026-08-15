@@ -86,6 +86,7 @@ const DataTableStub = {
   props: [
     'columns',
     'data',
+    'loading',
     'defaultSortKey',
     'defaultSortOrder',
     'columnWidthStorageKey',
@@ -93,9 +94,10 @@ const DataTableStub = {
     'selectable',
     'selectedKeys'
   ],
-  emits: ['selectionChange'],
+  emits: ['selectionChange', 'sort'],
   template: `
     <div data-test="data-table">
+      <button data-test="sort-concurrency" @click="$emit('sort', 'capacity', 'desc')">sort concurrency</button>
       <span v-for="column in columns" :key="column.key" data-test="column-key">{{ column.key }}</span>
       <div v-for="row in data" :key="row.id">
         <input
@@ -123,6 +125,12 @@ const ProbeDataTableStub = {
       </div>
     </div>
   `
+}
+
+const UpstreamBillingRateCellProbeStub = {
+  props: ['account', 'probing'],
+  emits: ['probe'],
+  template: '<button :data-test="`probe-cell-${account.id}`" :data-probing="String(probing)" @click="$emit(\'probe\')">probe</button>'
 }
 
 const AccountBulkActionsBarStub = {
@@ -183,6 +191,14 @@ const dueProbeAccount = (id: number, overrides: Record<string, unknown> = {}) =>
   updated_at: '2026-07-13T00:00:00Z',
   ...overrides
 })
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 
 const mountAccountsForSortAndProbe = () => mount(AccountsView, {
   global: {
@@ -285,6 +301,76 @@ describe('admin AccountsView bulk edit scope', () => {
     const table = wrapper.getComponent(DataTableStub)
     expect(table.props('defaultSortKey')).toBe('upstream_billing_rate')
     expect(table.props('defaultSortOrder')).toBe('asc')
+  })
+
+  it('defaults concurrency sorting to current usage', async () => {
+    const wrapper = mountAccountsForSortAndProbe()
+
+    await flushPromises()
+    await wrapper.get('[data-test="sort-concurrency"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        sort_by: 'concurrency',
+        concurrency_metric: 'current',
+        sort_order: 'desc'
+      }),
+      expect.any(Object)
+    )
+  })
+
+  it('loads the preferred group first and probes each visible account without blocking the table', async () => {
+    let resolveGroups!: (groups: Array<{ id: number; name: string }>) => void
+    getAllGroups.mockReturnValue(new Promise(resolve => {
+      resolveGroups = resolve
+    }))
+
+    let resolveProbe!: (result: { snapshot: ReturnType<typeof expiredProbeSnapshot> }) => void
+    probeUpstreamBilling.mockReturnValue(new Promise(resolve => {
+      resolveProbe = resolve
+    }))
+    listAccounts.mockResolvedValue({
+      items: [dueProbeAccount(7)],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountAccountsForSortAndProbe()
+    await flushPromises()
+
+    expect(listAccounts).not.toHaveBeenCalled()
+
+    resolveGroups([{ id: 42, name: '【GPT】plus 低并发稳定' }])
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ group: '42' }),
+      expect.any(Object)
+    )
+    expect(probeUpstreamBilling).toHaveBeenCalledWith(7)
+    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+    expect(wrapper.getComponent(DataTableStub).props('loading')).toBe(false)
+
+    const snapshot = {
+      ...expiredProbeSnapshot(),
+      status: 'ok' as const,
+      data: {
+        ...expiredProbeSnapshot().data,
+        effective_rate_multiplier: 0.03
+      }
+    }
+    resolveProbe({ snapshot })
+    await flushPromises()
+
+    const rows = wrapper.getComponent(DataTableStub).props('data') as Array<{ extra?: { upstream_billing_probe?: unknown } }>
+    expect(rows[0]?.extra?.upstream_billing_probe).toEqual(snapshot)
   })
 
   it('exposes the account settlement multiplier as an admin-only account column', async () => {
@@ -554,9 +640,14 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.get('[data-test="upstream-billing-cell"]').attributes('data-global-enabled')).toBe('false')
   })
 
-  it('refreshes visible upstream rates in batches of 20 after the account query', async () => {
-    const accounts = Array.from({ length: 21 }, (_, index) => dueProbeAccount(index + 1))
-    listAccounts.mockResolvedValue({ items: accounts, total: 21, page: 1, page_size: 21, pages: 1 })
+  it('starts the next visible upstream probe only after the previous one finishes', async () => {
+    const firstProbe = createDeferred<Record<string, never>>()
+    const secondProbe = createDeferred<Record<string, never>>()
+    const accounts = [dueProbeAccount(1), dueProbeAccount(2)]
+    listAccounts.mockResolvedValue({ items: accounts, total: 2, page: 1, page_size: 20, pages: 1 })
+    probeUpstreamBilling.mockImplementation((accountID: number) => {
+      return accountID === 1 ? firstProbe.promise : secondProbe.promise
+    })
 
     mount(AccountsView, {
       global: {
@@ -595,8 +686,80 @@ describe('admin AccountsView bulk edit scope', () => {
 
     await flushPromises()
 
-    expect(probeUpstreamBillingBatch).toHaveBeenNthCalledWith(1, accounts.slice(0, 20).map(account => account.id))
-    expect(probeUpstreamBillingBatch).toHaveBeenNthCalledWith(2, [21])
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+    expect(probeUpstreamBilling).toHaveBeenCalledWith(1)
+
+    firstProbe.resolve({})
+    await flushPromises()
+
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(2)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(2, 2)
+    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+
+    secondProbe.resolve({})
+    await flushPromises()
+  })
+
+  it('does not duplicate a queued background probe when its cell is clicked', async () => {
+    const firstProbe = createDeferred<Record<string, never>>()
+    listAccounts.mockResolvedValue({
+      items: [dueProbeAccount(1), dueProbeAccount(2)],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    probeUpstreamBilling.mockImplementation((accountID: number) => {
+      return accountID === 1 ? firstProbe.promise : Promise.resolve({})
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="table" /></div>' },
+          DataTable: ProbeDataTableStub,
+          UpstreamBillingRateCell: UpstreamBillingRateCellProbeStub,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: true,
+          AccountActionMenu: true,
+          Pagination: true,
+          ConfirmDialog: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: true,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.get('[data-test="probe-cell-2"]').attributes('data-probing')).toBe('true')
+
+    await wrapper.get('[data-test="probe-cell-2"]').trigger('click')
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+
+    firstProbe.resolve({})
+    await flushPromises()
+
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(2)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(2, 2)
   })
 
   it('auto-probes enabled API-key accounts and expired persisted snapshots', async () => {
@@ -614,8 +777,37 @@ describe('admin AccountsView bulk edit scope', () => {
     mountAccountsForSortAndProbe()
     await flushPromises()
 
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([1, 4, 6])
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(3)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(1, 1)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(2, 4)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(3, 6)
+    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+  })
+
+  it('continues the serial upstream probe queue after one account fails', async () => {
+    listAccounts.mockResolvedValue({
+      items: [dueProbeAccount(1), dueProbeAccount(2)],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    probeUpstreamBilling
+      .mockRejectedValueOnce(new Error('upstream unavailable'))
+      .mockResolvedValueOnce({})
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    mountAccountsForSortAndProbe()
+    await flushPromises()
+
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(2)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(1, 1)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(2, 2)
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to refresh upstream billing for account 1:',
+      expect.any(Error)
+    )
+    consoleError.mockRestore()
   })
 
   it('forces a fresh upstream billing probe for visible accounts on manual refresh', async () => {
@@ -668,13 +860,13 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+    expect(probeUpstreamBilling).not.toHaveBeenCalled()
 
     await wrapper.get('[data-test="manual-refresh"]').trigger('click')
     await flushPromises()
 
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([9])
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+    expect(probeUpstreamBilling).toHaveBeenCalledWith(9)
   })
 
   it('does not auto-probe accounts while the global probe switch is disabled', async () => {
@@ -684,7 +876,7 @@ describe('admin AccountsView bulk edit scope', () => {
     mountAccountsForSortAndProbe()
     await flushPromises()
 
-    expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
+    expect(probeUpstreamBilling).not.toHaveBeenCalled()
   })
 
   it('does not probe upstream accounts when the local preview is read-only', async () => {
@@ -751,10 +943,14 @@ describe('admin AccountsView bulk edit scope', () => {
   })
 
   it('refreshes upstream rates for the new page after pagination reloads the account query', async () => {
+    const firstPageProbe = createDeferred<Record<string, never>>()
     const account = (id: number) => dueProbeAccount(id)
     listAccounts
-      .mockResolvedValueOnce({ items: [account(1)], total: 2, page: 1, page_size: 1, pages: 2 })
-      .mockResolvedValueOnce({ items: [account(2)], total: 2, page: 2, page_size: 1, pages: 2 })
+      .mockResolvedValueOnce({ items: [account(1), account(2)], total: 3, page: 1, page_size: 2, pages: 2 })
+      .mockResolvedValueOnce({ items: [account(3)], total: 3, page: 2, page_size: 2, pages: 2 })
+    probeUpstreamBilling.mockImplementation((accountID: number) => {
+      return accountID === 1 ? firstPageProbe.promise : Promise.resolve({})
+    })
 
     const wrapper = mount(AccountsView, {
       global: {
@@ -792,13 +988,86 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    probeUpstreamBillingBatch.mockClear()
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+    expect(probeUpstreamBilling).toHaveBeenCalledWith(1)
 
     await wrapper.get('[data-test="next-page"]').trigger('click')
     await flushPromises()
 
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledTimes(1)
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([2])
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+
+    firstPageProbe.resolve({})
+    await flushPromises()
+
+    expect(probeUpstreamBilling).not.toHaveBeenCalledWith(2)
+    expect(probeUpstreamBilling).toHaveBeenCalledWith(3)
+  })
+
+  it('keeps a manual force refresh requested while the normal probe queue is running', async () => {
+    const normalProbe = createDeferred<Record<string, never>>()
+    const future = new Date(Date.now() + 60_000).toISOString()
+    const accounts = [
+      dueProbeAccount(1),
+      dueProbeAccount(9, {
+        extra: {
+          upstream_billing_probe_enabled: false,
+          upstream_billing_probe: { ...expiredProbeSnapshot(), fresh_until: future }
+        }
+      })
+    ]
+    listAccounts.mockResolvedValue({ items: accounts, total: 2, page: 1, page_size: 20, pages: 1 })
+    probeUpstreamBilling.mockImplementation((accountID: number) => {
+      return accountID === 1 ? normalProbe.promise : Promise.resolve({})
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          AccountTableActions: AccountTableActionsRefreshStub,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: true,
+          AccountActionMenu: true,
+          Pagination: true,
+          ConfirmDialog: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: true,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+    expect(probeUpstreamBilling).toHaveBeenCalledWith(1)
+
+    await wrapper.get('[data-test="manual-refresh"]').trigger('click')
+    await flushPromises()
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+
+    normalProbe.resolve({})
+    await flushPromises()
+
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(2)
+    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(2, 9)
   })
 
   it('submits selected account IDs from every page for backend eligibility checks', async () => {

@@ -41,6 +41,7 @@ type OpsAlertEvaluatorService struct {
 	opsService   *OpsService
 	opsRepo      OpsRepository
 	emailService *EmailService
+	alertOutbox  AlertEmailOutboxEnqueuer
 	proxyRepo    ProxyRepository
 
 	redisClient *redis.Client
@@ -98,6 +99,13 @@ func NewOpsAlertEvaluatorService(
 		accountRequestAlertCh:      make(chan []*opsAccountRequestAlertSignal, 256),
 		accountRequestAlertBatchCh: make(chan *opsAccountRequestAlertBatch),
 		emailLimiter:               newSlidingWindowLimiter(0, time.Hour),
+	}
+}
+
+// SetAlertEmailOutbox 仅用于上游账号请求异常，将密集事件交给持久化队列汇总。
+func (s *OpsAlertEvaluatorService) SetAlertEmailOutbox(outbox AlertEmailOutboxEnqueuer) {
+	if s != nil {
+		s.alertOutbox = outbox
 	}
 }
 
@@ -956,16 +964,37 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 	// 按当前配置更新逐小时限流器。
 	s.emailLimiter.SetLimit(emailCfg.Alert.RateLimitPerHour)
 
+	anyDispatched := false
 	anySent := false
 	for _, to := range emailCfg.Alert.Recipients {
 		addr := strings.TrimSpace(to)
 		if addr == "" {
 			continue
 		}
-		if !s.emailLimiter.Allow(now) {
+		if !(accountRequestAlert && s.alertOutbox != nil) && !s.emailLimiter.Allow(now) {
 			recordOutcome(addr, OpsAlertEmailStatusRateLimited, "超过每小时邮件发送上限", nil)
 			continue
 		}
+		if accountRequestAlert && s.alertOutbox != nil {
+			enqueueErr := s.alertOutbox.Enqueue(ctx, &AlertEmailOutboxInput{
+				SourceType: AlertEmailSourceOpsAlert,
+				SourceID:   strconv.FormatInt(event.ID, 10),
+				SourceKey:  fmt.Sprintf("event:%d", event.ID),
+				AlertType:  OpsAlertMetricAccountRequestFailure,
+				Recipient:  addr,
+				Subject:    subject,
+				BodyHTML:   body,
+				CreatedAt:  now,
+			})
+			if enqueueErr != nil {
+				recordOutcome(addr, OpsAlertEmailStatusFailed, enqueueErr.Error(), nil)
+				continue
+			}
+			anyDispatched = true
+			recordOutcome(addr, OpsAlertEmailStatusQueued, "", nil)
+			continue
+		}
+
 		var sendErr error
 		if accountRequestAlert {
 			// 账号异常使用固定直白主题和原因优先正文，避免自定义聚合模板重新加入 P0/P1。
@@ -994,6 +1023,7 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 			continue
 		}
 		anySent = true
+		anyDispatched = true
 		sentAt := time.Now().UTC()
 		recordOutcome(addr, OpsAlertEmailStatusSent, "", &sentAt)
 	}
@@ -1001,7 +1031,7 @@ func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runt
 	if anySent {
 		_ = s.opsRepo.UpdateAlertEventEmailSent(context.Background(), event.ID, true)
 	}
-	return anySent
+	return anyDispatched
 }
 
 func buildOpsAlertEmailSubject(rule *OpsAlertRule, event *OpsAlertEvent) string {

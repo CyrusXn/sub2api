@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/shopspring/decimal"
 )
 
 func (r *balanceCenterRepository) ListBalanceCenterOverview(ctx context.Context) ([]service.BalanceCenterOverviewItem, error) {
@@ -154,13 +155,94 @@ func (r *balanceCenterRepository) ListBalanceCenterRechargeEvents(ctx context.Co
 	return listBalanceCenterRechargeEvents(ctx, r.db, filter, where, args)
 }
 
+func (r *balanceCenterRepository) GetBalanceCenterRechargeSummary(ctx context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterRechargeSummary, error) {
+	where, args := balanceCenterRechargeFilterSQL(filter)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT s.id, s.source, s.source_key, s.site_id, s.account_id, s.amount, s.currency,
+       s.occurred_at, s.note, s.site_label,
+       CASE WHEN s.site_id IS NULL THEN COALESCE(NULLIF(BTRIM(s.site_label), ''), '未归属站点')
+            ELSE COALESCE(NULLIF(BTRIM(bs.name), ''), '未归属站点') END AS site_name
+FROM balance_center_recharge_events s
+LEFT JOIN balance_center_sites bs ON bs.id = s.site_id`+where+`
+ORDER BY s.occurred_at DESC, s.id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	summary := &service.BalanceCenterRechargeSummary{
+		Items:    make([]service.BalanceCenterRechargeEvent, 0),
+		Sites:    make([]service.BalanceCenterRechargeSiteSummary, 0),
+		Page:     filter.Page,
+		PageSize: filter.PageSize,
+	}
+	allItems := make([]service.BalanceCenterRechargeEvent, 0)
+	siteIndexes := make(map[string]int)
+	siteAmounts := make(map[string]decimal.Decimal)
+	totalAmount := decimal.Zero
+	for rows.Next() {
+		var item service.BalanceCenterRechargeEvent
+		var siteID, accountID sql.NullInt64
+		var siteName string
+		if err := rows.Scan(&item.ID, &item.Source, &item.SourceKey, &siteID, &accountID, &item.Amount, &item.Currency, &item.OccurredAt, &item.Note, &item.SiteLabel, &siteName); err != nil {
+			return nil, err
+		}
+		item.SiteID, item.AccountID = balanceCenterNullInt64Ptr(siteID), balanceCenterNullInt64Ptr(accountID)
+		allItems = append(allItems, item)
+		amount := decimal.NewFromFloat(item.Amount)
+		totalAmount = totalAmount.Add(amount)
+		summary.TotalAmount = totalAmount.InexactFloat64()
+
+		groupKey := "label:" + canonicalBalanceCenterSiteLabel(siteName)
+		if item.SiteID != nil {
+			groupKey = "site:" + fmt.Sprint(*item.SiteID)
+		}
+		index, exists := siteIndexes[groupKey]
+		if !exists {
+			index = len(summary.Sites)
+			siteIndexes[groupKey] = index
+			summary.Sites = append(summary.Sites, service.BalanceCenterRechargeSiteSummary{
+				SiteID: item.SiteID, SiteName: siteName, Items: make([]service.BalanceCenterRechargeEvent, 0),
+			})
+		}
+		site := &summary.Sites[index]
+		currentAmount, exists := siteAmounts[groupKey]
+		if !exists {
+			currentAmount = decimal.Zero
+		}
+		siteAmounts[groupKey] = currentAmount.Add(amount)
+		site.TotalAmount = siteAmounts[groupKey].InexactFloat64()
+		site.RecordCount++
+		site.Items = append(site.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	summary.Total = int64(len(allItems))
+	if len(allItems) == 0 || filter.Page < 1 || filter.PageSize < 1 {
+		return summary, nil
+	}
+	pageIndex := filter.Page - 1
+	if pageIndex > (len(allItems)-1)/filter.PageSize {
+		return summary, nil
+	}
+	start := pageIndex * filter.PageSize
+	end := start + filter.PageSize
+	if end < start || end > len(allItems) {
+		end = len(allItems)
+	}
+	summary.Items = allItems[start:end]
+	return summary, nil
+}
+
 func listBalanceCenterRechargeEvents(ctx context.Context, db *sql.DB, filter service.BalanceCenterListFilter, where string, args []any) (*service.BalanceCenterPage[service.BalanceCenterRechargeEvent], error) {
 	var total int64
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM balance_center_recharge_events s"+where, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
-	rows, err := db.QueryContext(ctx, `SELECT id, source, source_key, site_id, account_id, amount, currency, occurred_at, note
+	rows, err := db.QueryContext(ctx, `SELECT id, source, source_key, site_id, account_id, amount, currency, occurred_at, note, site_label
 FROM balance_center_recharge_events s`+where+` ORDER BY occurred_at DESC, id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
@@ -170,7 +252,7 @@ FROM balance_center_recharge_events s`+where+` ORDER BY occurred_at DESC, id DES
 	for rows.Next() {
 		var item service.BalanceCenterRechargeEvent
 		var siteID, accountID sql.NullInt64
-		if err := rows.Scan(&item.ID, &item.Source, &item.SourceKey, &siteID, &accountID, &item.Amount, &item.Currency, &item.OccurredAt, &item.Note); err != nil {
+		if err := rows.Scan(&item.ID, &item.Source, &item.SourceKey, &siteID, &accountID, &item.Amount, &item.Currency, &item.OccurredAt, &item.Note, &item.SiteLabel); err != nil {
 			return nil, err
 		}
 		item.SiteID, item.AccountID = balanceCenterNullInt64Ptr(siteID), balanceCenterNullInt64Ptr(accountID)
@@ -182,12 +264,16 @@ FROM balance_center_recharge_events s`+where+` ORDER BY occurred_at DESC, id DES
 func (r *balanceCenterRepository) CreateBalanceCenterRechargeEvent(ctx context.Context, item *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, error) {
 	result := *item
 	err := r.db.QueryRowContext(ctx, `
-INSERT INTO balance_center_recharge_events (source, source_key, site_id, account_id, amount, currency, occurred_at, note)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-ON CONFLICT (source, source_key) DO UPDATE SET site_id=EXCLUDED.site_id, account_id=EXCLUDED.account_id,
+INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, account_id, amount, currency, occurred_at, note)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (source, source_key) DO UPDATE SET site_id=EXCLUDED.site_id, site_label=EXCLUDED.site_label, account_id=EXCLUDED.account_id,
 amount=EXCLUDED.amount, currency=EXCLUDED.currency, occurred_at=EXCLUDED.occurred_at, note=EXCLUDED.note, updated_at=NOW()
-RETURNING id`, item.Source, item.SourceKey, item.SiteID, item.AccountID, item.Amount, item.Currency, item.OccurredAt, item.Note).Scan(&result.ID)
+RETURNING id`, item.Source, item.SourceKey, item.SiteID, item.SiteLabel, item.AccountID, item.Amount, item.Currency, item.OccurredAt, item.Note).Scan(&result.ID)
 	return &result, err
+}
+
+func canonicalBalanceCenterSiteLabel(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func (r *balanceCenterRepository) DeleteBalanceCenterRechargeEvent(ctx context.Context, id int64) error {
@@ -383,6 +469,26 @@ func balanceCenterFilterSQL(filter service.BalanceCenterListFilter, includeTime 
 	if includeTime && filter.EndTime != nil {
 		args = append(args, *filter.EndTime)
 		conditions = append(conditions, "s.probed_at <= $"+fmt.Sprint(len(args)))
+	}
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func balanceCenterRechargeFilterSQL(filter service.BalanceCenterListFilter) (string, []any) {
+	conditions, args := make([]string, 0, 3), make([]any, 0, 3)
+	if filter.SiteID > 0 {
+		args = append(args, filter.SiteID)
+		conditions = append(conditions, "s.site_id=$"+fmt.Sprint(len(args)))
+	}
+	if filter.StartTime != nil {
+		args = append(args, *filter.StartTime)
+		conditions = append(conditions, "s.occurred_at >= $"+fmt.Sprint(len(args)))
+	}
+	if filter.EndTime != nil {
+		args = append(args, *filter.EndTime)
+		conditions = append(conditions, "s.occurred_at <= $"+fmt.Sprint(len(args)))
 	}
 	if len(conditions) == 0 {
 		return "", args
