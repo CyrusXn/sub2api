@@ -1,6 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BusinessHistoryView from '../BusinessHistoryView.vue'
+import zhBusinessHistory from '@/i18n/locales/zh/admin/businessHistory'
+import enBusinessHistory from '@/i18n/locales/en/admin/businessHistory'
 
 const getBusinessSummary = vi.hoisted(() => vi.fn())
 const notifications = vi.hoisted(() => ({ showError: vi.fn() }))
@@ -86,6 +88,11 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$18.00')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
+  })
+
+  it('明确标注排除管理员后的消费口径', () => {
+    expect(zhBusinessHistory.businessHistory.excludingAdmin).toBe('消费总额（已排除 admin@example.com）')
+    expect(enBusinessHistory.businessHistory.excludingAdmin).toBe('消费总额（已排除 admin@example.com）')
   })
 
   it('按管理员选择的日期范围重新查询', async () => {
