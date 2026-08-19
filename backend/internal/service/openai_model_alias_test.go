@@ -24,6 +24,21 @@ func TestNormalizeKnownOpenAICodexModel_BareGPT56RoutesToSol(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenAIModelForUpstream_APIKeyGPT56SolSuffixRoutesToSol(t *testing.T) {
+	account := &Account{Type: AccountTypeAPIKey}
+	tests := map[string]string{
+		"gpt-5.6-sol-openai-compact": "gpt-5.6-sol",
+		"openai/gpt-5.6-sol-high":    "gpt-5.6-sol",
+		"gpt5.6-sol-2026-08-18":      "gpt-5.6-sol",
+	}
+
+	for input, expected := range tests {
+		t.Run(input, func(t *testing.T) {
+			require.Equal(t, expected, normalizeOpenAIModelForUpstream(account, input))
+		})
+	}
+}
+
 func TestUsageBillingModelCandidates_BareGPT56IncludesSol(t *testing.T) {
 	require.Equal(t,
 		[]string{"gpt-5.6", "gpt-5.6-sol"},

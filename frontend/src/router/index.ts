@@ -552,6 +552,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/business-history',
+    name: 'AdminBusinessHistory',
+    component: () => import('@/views/admin/BusinessHistoryView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '经营历史',
+      titleKey: 'admin.businessHistory.title',
+      descriptionKey: 'admin.businessHistory.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),

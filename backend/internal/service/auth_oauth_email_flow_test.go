@@ -182,7 +182,7 @@ func TestRegisterOAuthAccountRollsBackCreatedUserWhenTokenPairGenerationFails(t 
 
 	tokenPair, user, err := authService.RegisterOAuthAccount(
 		context.Background(),
-		"fresh@example.com",
+		"fresh@qq.com",
 		"secret-123",
 		"INVITE123",
 		"oidc",
@@ -198,7 +198,7 @@ func TestRegisterOAuthAccountRollsBackCreatedUserWhenTokenPairGenerationFails(t 
 	require.Empty(t, redeemRepo.updateCalls)
 }
 
-func TestRegisterOAuthAccount_NonWhitelistDomainLimit(t *testing.T) {
+func TestRegisterOAuthAccount_RejectsUnsupportedEmailDomain(t *testing.T) {
 	userRepo := &userRepoStub{domainCounts: map[string]int{"custom.example": 1}}
 	authService := newOAuthEmailFlowAuthService(
 		userRepo,
@@ -225,7 +225,7 @@ func TestRegisterOAuthAccount_NonWhitelistDomainLimit(t *testing.T) {
 		"oidc",
 	)
 
-	require.ErrorIs(t, err, ErrEmailDomainRegistrationLimit)
+	require.ErrorIs(t, err, ErrRegistrationEmailDomainNotAllowed)
 	require.Zero(t, userRepo.domainLimitedCreates)
 }
 
@@ -270,8 +270,10 @@ func TestRegisterOAuthAccountSetsNormalizedSignupSourceOnCreatedUser(t *testing.
 		&redeemCodeRepoStub{},
 		&refreshTokenCacheStub{},
 		map[string]string{
-			SettingKeyRegistrationEnabled: "true",
-			SettingKeyEmailVerifyEnabled:  "true",
+			SettingKeyRegistrationEnabled:                 "true",
+			SettingKeyEmailVerifyEnabled:                  "true",
+			SettingKeyRegistrationEmailSuffixWhitelist:    `["@example.com"]`,
+			SettingKeyRegistrationEmailDomainQuotaEnabled: "false",
 		},
 		emailCache,
 		nil,
@@ -279,7 +281,7 @@ func TestRegisterOAuthAccountSetsNormalizedSignupSourceOnCreatedUser(t *testing.
 
 	tokenPair, user, err := authService.RegisterOAuthAccount(
 		context.Background(),
-		"fresh@example.com",
+		"fresh@qq.com",
 		"secret-123",
 		"",
 		" OIDC ",
@@ -301,13 +303,13 @@ func TestRegisterOAuthAccountKeepsGitHubAndGoogleSignupSource(t *testing.T) {
 	}{
 		{
 			name:         "github",
-			email:        "github@example.com",
+			email:        "github@qq.com",
 			signupSource: " GitHub ",
 			want:         "github",
 		},
 		{
 			name:         "google",
-			email:        "google@example.com",
+			email:        "google@163.com",
 			signupSource: " Google ",
 			want:         "google",
 		},
@@ -377,7 +379,7 @@ func TestRegisterOAuthAccountFallsBackUnknownSignupSourceToEmail(t *testing.T) {
 
 	tokenPair, user, err := authService.RegisterOAuthAccount(
 		context.Background(),
-		"fallback@example.com",
+		"fallback@qq.com",
 		"secret-123",
 		"",
 		"unknown-provider",

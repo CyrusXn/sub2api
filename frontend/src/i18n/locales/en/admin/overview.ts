@@ -100,8 +100,13 @@ export default {
       cpuTrend: 'CPU Usage Trend',
       memoryTrend: 'Memory Usage Trend',
       diskTrend: 'Disk Usage Trend',
-      networkReceive: 'Receive MB/s',
-      networkTransmit: 'Transmit MB/s',
+      networkReceive: 'Receive',
+      networkTransmit: 'Transmit',
+      networkRate: 'Live Rate',
+      networkDailyUsage: 'Daily Usage',
+      rangeTotalTraffic: 'Selected Range Total',
+      rangeReceiveTraffic: 'Receive',
+      rangeTransmitTraffic: 'Transmit',
       noHistoricalMetrics: 'No historical metrics yet'
     },
 

@@ -41,7 +41,7 @@ describe('PendingOAuthCreateAccountForm', () => {
     })
   })
 
-  it('提交任意账号和密码，不再要求邮箱验证码', async () => {
+  it('提交受支持的邮箱和密码，不再要求邮箱验证码', async () => {
     const wrapper = mount(PendingOAuthCreateAccountForm, {
       props: {
         testIdPrefix: 'oidc',
@@ -50,15 +50,51 @@ describe('PendingOAuthCreateAccountForm', () => {
       }
     })
 
-    await wrapper.get('[data-testid="oidc-create-account-email"]').setValue('  任意账号  ')
+    await wrapper.get('[data-testid="oidc-create-account-email"]').setValue('  USER@QQ.COM  ')
     await wrapper.get('[data-testid="oidc-create-account-password"]').setValue('secret-123')
     await wrapper.get('form').trigger('submit.prevent')
 
     expect(wrapper.find('[data-testid="oidc-create-account-verify-code"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="oidc-create-account-send-code"]').exists()).toBe(false)
     expect(wrapper.emitted('submit')).toEqual([
-      [{ email: '任意账号', password: 'secret-123' }]
+      [{ email: 'user@qq.com', password: 'secret-123' }]
     ])
+  })
+
+  it('邮箱格式错误时显示受支持域名提示且不提交', async () => {
+    const wrapper = mount(PendingOAuthCreateAccountForm, {
+      props: {
+        testIdPrefix: 'oidc',
+        initialEmail: '',
+        isSubmitting: false
+      }
+    })
+
+    await wrapper.get('[data-testid="oidc-create-account-email"]').setValue('随便填写')
+    await wrapper.get('[data-testid="oidc-create-account-password"]').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(showError).toHaveBeenCalledOnce()
+    expect(showError).toHaveBeenCalledWith('auth.registrationEmailDomainNotAllowed')
+  })
+
+  it('邮箱域名不受支持时显示正确提示且不提交', async () => {
+    const wrapper = mount(PendingOAuthCreateAccountForm, {
+      props: {
+        testIdPrefix: 'oidc',
+        initialEmail: '',
+        isSubmitting: false
+      }
+    })
+
+    await wrapper.get('[data-testid="oidc-create-account-email"]').setValue('user@gmail.com')
+    await wrapper.get('[data-testid="oidc-create-account-password"]').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(showError).toHaveBeenCalledOnce()
+    expect(showError).toHaveBeenCalledWith('auth.registrationEmailDomainNotAllowed')
   })
 
   it('启用邀请码时随创建请求提交邀请码', async () => {
@@ -70,7 +106,7 @@ describe('PendingOAuthCreateAccountForm', () => {
     const wrapper = mount(PendingOAuthCreateAccountForm, {
       props: {
         testIdPrefix: 'linuxdo',
-        initialEmail: 'prefill-account',
+        initialEmail: 'prefill@qq.com',
         isSubmitting: false
       }
     })
@@ -82,7 +118,7 @@ describe('PendingOAuthCreateAccountForm', () => {
 
     expect(wrapper.emitted('submit')).toEqual([
       [{
-        email: 'prefill-account',
+        email: 'prefill@qq.com',
         password: 'secret-123',
         invitationCode: 'INVITE123'
       }]
@@ -97,7 +133,7 @@ describe('PendingOAuthCreateAccountForm', () => {
     const wrapper = mount(PendingOAuthCreateAccountForm, {
       props: {
         testIdPrefix: 'oidc',
-        initialEmail: 'account-name',
+        initialEmail: 'account@qq.com',
         isSubmitting: false
       },
       global: {
@@ -118,7 +154,7 @@ describe('PendingOAuthCreateAccountForm', () => {
     await wrapper.get('[data-testid="turnstile-verify"]').trigger('click')
     await wrapper.get('[data-testid="oidc-create-account-submit"]').trigger('click')
     expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({
-      email: 'account-name',
+      email: 'account@qq.com',
       password: 'secret-123',
       turnstileToken: 'turnstile-token'
     })
@@ -141,7 +177,7 @@ describe('PendingOAuthCreateAccountForm', () => {
     const wrapper = mount(PendingOAuthCreateAccountForm, {
       props: {
         testIdPrefix: 'oidc',
-        initialEmail: 'account-name',
+        initialEmail: 'account@qq.com',
         isSubmitting: false
       },
       global: { stubs: { TurnstileWidget: CaptchaChallengeStub } }

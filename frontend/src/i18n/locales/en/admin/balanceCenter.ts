@@ -6,6 +6,7 @@ export default {
     addRecharge: 'Add recharge',
     addRechargeHint: 'Enter an amount and press Enter. The current minute is used by default.',
     rechargeAt: 'Recharge time',
+    unknownRechargeDate: '历史日期未知',
     siteName: 'Site',
     domain: 'Domain',
     amount: 'Amount',

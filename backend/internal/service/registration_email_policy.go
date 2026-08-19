@@ -3,11 +3,36 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"net/mail"
 	"regexp"
 	"strings"
 
 	"golang.org/x/net/publicsuffix"
 )
+
+// normalizeSupportedRegistrationEmail 统一校验用户手动填写的注册邮箱。
+// OAuth 提供方已验证的邮箱走独立流程，不受这里的域名限制。
+func normalizeSupportedRegistrationEmail(email string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" || len(normalized) > 255 {
+		return "", ErrRegistrationEmailDomainNotAllowed
+	}
+	parsed, err := mail.ParseAddress(normalized)
+	if err != nil || parsed.Address != normalized {
+		return "", ErrRegistrationEmailDomainNotAllowed
+	}
+
+	at := strings.LastIndexByte(normalized, '@')
+	if at <= 0 || at == len(normalized)-1 {
+		return "", ErrRegistrationEmailDomainNotAllowed
+	}
+	switch normalized[at+1:] {
+	case "qq.com", "163.com":
+		return normalized, nil
+	default:
+		return "", ErrRegistrationEmailDomainNotAllowed
+	}
+}
 
 var registrationEmailDomainPattern = regexp.MustCompile(
 	`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`,

@@ -180,6 +180,7 @@ export default {
     accounts: 'Accounts',
     upstreamSites: 'Upstream Site Accounts',
     balanceCenter: 'Balance Center',
+    businessHistory: '经营历史',
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
@@ -238,12 +239,16 @@ export default {
     passwordHint: 'At least 6 characters',
     emailRequired: 'Email is required',
     invalidEmail: 'Please enter a valid email address',
+    registrationEmailDomainNotAllowed: 'Only qq.com and 163.com email addresses can register',
     passwordRequired: 'Password is required',
     passwordMinLength: 'Password must be at least 6 characters',
     loginFailed: 'Login failed. Please check your credentials and try again.',
     errors: {
       USER_NOT_ACTIVE: 'Account has been disabled.',
       EMAIL_EXISTS: 'This account is already registered.',
+      INVALID_EMAIL: 'Please enter a valid email address.',
+      REGISTRATION_EMAIL_DOMAIN_NOT_ALLOWED:
+        'Only qq.com and 163.com email addresses can register.',
     },
     registrationFailed: 'Registration failed. Please try again.',
     accountLabel: 'Account',
@@ -252,6 +257,7 @@ export default {
     wechatGroupContactPrefix: 'WeChat:',
     wechatGroupContactId: 'ncwqwert',
     wechatGroupContactSuffix: 'to join the group',
+    registrationWechatGroupContactSuffix: 'to invite you into the group and claim trial credit',
     emailDomainRegistrationLimit:
       'This email domain cannot register another account. Please use a mainstream email, or contact support to add your enterprise domain to the allowlist.',
     emailSuffixNotAllowed: 'This email domain is not allowed for registration.',

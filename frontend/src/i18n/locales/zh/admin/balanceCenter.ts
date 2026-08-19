@@ -6,6 +6,7 @@ export default {
     addRecharge: '新增充值',
     addRechargeHint: '输入金额后按回车即可添加，时间默认精确到当前分钟。',
     rechargeAt: '充值时间',
+    unknownRechargeDate: '历史日期未知',
     siteName: '站点',
     domain: '域名',
     amount: '金额',

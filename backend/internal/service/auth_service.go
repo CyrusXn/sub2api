@@ -24,9 +24,13 @@ import (
 )
 
 var (
-	ErrInvalidCredentials           = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	ErrUserNotActive                = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
-	ErrEmailExists                  = infraerrors.Conflict("EMAIL_EXISTS", "这个账号已注册")
+	ErrInvalidCredentials                = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	ErrUserNotActive                     = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
+	ErrEmailExists                       = infraerrors.Conflict("EMAIL_EXISTS", "这个账号已注册")
+	ErrRegistrationEmailDomainNotAllowed = infraerrors.BadRequest(
+		"REGISTRATION_EMAIL_DOMAIN_NOT_ALLOWED",
+		"仅支持 qq.com 和 163.com 邮箱注册",
+	)
 	ErrEmailReserved                = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
 	ErrInvalidToken                 = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
 	ErrTokenExpired                 = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
@@ -165,9 +169,10 @@ func (s *AuthService) RegisterWithOptions(ctx context.Context, email, password, 
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
 	}
-	email = strings.TrimSpace(email)
-	if email == "" || len(email) > 255 {
-		return "", nil, infraerrors.BadRequest("INVALID_ACCOUNT", "请输入有效账号")
+	var err error
+	email, err = normalizeSupportedRegistrationEmail(email)
+	if err != nil {
+		return "", nil, err
 	}
 
 	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。

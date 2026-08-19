@@ -211,6 +211,18 @@ func TestResolveOpenAICompactForwardModel(t *testing.T) {
 			model:         "gpt-5.4",
 			expectedModel: "gpt-5.4",
 		},
+		{
+			name: "GPT-5.6 Sol compact mapping is canonicalized",
+			account: &Account{
+				Credentials: map[string]any{
+					"compact_model_mapping": map[string]any{
+						"gpt-5.6-sol": "gpt-5.6-sol-openai-compact",
+					},
+				},
+			},
+			model:         "gpt-5.6-sol",
+			expectedModel: "gpt-5.6-sol",
+		},
 	}
 
 	for _, tt := range tests {

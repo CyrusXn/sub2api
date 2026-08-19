@@ -297,14 +297,7 @@
           <p v-if="businessError" class="text-sm text-red-600 dark:text-red-400">{{ t('admin.dashboard.businessSummaryLoadFailed') }}</p>
         </div>
 
-        <div class="card p-4">
-          <div class="mb-3 flex items-center justify-between"><h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.dashboard.lowBalanceAccounts') }}</h2><button type="button" :title="t('common.refresh')" class="rounded p-1 text-gray-400 hover:text-gray-700" @click="loadLowBalanceAccounts"><Icon name="refresh" size="sm" :class="{ 'animate-spin': lowBalanceLoading }" /></button></div>
-          <p v-if="lowBalanceError" class="py-4 text-center text-sm text-red-600 dark:text-red-400">{{ t('admin.dashboard.lowBalanceLoadFailed') }}</p>
-          <div v-else-if="lowBalanceAccounts.length" class="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
-            <div v-for="account in lowBalanceAccounts" :key="account.id" class="flex items-center justify-between border-b border-gray-100 py-2 text-sm dark:border-dark-700"><span class="truncate pr-3 text-gray-700 dark:text-gray-200">{{ account.name }}</span><strong class="text-red-600 dark:text-red-400">{{ account.balance.toFixed(2) }} {{ account.unit }}</strong></div>
-          </div>
-          <p v-else class="py-4 text-center text-sm text-gray-500">{{ t('admin.dashboard.noLowBalanceAccounts') }}</p>
-        </div>
+        <!-- 低余额统计需要按上游站点去重，口径修正前按要求暂不展示。 -->
 
         <!-- Quick Actions -->
         <div class="card p-4">
@@ -407,7 +400,15 @@
           </div>
 
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <SystemMetricTrendCard :title="t('admin.dashboard.bandwidthTrend')" metric="network" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
+            <SystemMetricTrendCard
+              :title="t('admin.dashboard.bandwidthTrend')"
+              metric="network"
+              :points="systemMetricsTrend.points"
+              :network-daily="systemMetricsTrend.network_daily"
+              :network-totals="systemMetricsTrend.network_totals"
+              :loading="systemMetricsLoading"
+              @refresh="loadSystemMetricsTrend"
+            />
             <SystemMetricTrendCard :title="t('admin.dashboard.cpuTrend')" metric="cpu" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
             <SystemMetricTrendCard :title="t('admin.dashboard.memoryTrend')" metric="memory" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
             <SystemMetricTrendCard :title="t('admin.dashboard.diskTrend')" metric="disk" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
@@ -463,7 +464,6 @@ import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import SystemMetricTrendCard from '@/components/charts/SystemMetricTrendCard.vue'
 import type {
   DashboardBusinessSummary,
-  DashboardLowBalanceAccount,
   DashboardSystemMetricTrend
 } from '@/api/admin/dashboard'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
@@ -502,13 +502,10 @@ const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
 const rankingError = ref(false)
 const businessLoading = ref(false)
-const lowBalanceLoading = ref(false)
 const systemMetricsLoading = ref(false)
 const topMetricsLoading = ref(false)
 const businessSummary = ref<DashboardBusinessSummary | null>(null)
 const businessError = ref(false)
-const lowBalanceAccounts = ref<DashboardLowBalanceAccount[]>([])
-const lowBalanceError = ref(false)
 const systemMetricsTrend = ref<DashboardSystemMetricTrend>({ source: '', points: [] })
 
 // Chart data
@@ -792,14 +789,6 @@ const loadBusinessSummary = async () => {
   finally { businessLoading.value = false }
 }
 
-const loadLowBalanceAccounts = async () => {
-  lowBalanceLoading.value = true
-  lowBalanceError.value = false
-  try { lowBalanceAccounts.value = (await adminAPI.dashboard.getLowBalanceAccounts()).accounts || [] }
-  catch (error) { console.error('读取低余额账号失败:', error); lowBalanceError.value = true }
-  finally { lowBalanceLoading.value = false }
-}
-
 const loadSystemMetricsTrend = async () => {
   systemMetricsLoading.value = true
   try { systemMetricsTrend.value = await adminAPI.dashboard.getSystemMetricsTrend(rangeParams()) }
@@ -941,7 +930,6 @@ onMounted(() => {
   void refreshBatchImageAccess()
   void loadDashboardStats()
   void loadBusinessSummary()
-  void loadLowBalanceAccounts()
   void loadSystemMetricsTrend()
 })
 </script>

@@ -1005,6 +1005,8 @@ ops:
   # Other detailed settings (cleanup, aggregation, etc.) are configured in ops settings dialog
   # 其他详细设置（数据清理、预聚合等）在运维监控设置对话框中配置
   enabled: true
+  # Docker 部署由 Compose 注入 /host/sys；非容器部署留空即可。
+  host_sysfs_path: ""
 
 # =============================================================================
 # JWT Configuration

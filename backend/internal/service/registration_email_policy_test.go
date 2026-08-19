@@ -55,7 +55,7 @@ func TestRegistrationEmailQuotaRejectsMalformedDomainWhenWhitelistConfigured(t *
 
 	_, _, err := svc.Register(context.Background(), "malformed-email", "password")
 
-	require.ErrorIs(t, err, ErrEmailSuffixNotAllowed)
+	require.ErrorIs(t, err, ErrRegistrationEmailDomainNotAllowed)
 	require.Empty(t, repo.created)
 }
 

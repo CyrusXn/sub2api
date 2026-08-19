@@ -53,3 +53,10 @@ describe('AppSidebar header styles', () => {
     expect(sidebarBrandBlockMatch?.[0]).not.toContain('overflow: hidden;')
   })
 })
+
+describe('AppSidebar 管理端经营历史入口', () => {
+  it('在余额中心后提供经营历史菜单', () => {
+    expect(componentSource).toContain("path: '/admin/business-history'")
+    expect(componentSource).toContain("label: t('nav.businessHistory')")
+  })
+})

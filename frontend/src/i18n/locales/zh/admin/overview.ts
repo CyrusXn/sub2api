@@ -103,8 +103,13 @@ export default {
       cpuTrend: 'CPU 占用趋势',
       memoryTrend: '内存占用趋势',
       diskTrend: '硬盘占用趋势',
-      networkReceive: '下行 MB/s',
-      networkTransmit: '上行 MB/s',
+      networkReceive: '下行',
+      networkTransmit: '上行',
+      networkRate: '实时速率',
+      networkDailyUsage: '每日用量',
+      rangeTotalTraffic: '所选范围总流量',
+      rangeReceiveTraffic: '下行',
+      rangeTransmitTraffic: '上行',
       noHistoricalMetrics: '历史暂无统计数据'
     },
 

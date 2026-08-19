@@ -794,6 +794,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/upstream-sites', label: t('nav.upstreamSites'), icon: ServerIcon },
     { path: '/admin/balance-center', label: t('nav.balanceCenter'), icon: CreditCardIcon },
+    { path: '/admin/business-history', label: t('nav.businessHistory'), icon: ChartIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     {

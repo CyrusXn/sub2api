@@ -30,6 +30,8 @@ services:
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
       - sub2api_data:/app/data
+      # 只读获取宿主机物理网卡累计字节，不授予网络或设备写权限。
+      - /sys:/host/sys:ro
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -178,6 +180,7 @@ services:
       - GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS=${GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS:-30}
       - GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS:-100}
       - OPS_NODE_EXPORTER_URL=${OPS_NODE_EXPORTER_URL:-http://node-exporter:9100/metrics}
+      - OPS_HOST_SYSFS_PATH=${OPS_HOST_SYSFS_PATH:-/host/sys}
     depends_on:
       postgres:
         condition: service_healthy

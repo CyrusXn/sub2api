@@ -255,7 +255,10 @@ func (r *dashboardAggregationRepository) GetDashboardSystemMetricTrend(ctx conte
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	result := &service.DashboardSystemMetricTrend{Points: make([]service.DashboardSystemMetricPoint, 0)}
+	result := &service.DashboardSystemMetricTrend{
+		Points:       make([]service.DashboardSystemMetricPoint, 0),
+		NetworkDaily: make([]service.DashboardNetworkTrafficDailyPoint, 0),
+	}
 	for rows.Next() {
 		var point service.DashboardSystemMetricPoint
 		var cpu, memoryPct, receive, transmit, diskPct sql.NullFloat64
@@ -291,7 +294,41 @@ func (r *dashboardAggregationRepository) GetDashboardSystemMetricTrend(ctx conte
 		}
 		result.Points = append(result.Points, point)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	dailyRows, err := r.sql.QueryContext(ctx, `
+		SELECT bucket_date, receive_bytes, transmit_bytes
+		FROM ops_network_traffic_daily
+		WHERE bucket_date >= ($1 AT TIME ZONE 'Asia/Shanghai')::date
+		  AND bucket_date < ($2 AT TIME ZONE 'Asia/Shanghai')::date
+		ORDER BY bucket_date ASC
+	`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dailyRows.Close() }()
+	for dailyRows.Next() {
+		var bucketDate time.Time
+		var point service.DashboardNetworkTrafficDailyPoint
+		if err := dailyRows.Scan(&bucketDate, &point.ReceiveBytes, &point.TransmitBytes); err != nil {
+			return nil, err
+		}
+		point.BucketDate = bucketDate.Format("2006-01-02")
+		point.TotalBytes = point.ReceiveBytes + point.TransmitBytes
+		result.NetworkTotals.ReceiveBytes += point.ReceiveBytes
+		result.NetworkTotals.TransmitBytes += point.TransmitBytes
+		result.NetworkDaily = append(result.NetworkDaily, point)
+	}
+	if err := dailyRows.Err(); err != nil {
+		return nil, err
+	}
+	result.NetworkTotals.TotalBytes = result.NetworkTotals.ReceiveBytes + result.NetworkTotals.TransmitBytes
+	return result, nil
 }
 
 func nullableFloat64(value sql.NullFloat64) *float64 {

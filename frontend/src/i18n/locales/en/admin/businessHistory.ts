@@ -1,0 +1,32 @@
+// 管理端面向中国客户，即使切换到英文语言包也保持该功能中文展示。
+export default {
+  businessHistory: {
+    title: '经营历史',
+    description: '按日期查询永久保存的请求数、Token 和消费汇总',
+    startDate: '开始日期',
+    endDate: '结束日期',
+    query: '查询',
+    invalidRange: '开始日期不能晚于结束日期',
+    loadFailed: '读取经营历史失败，请稍后重试',
+    totalRequests: '总请求数',
+    totalTokens: '总 Token',
+    totalConsumption: '总消费',
+    allAccounts: '全部账号',
+    excludingAdmin: '排除 admin@example.com',
+    inputTokens: '输入',
+    outputTokens: '输出',
+    cacheCreationTokens: '缓存创建',
+    cacheReadTokens: '缓存读取',
+    dailyTrend: '每日趋势',
+    requestsTrend: '请求数',
+    tokensTrend: 'Token',
+    consumptionTrend: '消费',
+    dailyDetails: '每日明细',
+    date: '日期',
+    effectiveRecharge: '有效充值',
+    noData: '历史暂无统计数据',
+    requestUnit: '次',
+    tokenUnit: 'Token',
+    consumptionUnit: '美元'
+  }
+}

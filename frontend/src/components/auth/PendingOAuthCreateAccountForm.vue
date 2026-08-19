@@ -1,11 +1,12 @@
 <template>
-  <form class="space-y-3" @submit.prevent="handleSubmit">
+  <form class="space-y-3" novalidate @submit.prevent="handleSubmit">
     <input
       v-model="email"
       :data-testid="`${testIdPrefix}-create-account-email`"
-      type="text"
+      type="email"
+      autocomplete="email"
       class="input w-full"
-      :placeholder="t('auth.accountPlaceholder')"
+      :placeholder="t('auth.emailPlaceholder')"
       :disabled="isSubmitting"
     />
     <input
@@ -69,6 +70,10 @@ import { useI18n } from 'vue-i18n'
 import TurnstileWidget from '@/components/CaptchaChallenge.vue'
 import { getPublicSettings } from '@/api/auth'
 import { useAppStore } from '@/stores'
+import {
+  getRegistrationEmailErrorKey,
+  normalizeRegistrationEmail
+} from '@/utils/registrationEmail'
 
 export type PendingOAuthCreateAccountPayload = {
   email: string
@@ -190,8 +195,13 @@ async function acquireActionProof(): Promise<boolean> {
 }
 
 async function handleSubmit() {
-  const trimmedEmail = email.value.trim()
-  if (!trimmedEmail || password.value.length < 6) {
+  const normalizedEmail = normalizeRegistrationEmail(email.value)
+  const emailErrorKey = getRegistrationEmailErrorKey(normalizedEmail)
+  if (emailErrorKey) {
+    appStore.showError(t(emailErrorKey))
+    return
+  }
+  if (password.value.length < 6) {
     return
   }
 
@@ -207,7 +217,7 @@ async function handleSubmit() {
   }
 
   emit('submit', {
-    email: trimmedEmail,
+    email: normalizedEmail,
     password: password.value,
     ...((turnstileEnabled.value || aliyunCaptchaEnabled.value) && turnstileToken.value
       ? { turnstileToken: turnstileToken.value }

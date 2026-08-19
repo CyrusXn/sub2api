@@ -1064,6 +1064,9 @@ func normalizeOpenAIResponsesImageOnlyModel(reqBody map[string]any) bool {
 }
 
 func normalizeOpenAIModelForUpstream(account *Account, model string) string {
+	if canonical := normalizeOpenAIGPT56SolAlias(model); canonical != "" {
+		return canonical
+	}
 	if account == nil || account.Type == AccountTypeOAuth {
 		return normalizeCodexModel(model)
 	}

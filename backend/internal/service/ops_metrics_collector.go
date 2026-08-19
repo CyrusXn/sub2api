@@ -346,6 +346,8 @@ func (c *OpsMetricsCollector) collectAndPersist(ctx context.Context) error {
 		ResourceSource:                sys.resourceSource,
 		NetworkReceiveBytesPerSecond:  sys.networkReceiveBytesPerSecond,
 		NetworkTransmitBytesPerSecond: sys.networkTransmitBytesPerSecond,
+		NetworkReceiveBytes:           sys.networkReceiveBytes,
+		NetworkTransmitBytes:          sys.networkTransmitBytes,
 		DiskUsedBytes:                 sys.diskUsedBytes,
 		DiskTotalBytes:                sys.diskTotalBytes,
 		DiskUsagePercent:              sys.diskUsagePercent,
@@ -602,6 +604,8 @@ type opsCollectedSystemStats struct {
 	resourceSource                *string
 	networkReceiveBytesPerSecond  *float64
 	networkTransmitBytesPerSecond *float64
+	networkReceiveBytes           *int64
+	networkTransmitBytes          *int64
 	diskUsedBytes                 *int64
 	diskTotalBytes                *int64
 	diskUsagePercent              *float64
@@ -617,6 +621,18 @@ func (c *OpsMetricsCollector) collectSystemStats(ctx context.Context) (*opsColle
 	if c.cfg != nil && strings.TrimSpace(c.cfg.Ops.NodeExporterURL) != "" {
 		sample, err := c.fetchNodeExporterSample(ctx, sampleAt)
 		if err == nil {
+			if sysfsRoot := strings.TrimSpace(c.cfg.Ops.HostSysfsPath); sysfsRoot != "" {
+				receive, transmit, networkErr := readHostNetworkTotals(sysfsRoot)
+				if networkErr != nil {
+					// 已配置宿主机 sysfs 时禁止回退到 Node Exporter 容器网卡，避免写入误导性流量。
+					sample.hasNetwork = false
+					log.Printf("[OpsMetricsCollector] 宿主机网卡读取失败，本次跳过流量统计: %v", networkErr)
+				} else {
+					sample.hasNetwork = true
+					sample.networkReceiveBytes = receive
+					sample.networkTransmitBytes = transmit
+				}
+			}
 			stats := deriveNodeExporterStats(c.lastNodeExporterSample, sample)
 			c.lastNodeExporterSample = sample
 			source := stats.resourceSource
@@ -628,6 +644,8 @@ func (c *OpsMetricsCollector) collectSystemStats(ctx context.Context) (*opsColle
 				resourceSource:                &source,
 				networkReceiveBytesPerSecond:  stats.networkReceiveBytesPerSecond,
 				networkTransmitBytesPerSecond: stats.networkTransmitBytesPerSecond,
+				networkReceiveBytes:           stats.networkReceiveBytes,
+				networkTransmitBytes:          stats.networkTransmitBytes,
 				diskUsedBytes:                 stats.diskUsedBytes,
 				diskTotalBytes:                stats.diskTotalBytes,
 				diskUsagePercent:              stats.diskUsagePercent,

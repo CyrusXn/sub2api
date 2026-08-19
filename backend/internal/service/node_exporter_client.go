@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +36,8 @@ type nodeExporterStats struct {
 	memoryUsagePercent            *float64
 	networkReceiveBytesPerSecond  *float64
 	networkTransmitBytesPerSecond *float64
+	networkReceiveBytes           *int64
+	networkTransmitBytes          *int64
 	diskUsedBytes                 *int64
 	diskTotalBytes                *int64
 	diskUsagePercent              *float64
@@ -108,6 +112,42 @@ func isHostTrafficDevice(device string) bool {
 	return true
 }
 
+func readHostNetworkTotals(sysfsRoot string) (float64, float64, error) {
+	networkRoot := filepath.Join(strings.TrimSpace(sysfsRoot), "class", "net")
+	entries, err := os.ReadDir(networkRoot)
+	if err != nil {
+		return 0, 0, fmt.Errorf("读取宿主机网卡目录失败: %w", err)
+	}
+
+	var receive, transmit float64
+	physicalDevices := 0
+	for _, entry := range entries {
+		device := entry.Name()
+		if !isHostTrafficDevice(device) {
+			continue
+		}
+		readCounter := func(name string) (uint64, error) {
+			raw, readErr := os.ReadFile(filepath.Join(networkRoot, device, "statistics", name))
+			if readErr != nil {
+				return 0, readErr
+			}
+			return strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
+		}
+		rx, rxErr := readCounter("rx_bytes")
+		tx, txErr := readCounter("tx_bytes")
+		if rxErr != nil || txErr != nil {
+			return 0, 0, fmt.Errorf("读取宿主机网卡 %s 计数器失败", device)
+		}
+		receive += float64(rx)
+		transmit += float64(tx)
+		physicalDevices++
+	}
+	if physicalDevices == 0 {
+		return 0, 0, fmt.Errorf("宿主机 sysfs 中没有可统计的物理网卡")
+	}
+	return receive, transmit, nil
+}
+
 func metricLabel(metric, name string) string {
 	needle := name + "=\""
 	start := strings.Index(metric, needle)
@@ -156,14 +196,18 @@ func deriveNodeExporterStats(previous, current *nodeExporterSample) nodeExporter
 		usage := (1 - cpuIdleDelta/cpuTotalDelta) * 100
 		stats.cpuUsagePercent = &usage
 	}
-	if elapsed > 0 {
+	if elapsed > 0 && previous.hasNetwork && current.hasNetwork {
 		if delta := current.networkReceiveBytes - previous.networkReceiveBytes; delta >= 0 {
 			value := delta / elapsed
 			stats.networkReceiveBytesPerSecond = &value
+			bytes := int64(math.Round(delta))
+			stats.networkReceiveBytes = &bytes
 		}
 		if delta := current.networkTransmitBytes - previous.networkTransmitBytes; delta >= 0 {
 			value := delta / elapsed
 			stats.networkTransmitBytesPerSecond = &value
+			bytes := int64(math.Round(delta))
+			stats.networkTransmitBytes = &bytes
 		}
 	}
 	return stats

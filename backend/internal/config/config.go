@@ -1528,6 +1528,8 @@ type OpsConfig struct {
 
 	// NodeExporterURL 是仅内部网络可访问的主机指标端点；为空时沿用容器指标。
 	NodeExporterURL string `mapstructure:"node_exporter_url"`
+	// HostSysfsPath 是应用容器内只读挂载的宿主机 sysfs，用于读取真实物理网卡计数器。
+	HostSysfsPath string `mapstructure:"host_sysfs_path"`
 
 	// UsePreaggregatedTables prefers ops_metrics_hourly/daily for long-window dashboard queries.
 	UsePreaggregatedTables bool `mapstructure:"use_preaggregated_tables"`
@@ -2213,6 +2215,7 @@ func setDefaults() {
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)
 	viper.SetDefault("ops.node_exporter_url", "")
+	viper.SetDefault("ops.host_sysfs_path", "")
 	viper.SetDefault("ops.use_preaggregated_tables", true)
 	viper.SetDefault("ops.cleanup.enabled", true)
 	viper.SetDefault("ops.cleanup.schedule", "0 2 * * *")

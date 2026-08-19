@@ -90,12 +90,18 @@ func resolveOpenAICompactForwardModel(account *Account, model string) string {
 	if trimmedModel == "" || account == nil {
 		return trimmedModel
 	}
+	if canonical := normalizeOpenAIGPT56SolAlias(trimmedModel); canonical != "" {
+		trimmedModel = canonical
+	}
 
 	mappedModel, matched := account.ResolveCompactMappedModel(trimmedModel)
 	if !matched {
 		return trimmedModel
 	}
 	if trimmedMapped := strings.TrimSpace(mappedModel); trimmedMapped != "" {
+		if canonical := normalizeOpenAIGPT56SolAlias(trimmedMapped); canonical != "" {
+			return canonical
+		}
 		return trimmedMapped
 	}
 	return trimmedModel

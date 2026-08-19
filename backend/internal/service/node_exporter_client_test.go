@@ -1,6 +1,8 @@
 package service
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +43,7 @@ node_filesystem_avail_bytes{device="/dev/vda1",fstype="ext4",mountpoint="/"} 429
 func TestDeriveNodeExporterStatsUsesCounterDeltas(t *testing.T) {
 	previous := &nodeExporterSample{
 		sampledAt:            time.Unix(100, 0),
+		hasNetwork:           true,
 		cpuTotalSeconds:      100,
 		cpuIdleSeconds:       80,
 		networkReceiveBytes:  1000,
@@ -48,6 +51,7 @@ func TestDeriveNodeExporterStatsUsesCounterDeltas(t *testing.T) {
 	}
 	current := &nodeExporterSample{
 		sampledAt:            time.Unix(110, 0),
+		hasNetwork:           true,
 		cpuTotalSeconds:      120,
 		cpuIdleSeconds:       85,
 		memoryTotalBytes:     1000,
@@ -65,9 +69,38 @@ func TestDeriveNodeExporterStatsUsesCounterDeltas(t *testing.T) {
 	require.InDelta(t, 200, *stats.networkReceiveBytesPerSecond, 0.01)
 	require.NotNil(t, stats.networkTransmitBytesPerSecond)
 	require.InDelta(t, 100, *stats.networkTransmitBytesPerSecond, 0.01)
+	require.Equal(t, int64(2000), *stats.networkReceiveBytes)
+	require.Equal(t, int64(1000), *stats.networkTransmitBytes)
 	require.Equal(t, "host", stats.resourceSource)
 	require.Equal(t, int64(1500), *stats.diskUsedBytes)
 	require.InDelta(t, 75, *stats.diskUsagePercent, 0.01)
+}
+
+func TestReadHostNetworkTotalsExcludesVirtualDevices(t *testing.T) {
+	sysfsRoot := t.TempDir()
+	writeCounter := func(device, name, value string) {
+		path := filepath.Join(sysfsRoot, "class", "net", device, "statistics")
+		require.NoError(t, os.MkdirAll(path, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(path, name), []byte(value), 0o644))
+	}
+	for _, sample := range []struct {
+		device string
+		rx     string
+		tx     string
+	}{
+		{device: "eth0", rx: "1200", tx: "800"},
+		{device: "ens3", rx: "300", tx: "200"},
+		{device: "lo", rx: "9999", tx: "9999"},
+		{device: "docker0", rx: "8888", tx: "8888"},
+	} {
+		writeCounter(sample.device, "rx_bytes", sample.rx)
+		writeCounter(sample.device, "tx_bytes", sample.tx)
+	}
+
+	receive, transmit, err := readHostNetworkTotals(sysfsRoot)
+	require.NoError(t, err)
+	require.Equal(t, float64(1500), receive)
+	require.Equal(t, float64(1000), transmit)
 }
 
 func TestParseNodeExporterSampleRejectsEmptyOrUnrelatedResponse(t *testing.T) {

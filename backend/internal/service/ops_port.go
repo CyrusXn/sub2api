@@ -181,6 +181,8 @@ type OpsInsertSystemMetricsInput struct {
 	ResourceSource                *string
 	NetworkReceiveBytesPerSecond  *float64
 	NetworkTransmitBytesPerSecond *float64
+	NetworkReceiveBytes           *int64
+	NetworkTransmitBytes          *int64
 	DiskUsedBytes                 *int64
 	DiskTotalBytes                *int64
 	DiskUsagePercent              *float64

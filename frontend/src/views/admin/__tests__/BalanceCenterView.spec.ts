@@ -54,17 +54,28 @@ describe('BalanceCenterView', () => {
     api.deleteRechargeEvent.mockResolvedValue(undefined)
   })
 
-  it('只保留充值统计工作台并加载站点与汇总', async () => {
+  it('默认只展示新增充值并仅加载站点', async () => {
     const wrapper = mountView()
     await flushPromises()
 
     expect(api.sites).toHaveBeenCalledOnce()
-    expect(api.rechargeSummary).toHaveBeenCalledOnce()
+    expect(api.rechargeSummary).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="tab-add-recharge"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.findAll('[data-test="site-recharge-row"]')).toHaveLength(2)
+    expect(wrapper.find('[data-test="total-amount"]').exists()).toBe(false)
+  })
+
+  it('切换到充值记录时才加载汇总并隐藏新增充值', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
+    await flushPromises()
+
+    expect(api.rechargeSummary).toHaveBeenCalledOnce()
+    expect(wrapper.get('[data-test="tab-recharge-records"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.get('[data-test="total-amount"]').text()).toContain('80.00')
-    expect(wrapper.text()).not.toContain('admin.balanceCenter.tabs.overview')
-    expect(wrapper.text()).not.toContain('admin.balanceCenter.tabs.manual')
-    expect(wrapper.text()).not.toContain('admin.balanceCenter.tabs.reconciliation')
+    expect(wrapper.find('[data-test="site-recharge-row"]').exists()).toBe(false)
   })
 
   it('站点金额回车后使用当前分钟新增并刷新统计', async () => {
@@ -79,12 +90,14 @@ describe('BalanceCenterView', () => {
     expect(api.createRechargeEvent).toHaveBeenCalledWith(expect.objectContaining({
       source: 'manual', site_id: 1, amount: 88.5, currency: 'CNY', occurred_at: '2026-08-14T02:20:00.000Z'
     }))
-    expect(api.rechargeSummary).toHaveBeenCalledTimes(2)
+    expect(api.rechargeSummary).not.toHaveBeenCalled()
     expect((input.element as HTMLInputElement).value).toBe('')
   })
 
   it('选择快捷时间后直接刷新且无需确定按钮', async () => {
     const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-test="range-yesterday"]').trigger('click')
     await flushPromises()
@@ -98,6 +111,8 @@ describe('BalanceCenterView', () => {
 
   it('时间维度删除后重查总额，站点维度可展开多个时间节点', async () => {
     const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-test="delete-recharge-12"]').trigger('click')
     await flushPromises()
@@ -122,8 +137,12 @@ describe('BalanceCenterView', () => {
 
     const wrapper = mountView()
     await flushPromises()
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
+    await flushPromises()
 
     expect(wrapper.text()).toContain('Fox')
+    expect(wrapper.text()).toContain('admin.balanceCenter.unknownRechargeDate')
+    expect(wrapper.text()).not.toContain('2026-08-11')
     expect(wrapper.text()).not.toContain('admin.balanceCenter.unassignedSite')
   })
 })

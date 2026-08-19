@@ -57,10 +57,21 @@ export interface DashboardBusinessTotals {
   account_cost_excluding_admin: number
 }
 
+export interface DashboardBusinessDailyPoint {
+  bucket_date: string
+  recharge_amount: number
+  total_requests: number
+  total_tokens: number
+  actual_cost: number
+  actual_cost_excluding_admin: number
+  account_cost: number
+  account_cost_excluding_admin: number
+}
+
 export interface DashboardBusinessSummary {
   lifetime: DashboardBusinessTotals
   range: DashboardBusinessTotals
-  daily: Array<DashboardBusinessTotals & { bucket_date: string }>
+  daily: DashboardBusinessDailyPoint[]
 }
 
 export interface DashboardLowBalanceAccount {
@@ -86,9 +97,24 @@ export interface DashboardSystemMetricPoint {
   resource_source: string
 }
 
+export interface DashboardNetworkTrafficDailyPoint {
+  bucket_date: string
+  receive_bytes: number
+  transmit_bytes: number
+  total_bytes: number
+}
+
+export interface DashboardNetworkTrafficTotals {
+  receive_bytes: number
+  transmit_bytes: number
+  total_bytes: number
+}
+
 export interface DashboardSystemMetricTrend {
   source: string
   points: DashboardSystemMetricPoint[]
+  network_daily?: DashboardNetworkTrafficDailyPoint[]
+  network_totals?: DashboardNetworkTrafficTotals
 }
 
 export async function getBusinessSummary(params?: Pick<TrendParams, 'start_date' | 'end_date'>): Promise<DashboardBusinessSummary> {

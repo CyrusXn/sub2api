@@ -37,10 +37,15 @@ vi.mock('vue-i18n', () => ({
     }
   }),
   useI18n: () => ({
-    t: (key: string) =>
-      key === 'auth.emailDomainRegistrationLimit'
-        ? '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
-        : key,
+    t: (key: string) => {
+      const messages: Record<string, string> = {
+        'auth.invalidEmail': '请输入正确的邮箱地址',
+        'auth.registrationEmailDomainNotAllowed': '仅支持 qq.com 和 163.com 邮箱注册',
+        'auth.emailDomainRegistrationLimit':
+          '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
+      }
+      return messages[key] ?? key
+    },
     locale: { value: 'en' }
   })
 }))
@@ -130,7 +135,7 @@ describe('RegisterView invitation layout', () => {
     expect(wrapper.get('#promo_code').exists()).toBe(true)
   })
 
-  it('accepts an arbitrary account and registers it directly even when email verification is enabled', async () => {
+  it('accepts a supported email and registers it directly even when email verification is enabled', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       ...publicSettings,
       turnstile_enabled: false,
@@ -141,15 +146,43 @@ describe('RegisterView invitation layout', () => {
 
     const wrapper = mountRegister()
     await flushPromises()
-    await wrapper.get('#email').setValue('  任意账号  ')
+    await wrapper.get('#email').setValue('  USER@QQ.COM  ')
     await wrapper.get('#password').setValue('secret-123')
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()
 
     expect(registerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ email: '任意账号' })
+      expect.objectContaining({ email: 'user@qq.com' })
     )
     expect(showErrorMock).not.toHaveBeenCalled()
+  })
+
+  it('shows one supported-domain message for a malformed email', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({ ...publicSettings, turnstile_enabled: false })
+
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('随便填写')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(registerMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledOnce()
+    expect(showErrorMock).toHaveBeenCalledWith('仅支持 qq.com 和 163.com 邮箱注册')
+  })
+
+  it('shows the supported-domain message for another valid email domain', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({ ...publicSettings, turnstile_enabled: false })
+
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@gmail.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(registerMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledOnce()
+    expect(showErrorMock).toHaveBeenCalledWith('仅支持 qq.com 和 163.com 邮箱注册')
   })
 
   it('shows the localized duplicate account message returned by the backend', async () => {
@@ -161,7 +194,7 @@ describe('RegisterView invitation layout', () => {
 
     const wrapper = mountRegister()
     await flushPromises()
-    await wrapper.get('#email').setValue('existing-account')
+    await wrapper.get('#email').setValue('existing@qq.com')
     await wrapper.get('#password').setValue('secret-123')
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()
@@ -173,8 +206,8 @@ describe('RegisterView invitation layout', () => {
     const wrapper = mountRegister()
     await flushPromises()
 
-    expect(wrapper.get('#email').attributes('type')).toBe('text')
-    expect(wrapper.text()).toContain('auth.accountLabel')
+    expect(wrapper.get('#email').attributes('type')).toBe('email')
+    expect(wrapper.text()).toContain('auth.emailLabel')
 
     const contactNotice = wrapper.get('[data-testid="wechat-contact-notice"]')
     expect(contactNotice.classes()).toEqual(

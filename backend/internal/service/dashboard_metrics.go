@@ -62,9 +62,24 @@ type DashboardSystemMetricPoint struct {
 	ResourceSource                string    `json:"resource_source"`
 }
 
+type DashboardNetworkTrafficDailyPoint struct {
+	BucketDate    string `json:"bucket_date"`
+	ReceiveBytes  int64  `json:"receive_bytes"`
+	TransmitBytes int64  `json:"transmit_bytes"`
+	TotalBytes    int64  `json:"total_bytes"`
+}
+
+type DashboardNetworkTrafficTotals struct {
+	ReceiveBytes  int64 `json:"receive_bytes"`
+	TransmitBytes int64 `json:"transmit_bytes"`
+	TotalBytes    int64 `json:"total_bytes"`
+}
+
 type DashboardSystemMetricTrend struct {
-	Source string                       `json:"source"`
-	Points []DashboardSystemMetricPoint `json:"points"`
+	Source        string                              `json:"source"`
+	Points        []DashboardSystemMetricPoint        `json:"points"`
+	NetworkDaily  []DashboardNetworkTrafficDailyPoint `json:"network_daily"`
+	NetworkTotals DashboardNetworkTrafficTotals       `json:"network_totals"`
 }
 
 type DashboardMetricsRepository interface {

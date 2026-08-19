@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	_ "modernc.org/sqlite"
 )
 
@@ -44,14 +45,58 @@ func TestImportLegacyBalanceCenterSQLiteDryRunSummarizesLegacyData(t *testing.T)
 	if report.ActualRechargeTotal != 10 || report.OpeningRechargeTotal != 2252.37 {
 		t.Fatalf("recharge totals mismatch: actual %.2f opening %.2f", report.ActualRechargeTotal, report.OpeningRechargeTotal)
 	}
-	if report.AutomaticRecords != 0 {
-		t.Fatalf("legacy automatic records must not be imported, got %d", report.AutomaticRecords)
+	if report.AutomaticRecords != 1 || report.SourceAutomaticRecords != 1 || report.DeduplicatedAutomaticRecords != 0 {
+		t.Fatalf("automatic record summary mismatch: %#v", report)
 	}
-	if report.LiandongOrders != 0 {
-		t.Fatalf("legacy liandong orders must not be imported, got %d", report.LiandongOrders)
+	if report.LiandongOrders != 1 {
+		t.Fatalf("legacy liandong orders = %d, want 1", report.LiandongOrders)
 	}
-	if report.Reconciliations != 0 {
-		t.Fatalf("legacy reconciliations must not be imported, got %d", report.Reconciliations)
+	if report.Reconciliations != 1 {
+		t.Fatalf("legacy reconciliations = %d, want 1", report.Reconciliations)
+	}
+	if report.UnmatchedRechargeSites != 12 {
+		t.Fatalf("unmatched recharge sites = %d, want 12", report.UnmatchedRechargeSites)
+	}
+}
+
+func TestWriteLegacyBalanceCenterDataPersistsSupplementalHistory(t *testing.T) {
+	targetDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	defer targetDB.Close()
+
+	mock.ExpectBegin()
+	tx, err := targetDB.Begin()
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	data := &legacyBalanceCenterData{
+		ManualRows:       []legacyManualRow{{ID: "row-1", Label: "旧站点", Expression: "10", Amount: 10}},
+		AutomaticRecords: []legacyAutomaticRecord{{Source: "legacy", ID: "auto-1", SiteLabel: "旧站点", Amount: 10, OccurredAt: now.Format(time.RFC3339)}},
+		LiandongOrders:   []legacyLiandongOrder{{TradeNumber: "trade-1", GoodsName: "充值", TotalAmount: 10, Quantity: 1, Status: 1, CreatedAt: now}},
+		Reconciliations:  []legacyReconciliation{{ID: "run-1", Status: "same", CreatedAt: now}},
+		Settings:         map[string]string{},
+	}
+	report := &BalanceCenterLegacyImportReport{}
+	mock.ExpectQuery("INSERT INTO balance_center_manual_rows").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery("INSERT INTO balance_center_automatic_records").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(2))
+	mock.ExpectQuery("INSERT INTO balance_center_liandong_orders").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3))
+	mock.ExpectQuery("INSERT INTO balance_center_reconciliations").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(4))
+	mock.ExpectRollback()
+
+	if err := writeLegacyBalanceCenterData(context.Background(), tx, data, report, BalanceCenterLegacyImportOptions{}, nil); err != nil {
+		t.Fatalf("write supplemental history: %v", err)
+	}
+	if report.InsertedManualRows != 1 || report.InsertedAutomaticRecords != 1 || report.InsertedLiandongOrders != 1 || report.InsertedReconciliations != 1 {
+		t.Fatalf("inserted supplemental counts mismatch: %#v", report)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback transaction: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
@@ -66,10 +111,12 @@ func TestLoadLegacyBalanceCenterDataBuildsPerSiteOpeningEvents(t *testing.T) {
 
 	var total float64
 	openingByLabel := map[string]float64{}
+	openingNoteByLabel := map[string]string{}
 	for _, event := range data.ManualRechargeEvents {
 		total += event.Amount
 		if strings.HasPrefix(event.ID, "opening:") {
 			openingByLabel[event.SiteLabel] = event.Amount
+			openingNoteByLabel[event.SiteLabel] = event.Note
 		}
 	}
 	if roundLegacyMoney(total) != 2262.37 {
@@ -77,6 +124,9 @@ func TestLoadLegacyBalanceCenterDataBuildsPerSiteOpeningEvents(t *testing.T) {
 	}
 	if openingByLabel["HBY"] != 327 {
 		t.Fatalf("HBY opening = %.2f, want 327", openingByLabel["HBY"])
+	}
+	if !strings.Contains(openingNoteByLabel["HBY"], "原表达式：337") {
+		t.Fatalf("HBY opening note must preserve the source expression, got %q", openingNoteByLabel["HBY"])
 	}
 	if openingByLabel["Fox"] != 10 {
 		t.Fatalf("unmatched Fox opening must remain independently attributable, got %.2f", openingByLabel["Fox"])

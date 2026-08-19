@@ -83,12 +83,10 @@ func (s *AuthService) RegisterOAuthAccount(
 		return nil, nil, ErrRegDisabled
 	}
 
-	email = strings.TrimSpace(strings.ToLower(email))
-	if email == "" || len(email) > 255 {
-		return nil, nil, infraerrors.BadRequest("INVALID_ACCOUNT", "请输入有效账号")
-	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		return nil, nil, infraerrors.BadRequest("INVALID_ACCOUNT", "请输入有效账号")
+	var err error
+	email, err = normalizeSupportedRegistrationEmail(email)
+	if err != nil {
+		return nil, nil, err
 	}
 	if isReservedEmail(email) {
 		return nil, nil, ErrEmailReserved
@@ -99,7 +97,7 @@ func (s *AuthService) RegisterOAuthAccount(
 		return nil, nil, err
 	}
 
-	// 去掉验证码不改变注册安全策略：别名防刷、后缀白名单和域名限额仍需生效。
+	// 去掉验证码不改变重复账号保护：同一收件箱的别名变体仍不能重复建号。
 	existsEmail, err := s.existsByEmailOrAlias(ctx, email)
 	if err != nil {
 		slog.Error("oauth email register: ExistsByEmail failed", "email", email, "error", err.Error())
@@ -107,10 +105,6 @@ func (s *AuthService) RegisterOAuthAccount(
 	}
 	if existsEmail {
 		return nil, nil, ErrEmailExists
-	}
-	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
-		slog.Error("oauth email register: policy rejected", "email", email, "error", err.Error())
-		return nil, nil, err
 	}
 	hashedPassword, err := s.HashPassword(password)
 	if err != nil {
@@ -130,12 +124,10 @@ func (s *AuthService) RegisterOAuthAccount(
 		SignupSource: signupSource,
 	}
 
-	if err := s.createUserWithRegistrationEmailGuard(ctx, user); err != nil {
+	if err := s.userRepo.CreateWithEmailAliasGuard(ctx, user); err != nil {
 		switch {
 		case errors.Is(err, ErrEmailExists):
 			return nil, nil, ErrEmailExists
-		case errors.Is(err, ErrEmailDomainRegistrationLimit):
-			return nil, nil, ErrEmailDomainRegistrationLimit
 		default:
 			slog.Error("oauth email register: userRepo.Create failed", "email", email, "signup_source", signupSource, "error", err.Error())
 			return nil, nil, ErrServiceUnavailable

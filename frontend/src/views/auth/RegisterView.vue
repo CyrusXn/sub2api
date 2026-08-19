@@ -27,11 +27,11 @@
       </div>
 
       <!-- Registration Form -->
-      <form v-else @submit.prevent="handleRegister" class="space-y-5">
-        <!-- Account Input -->
+      <form v-else novalidate @submit.prevent="handleRegister" class="space-y-5">
+        <!-- 注册邮箱输入 -->
         <div>
           <label for="email" class="input-label">
-            {{ t('auth.accountLabel') }}
+            {{ t('auth.emailLabel') }}
           </label>
           <div class="relative">
             <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
@@ -40,14 +40,14 @@
             <input
               id="email"
               v-model="formData.email"
-              type="text"
+              type="email"
               required
               autofocus
-              autocomplete="username"
+              autocomplete="email"
               :disabled="registrationActionDisabled"
               class="input pl-11"
               :class="{ 'input-error': errors.email }"
-              :placeholder="t('auth.accountPlaceholder')"
+              :placeholder="t('auth.emailPlaceholder')"
             />
           </div>
         </div>
@@ -305,7 +305,7 @@
           @start="handleOAuthStart"
         />
       </div>
-      <!-- 联系方式重点提示：整体增强可读性，微信号使用独立的红色视觉层级。 -->
+      <!-- 注册页使用专属邀请试用文案，避免同步改变登录页提示；微信号继续红色高亮。 -->
       <p
         data-testid="wechat-contact-notice"
         class="flex flex-wrap items-baseline justify-center gap-x-1 gap-y-1 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-center text-base font-semibold text-gray-800 dark:border-red-800/70 dark:bg-red-950/30 dark:text-red-100"
@@ -317,7 +317,7 @@
         >
           {{ t('auth.wechatGroupContactId') }}
         </span>
-        <span>{{ t('auth.wechatGroupContactSuffix') }}</span>
+        <span>{{ t('auth.registrationWechatGroupContactSuffix') }}</span>
       </p>
     </div>
 
@@ -360,6 +360,10 @@ import {
 } from '@/api/auth'
 import { buildAuthErrorMessage } from '@/utils/authError'
 import { extractApiErrorCode, extractI18nErrorMessage } from '@/utils/apiError'
+import {
+  getRegistrationEmailErrorKey,
+  normalizeRegistrationEmail
+} from '@/utils/registrationEmail'
 import {
   clearAffiliateReferralCode,
   loadAffiliateReferralCode,
@@ -860,9 +864,9 @@ function validateForm(): boolean {
     return false
   }
 
-  // 账号只要求非空，具体唯一性由后端按统一规则判定。
-  if (!formData.email.trim()) {
-    errors.email = t('auth.accountRequired')
+  const emailErrorKey = getRegistrationEmailErrorKey(formData.email)
+  if (emailErrorKey) {
+    errors.email = t(emailErrorKey)
     isValid = false
   }
 
@@ -951,7 +955,7 @@ async function handleRegister(): Promise<void> {
     }
 
     await authStore.register({
-      email: formData.email.trim(),
+      email: normalizeRegistrationEmail(formData.email),
       password: formData.password,
       turnstile_token:
         turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,

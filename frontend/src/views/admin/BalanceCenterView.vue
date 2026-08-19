@@ -10,7 +10,34 @@
         </RouterLink>
       </header>
 
-      <section class="space-y-3" aria-labelledby="recharge-entry-title">
+      <nav class="border-b border-gray-200 dark:border-dark-700" role="tablist" :aria-label="t('admin.balanceCenter.title')">
+        <div class="flex gap-6">
+          <button
+            type="button"
+            role="tab"
+            data-test="tab-add-recharge"
+            class="border-b-2 px-1 pb-3 text-sm font-semibold transition-colors"
+            :class="activeTab === 'add' ? activeTabClass : inactiveTabClass"
+            :aria-selected="activeTab === 'add'"
+            @click="switchTab('add')"
+          >
+            {{ t('admin.balanceCenter.addRecharge') }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-test="tab-recharge-records"
+            class="border-b-2 px-1 pb-3 text-sm font-semibold transition-colors"
+            :class="activeTab === 'records' ? activeTabClass : inactiveTabClass"
+            :aria-selected="activeTab === 'records'"
+            @click="switchTab('records')"
+          >
+            {{ t('admin.balanceCenter.recordsTitle') }}
+          </button>
+        </div>
+      </nav>
+
+      <section v-if="activeTab === 'add'" class="space-y-3" aria-labelledby="recharge-entry-title">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 id="recharge-entry-title" class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.balanceCenter.addRecharge') }}</h2>
@@ -55,13 +82,13 @@
               </button>
             </div>
           </div>
-          <div v-if="!loading && sites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+          <div v-if="!sitesLoading && sites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
             {{ t('admin.balanceCenter.noSites') }}
           </div>
         </div>
       </section>
 
-      <section class="space-y-4" aria-labelledby="recharge-records-title">
+      <section v-else class="space-y-4" aria-labelledby="recharge-records-title">
         <div class="flex flex-col gap-3 border-b border-gray-200 pb-3 dark:border-dark-700 lg:flex-row lg:items-end lg:justify-between">
           <div class="flex items-end gap-5">
             <div>
@@ -100,12 +127,12 @@
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
               <tr v-for="item in summary.items" :key="item.id" class="text-gray-700 dark:text-gray-200">
-                <td class="whitespace-nowrap px-3 py-3">{{ date(item.occurred_at) }}</td>
+                <td class="whitespace-nowrap px-3 py-3">{{ rechargeDate(item) }}</td>
                 <td class="px-3 py-3">{{ rechargeSiteName(item) }}</td>
                 <td class="px-3 py-3 text-right font-medium">¥{{ money(item.amount) }}</td>
                 <td class="px-3 py-2 text-right"><button type="button" class="btn btn-ghost h-8 w-8 p-0 text-red-600" :data-test="`delete-recharge-${item.id}`" :title="t('admin.balanceCenter.delete')" @click="removeRecharge(item)"><Icon name="trash" size="sm" /></button></td>
               </tr>
-              <tr v-if="!loading && summary.items.length === 0"><td colspan="4" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.noRecords') }}</td></tr>
+              <tr v-if="!recordsLoading && summary.items.length === 0"><td colspan="4" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.noRecords') }}</td></tr>
             </tbody>
           </table>
           <Pagination v-if="summary.total > summary.page_size" :page="summary.page" :page-size="summary.page_size" :total="summary.total" @update:page="changePage" @update:page-size="changePageSize" />
@@ -120,12 +147,12 @@
             </button>
             <div v-if="expandedSites.has(siteKey(site.site_id))" class="border-t border-gray-100 bg-gray-50/60 px-3 py-2 dark:border-dark-700 dark:bg-dark-800/50">
               <div v-for="item in site.items" :key="item.id" data-test="site-history-item" class="flex items-center justify-between gap-4 py-2 pl-7 text-sm">
-                <span class="text-gray-500 dark:text-gray-400">{{ date(item.occurred_at) }}</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ rechargeDate(item) }}</span>
                 <span class="font-medium text-gray-800 dark:text-gray-100">¥{{ money(item.amount) }}</span>
               </div>
             </div>
           </div>
-          <div v-if="!loading && summary.sites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.noRecords') }}</div>
+          <div v-if="!recordsLoading && summary.sites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.noRecords') }}</div>
         </div>
       </section>
     </main>
@@ -145,12 +172,15 @@ import { formatDateTime } from '@/utils/format'
 
 type Dimension = 'time' | 'site'
 type RangePreset = '24h' | 'today' | 'yesterday' | 'all'
+type ActiveTab = 'add' | 'records'
 
 const { t } = useI18n()
 const app = useAppStore()
 const sites = ref<BalanceCenterSite[]>([])
 const amounts = reactive<Record<number, string>>({})
-const loading = ref(false)
+const activeTab = ref<ActiveTab>('add')
+const sitesLoading = ref(false)
+const recordsLoading = ref(false)
 const busySiteID = ref<number>()
 const dimension = ref<Dimension>('time')
 const rangePreset = ref<RangePreset | 'custom'>('24h')
@@ -160,6 +190,8 @@ const expandedSites = ref(new Set<string>())
 const rangePresets: RangePreset[] = ['24h', 'today', 'yesterday', 'all']
 const selectedButtonClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900'
 const normalButtonClass = 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700'
+const activeTabClass = 'border-primary-600 text-primary-700 dark:border-primary-400 dark:text-primary-300'
+const inactiveTabClass = 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
 const summary = reactive<BalanceCenterRechargeSummary>({ total_amount: 0, items: [], sites: [], total: 0, page: 1, page_size: 20 })
 
 function toLocalMinute(value: Date) {
@@ -193,30 +225,32 @@ function requestParams(): BalanceCenterListParams {
 }
 
 async function loadSummary() {
-  loading.value = true
+  recordsLoading.value = true
   try {
     Object.assign(summary, await adminAPI.balanceCenter.rechargeSummary(requestParams()))
   } catch (error) {
     notifyError(error)
   } finally {
-    loading.value = false
+    recordsLoading.value = false
   }
 }
 
 async function initial() {
-  loading.value = true
+  sitesLoading.value = true
   try {
-    const [siteItems, rechargeSummary] = await Promise.all([
-      adminAPI.balanceCenter.sites(),
-      adminAPI.balanceCenter.rechargeSummary(requestParams())
-    ])
-    sites.value = siteItems
-    Object.assign(summary, rechargeSummary)
+    sites.value = await adminAPI.balanceCenter.sites()
   } catch (error) {
     notifyError(error)
   } finally {
-    loading.value = false
+    sitesLoading.value = false
   }
+}
+
+// 充值记录只在管理员主动打开对应 Tab 时查询，避免进入页面就发起无关请求。
+async function switchTab(tab: ActiveTab) {
+  if (activeTab.value === tab) return
+  activeTab.value = tab
+  if (tab === 'records') await loadSummary()
 }
 
 async function addRecharge(site: BalanceCenterSite) {
@@ -237,7 +271,6 @@ async function addRecharge(site: BalanceCenterSite) {
     })
     amounts[site.id] = ''
     app.showSuccess(t('admin.balanceCenter.rechargeAdded'))
-    await loadSummary()
   } catch (error) {
     notifyError(error)
   } finally {
@@ -300,8 +333,9 @@ function money(value?: number) {
   return Number(value ?? 0).toFixed(2)
 }
 
-function date(value: string) {
-  return formatDateTime(value)
+function rechargeDate(item: BalanceCenterRechargeEvent) {
+  // 期初累计没有真实逐笔日期，数据库时间仅用于稳定排序，不能作为充值日期展示。
+  return item.source === 'legacy_opening' ? t('admin.balanceCenter.unknownRechargeDate') : formatDateTime(item.occurred_at)
 }
 
 function notifyError(error: unknown) {

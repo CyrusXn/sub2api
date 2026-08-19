@@ -65,6 +65,34 @@ func TestDashboardLast24HourUsageUsesHourlyBucketsAndExactBoundaryDetails(t *tes
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDashboardSystemMetricTrendIncludesPersistentDailyNetworkTraffic(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	start := time.Date(2026, 8, 15, 16, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 18, 16, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(`(?s)FROM ops_system_metrics.*GROUP BY bucket`).
+		WithArgs(start, end, "18m0s").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bucket", "cpu", "memory_used", "memory_total", "memory_pct",
+			"receive", "transmit", "disk_used", "disk_total", "disk_pct", "source",
+		}).AddRow(start, 5.0, int64(100), int64(1000), 10.0, 1_000_000.0, 2_000_000.0, int64(10), int64(100), 10.0, "host"))
+	mock.ExpectQuery(`(?s)FROM ops_network_traffic_daily`).
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"bucket_date", "receive_bytes", "transmit_bytes"}).
+			AddRow(time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC), int64(3_000_000_000), int64(2_000_000_000)).
+			AddRow(time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC), int64(4_000_000_000), int64(1_000_000_000)))
+
+	trend, err := repo.GetDashboardSystemMetricTrend(context.Background(), start, end, 240)
+	require.NoError(t, err)
+	require.Len(t, trend.NetworkDaily, 2)
+	require.Equal(t, int64(7_000_000_000), trend.NetworkTotals.ReceiveBytes)
+	require.Equal(t, int64(3_000_000_000), trend.NetworkTotals.TransmitBytes)
+	require.Equal(t, int64(10_000_000_000), trend.NetworkTotals.TotalBytes)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestCleanupUsageLogsFinalizesBusinessRollupBeforeDeletingDetails(t *testing.T) {
 	useGroupUsageRepositoryTestTimezone(t, "UTC")
 	db, mock, err := sqlmock.New()

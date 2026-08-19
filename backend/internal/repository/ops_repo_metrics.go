@@ -27,7 +27,8 @@ func (r *opsRepository) InsertSystemMetrics(ctx context.Context, input *service.
 	}
 
 	q := `
-INSERT INTO ops_system_metrics (
+	WITH inserted AS (
+	INSERT INTO ops_system_metrics (
   created_at,
   window_minutes,
   platform,
@@ -66,9 +67,11 @@ INSERT INTO ops_system_metrics (
   memory_total_mb,
   memory_usage_percent,
   resource_source,
-  network_receive_bytes_per_second,
-  network_transmit_bytes_per_second,
-  disk_used_bytes,
+	  network_receive_bytes_per_second,
+	  network_transmit_bytes_per_second,
+	  network_receive_bytes,
+	  network_transmit_bytes,
+	  disk_used_bytes,
   disk_total_bytes,
   disk_usage_percent,
 
@@ -91,12 +94,31 @@ INSERT INTO ops_system_metrics (
   $12,$13,$14,$15,
   $16,$17,$18,$19,$20,$21,
   $22,$23,$24,$25,$26,$27,
-  $28,$29,$30,$31,$32,$33,$34,$35,$36,$37,
-  $38,$39,
-  $40,$41,
-  $42,$43,$44,
-  $45,$46
-)`
+	  $28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
+	  $40,$41,
+	  $42,$43,
+	  $44,$45,$46,
+	  $47,$48
+	)
+	RETURNING created_at, network_receive_bytes, network_transmit_bytes
+	)
+	INSERT INTO ops_network_traffic_daily (
+	  bucket_date, receive_bytes, transmit_bytes, sample_count, created_at, updated_at
+	)
+	SELECT
+	  (created_at AT TIME ZONE 'Asia/Shanghai')::date,
+	  COALESCE(network_receive_bytes, 0),
+	  COALESCE(network_transmit_bytes, 0),
+	  1,
+	  NOW(),
+	  NOW()
+	FROM inserted
+	WHERE network_receive_bytes IS NOT NULL OR network_transmit_bytes IS NOT NULL
+	ON CONFLICT (bucket_date) DO UPDATE SET
+	  receive_bytes = ops_network_traffic_daily.receive_bytes + EXCLUDED.receive_bytes,
+	  transmit_bytes = ops_network_traffic_daily.transmit_bytes + EXCLUDED.transmit_bytes,
+	  sample_count = ops_network_traffic_daily.sample_count + 1,
+	  updated_at = NOW()`
 
 	_, err := r.db.ExecContext(
 		ctx,
@@ -141,6 +163,8 @@ INSERT INTO ops_system_metrics (
 		opsNullString(input.ResourceSource),
 		opsNullFloat64(input.NetworkReceiveBytesPerSecond),
 		opsNullFloat64(input.NetworkTransmitBytesPerSecond),
+		opsNullInt64(input.NetworkReceiveBytes),
+		opsNullInt64(input.NetworkTransmitBytes),
 		opsNullInt64(input.DiskUsedBytes),
 		opsNullInt64(input.DiskTotalBytes),
 		opsNullFloat64(input.DiskUsagePercent),

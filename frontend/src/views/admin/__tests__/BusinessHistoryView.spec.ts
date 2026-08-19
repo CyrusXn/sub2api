@@ -1,0 +1,124 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import BusinessHistoryView from '../BusinessHistoryView.vue'
+
+const getBusinessSummary = vi.hoisted(() => vi.fn())
+const notifications = vi.hoisted(() => ({ showError: vi.fn() }))
+
+vi.mock('@/api/admin', () => ({ adminAPI: { dashboard: { getBusinessSummary } } }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => notifications }))
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: () => ({ t: (key: string) => key })
+}))
+vi.mock('vue-chartjs', () => ({
+  Line: {
+    name: 'Line',
+    props: ['data', 'options'],
+    template: '<div data-test="business-history-chart" />'
+  }
+}))
+
+const response = {
+  lifetime: {
+    recharge_amount: 500,
+    total_requests: 999,
+    input_tokens: 1000,
+    output_tokens: 200,
+    cache_creation_tokens: 100,
+    cache_read_tokens: 700,
+    total_tokens: 2000,
+    total_cost: 90,
+    actual_cost: 80,
+    actual_cost_excluding_admin: 70,
+    account_cost: 60,
+    account_cost_excluding_admin: 50
+  },
+  range: {
+    recharge_amount: 120,
+    total_requests: 123,
+    input_tokens: 1000,
+    output_tokens: 200,
+    cache_creation_tokens: 100,
+    cache_read_tokens: 700,
+    total_tokens: 2000,
+    total_cost: 30,
+    actual_cost: 20,
+    actual_cost_excluding_admin: 18,
+    account_cost: 10,
+    account_cost_excluding_admin: 9
+  },
+  daily: [
+    { bucket_date: '2026-08-17T00:00:00Z', recharge_amount: 70, total_requests: 73, total_tokens: 1200, actual_cost: 12, actual_cost_excluding_admin: 11, account_cost: 7, account_cost_excluding_admin: 6 },
+    { bucket_date: '2026-08-16T00:00:00Z', recharge_amount: 50, total_requests: 50, total_tokens: 800, actual_cost: 8, actual_cost_excluding_admin: 7, account_cost: 3, account_cost_excluding_admin: 3 }
+  ]
+}
+
+const mountView = () => mount(BusinessHistoryView, {
+  global: {
+    stubs: {
+      AppLayout: { template: '<div><slot /></div>' },
+      Icon: true,
+      LoadingSpinner: true
+    }
+  }
+})
+
+describe('BusinessHistoryView', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-17T10:00:00+08:00'))
+    getBusinessSummary.mockReset()
+    getBusinessSummary.mockResolvedValue(response)
+    notifications.showError.mockReset()
+  })
+
+  afterEach(() => vi.useRealTimers())
+
+  it('默认查询最近 30 天并展示范围内三项经营指标', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(getBusinessSummary).toHaveBeenCalledWith({ start_date: '2026-07-19', end_date: '2026-08-17' })
+    expect(wrapper.get('[data-test="range-requests"]').text()).toContain('123')
+    expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
+    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$20.00')
+    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$18.00')
+    expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
+    expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
+  })
+
+  it('按管理员选择的日期范围重新查询', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="history-start-date"]').setValue('2026-08-01')
+    await wrapper.get('[data-test="history-end-date"]').setValue('2026-08-10')
+    await wrapper.get('[data-test="history-query"]').trigger('click')
+    await flushPromises()
+
+    expect(getBusinessSummary).toHaveBeenLastCalledWith({ start_date: '2026-08-01', end_date: '2026-08-10' })
+  })
+
+  it('按日期升序展示每日汇总并向趋势图传递同一顺序', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-test="history-daily-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('2026-08-16')
+    expect(rows[1].text()).toContain('2026-08-17')
+
+    const chart = wrapper.findComponent({ name: 'Line' })
+    expect((chart.props('data') as any).labels).toEqual(['2026-08-16', '2026-08-17'])
+  })
+
+  it('没有每日汇总时显示历史暂无统计数据', async () => {
+    getBusinessSummary.mockResolvedValue({ ...response, daily: [] })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.businessHistory.noData')
+    expect(wrapper.find('[data-test="business-history-chart"]').exists()).toBe(false)
+  })
+})
