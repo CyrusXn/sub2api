@@ -1,5 +1,5 @@
 const loopbackHost = '127.0.0.1'
-const allowedActions = new Set(['status', 'build', 'deploy', 'stage-candidate', 'prepare-bluegreen', 'canary-green', 'return-blue', 'rollback'])
+const allowedActions = new Set(['status', 'build', 'deploy', 'stage-candidate', 'prepare-bluegreen', 'canary-green', 'return-blue', 'rollback', 'cleanup-release'])
 
 export function assertLoopbackHost(host) {
   if (host !== loopbackHost) throw new Error('发布控制台只能监听 127.0.0.1')

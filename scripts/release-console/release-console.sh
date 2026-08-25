@@ -63,12 +63,27 @@ deploy() {
   remote_action prepare-bluegreen
   remote_action canary-green
   status
+  remote_action cleanup-release
+  cleanup_local_assets
+}
+
+cleanup_local_assets() {
+  local candidate archive checksum file
+  candidate="$STATE_DIR/candidate.json"
+  [[ -f "$candidate" ]] || fail '没有候选记录，拒绝清理本地发布资产'
+  archive=$(node -p "require(process.argv[1]).archive" "$candidate")
+  checksum="$archive.sha256"
+  for file in "$STATE_DIR"/*.tar.gz "$STATE_DIR"/*.tar.gz.sha256; do
+    [[ -e "$file" ]] || continue
+    [[ "$file" == "$archive" || "$file" == "$checksum" ]] || rm -f -- "$file"
+  done
+  log "本地旧发布归档已清理，保留当前候选归档"
 }
 
 case "${1:-}" in
   status) status ;;
   build) build ;;
   deploy) deploy ;;
-  stage-candidate|prepare-bluegreen|canary-green|return-blue|rollback) [[ "$1" == stage-candidate ]] && stage_candidate || remote_action "$1" ;;
-  *) fail '允许操作: status, build, deploy, stage-candidate, prepare-bluegreen, canary-green, return-blue, rollback' ;;
+  stage-candidate|prepare-bluegreen|canary-green|return-blue|rollback|cleanup-release) [[ "$1" == stage-candidate ]] && stage_candidate || remote_action "$1" ;;
+  *) fail '允许操作: status, build, deploy, stage-candidate, prepare-bluegreen, canary-green, return-blue, rollback, cleanup-release' ;;
 esac

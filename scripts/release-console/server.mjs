@@ -26,7 +26,12 @@ function run(action) {
 let activeAction = null
 
 createServer(async (request, response) => {
-  if (request.method === 'GET' && request.url === '/') return response.end(page)
+  if (request.method === 'GET' && request.url === '/') {
+    const retentionPage = page
+      .replace('一键回滚蓝色</button>', '一键回滚蓝色</button><button data-action="cleanup-release">清理旧发布资产</button>')
+      .replace('任一步失败会停止，蓝色保持可用。', '任一步失败会停止，蓝色保持可用；健康切流后只保留当前版本和最近一次完整回滚资产。')
+    return response.end(retentionPage)
+  }
   const action = request.url?.match(/^\/api\/([a-z-]+)$/)?.[1]
   if (request.method !== 'POST' || !isAllowedAction(action)) { response.writeHead(404); return response.end('not found') }
   if (activeAction) { response.writeHead(409); return response.end(`已有操作执行中: ${activeAction}`) }

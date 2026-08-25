@@ -26,6 +26,7 @@ test('控制台只接受明确的发布操作', () => {
 	assert.equal(isAllowedAction('deploy'), true)
 	assert.equal(isAllowedAction('prepare-bluegreen'), true)
 	assert.equal(isAllowedAction('return-blue'), true)
+	assert.equal(isAllowedAction('cleanup-release'), true)
 	assert.equal(isAllowedAction('promote-green'), false)
 	assert.equal(isAllowedAction('shell'), false)
 })

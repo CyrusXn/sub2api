@@ -90,6 +90,8 @@ shasum -a 256 sub2api-xnkaixin-0.1.163-YYYYMMDD-full.tar.gz > sub2api-xnkaixin-0
 
 上传本地镜像归档和 SHA256 文件，在服务器校验后执行 `docker load`。服务器只允许导入镜像和切换应用容器，不得构建镜像。
 
+发布成功且健康检查完成后，必须执行精确的发布资产清理：服务器只保留当前线上镜像、上一版本可回滚资产、仍被任意容器引用的镜像，以及最近一次通过 `SHA256SUMS` 校验的完整备份；更早的 `bluegreen-*` 备份目录、未被容器引用的旧 `weishaw/sub2api:*` 镜像标签和旧本机归档应逐项删除。禁止使用 `docker system prune -a`、宽泛通配符或删除运行中容器。清理失败必须记录并阻止发布流程宣称完成。
+
 ## 无中断切换
 
 - 只重建 `sub2api`，不得重启 PostgreSQL、Redis、Nginx 或整个 Compose 项目。

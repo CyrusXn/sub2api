@@ -71,11 +71,11 @@ prepare_nginx() {
   [[ -f "$ACTIVE_FILE" ]] || write_active 8080
   nginx_reload
 }
-candidate_image() { [[ -f "$CANDIDATE_FILE" ]] && cat "$CANDIDATE_FILE" || docker inspect sub2api --format '{{.Config.Image}}'; }
-blue_image() { [[ -f "$BLUE_IMAGE_FILE" ]] && cat "$BLUE_IMAGE_FILE" || docker inspect sub2api --format '{{.Config.Image}}'; }
+candidate_image() { [[ -f "$CANDIDATE_FILE" ]] && cat "$CANDIDATE_FILE" || docker inspect "$(container_for_port "$(active_port)")" --format '{{.Config.Image}}'; }
+blue_image() { [[ -f "$BLUE_IMAGE_FILE" ]] && cat "$BLUE_IMAGE_FILE" || docker inspect "$(container_for_port "$(active_port)")" --format '{{.Config.Image}}'; }
 
 backup_release() {
-  local timestamp backup_dir image rollback_tag
+  local timestamp backup_dir active active_container image rollback_tag
   timestamp=$(date +%Y%m%d-%H%M%S)
   backup_dir="$APP_DIR/backups/bluegreen-$timestamp"
   mkdir -p "$backup_dir"
@@ -85,7 +85,10 @@ backup_release() {
   cp -p "$API_CONF" "$backup_dir/api.xnkaixin.eu.cc.conf"
   cp -p "$RELAY_CONF" "$backup_dir/relay-api.xnkaixin.eu.cc.conf"
   cp -p /home/web/nginx.conf "$backup_dir/nginx.conf"
-  image=$(docker inspect sub2api --format '{{.Config.Image}}')
+  active=$(active_port)
+  active_container=$(container_for_port "$active")
+  health "$active"
+  image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
   rollback_tag="weishaw/sub2api:rollback-$timestamp"
   docker tag "$image" "$rollback_tag"
   printf '%s\n' "$image" > "$backup_dir/running-image.txt"
@@ -96,9 +99,74 @@ backup_release() {
   log "发布备份已完成: $backup_dir"
 }
 
+is_complete_backup() {
+  local dir=$1
+  [[ -f "$dir/SHA256SUMS" && -f "$dir/postgres.dump" ]] || return 1
+  (cd "$dir" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
+}
+
+cleanup_release() {
+  local latest_backup='' latest_entry dir keep_rollback active active_container current_image previous_port previous_name previous_image image_id tag referenced
+  while IFS= read -r latest_entry; do
+    dir=${latest_entry#* }
+    if is_complete_backup "$dir"; then
+      latest_backup=$dir
+      break
+    fi
+  done < <(find "$APP_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name 'bluegreen-*' -printf '%T@ %p\n' | sort -nr)
+  [[ -n "$latest_backup" ]] || { log '没有可验证的完整发布备份，拒绝清理'; return 1; }
+  keep_rollback=$(tr -d '[:space:]' < "$latest_backup/rollback-image.txt")
+  active=$(active_port)
+  active_container=$(container_for_port "$active")
+  health "$active"
+  [[ -f "$PREVIOUS_ACTIVE_FILE" ]] || { log '缺少上一版本活跃实例记录，拒绝清理'; return 1; }
+  IFS='|' read -r previous_port previous_name previous_image < "$PREVIOUS_ACTIVE_FILE"
+  [[ "$previous_name" =~ ^sub2api(-green|-canary)?$ && "$previous_port" =~ ^(8080|18081|18082)$ ]] || { log '上一版本活跃实例记录无效'; return 1; }
+  health "$previous_port"
+  curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null
+  current_image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
+
+  # 只移除既不是当前活跃实例、也不是上一版本回滚实例的旧槽位。
+  for slot in sub2api sub2api-green sub2api-canary; do
+    [[ "$slot" == "$active_container" || "$slot" == "$previous_name" ]] && continue
+    docker inspect "$slot" >/dev/null 2>&1 || continue
+    docker rm -f "$slot" >/dev/null
+    log "已删除未承流量的旧应用容器: $slot"
+  done
+
+  # 只删除未被任何容器引用的旧应用镜像标签，当前、上一版本和最新回滚始终保留。
+  for tag in $(docker image ls 'weishaw/sub2api:*' --format '{{.Repository}}:{{.Tag}}' | sort -u); do
+    [[ "$tag" == "$current_image" || "$tag" == "$previous_image" || "$tag" == "$keep_rollback" ]] && continue
+    image_id=$(docker image inspect "$tag" --format '{{.Id}}')
+    referenced=0
+    while read -r container_id; do
+      [[ -n "$container_id" ]] || continue
+      if [[ "$(docker inspect "$container_id" --format '{{.Image}}')" == "$image_id" ]]; then referenced=1; break; fi
+    done < <(docker ps -aq --filter 'name=^/sub2api')
+    if [[ "$referenced" == 1 ]]; then
+      log "保留仍被容器引用的镜像标签: $tag"
+    else
+      docker rmi "$tag" >/dev/null
+      log "已删除旧镜像标签: $tag"
+    fi
+  done
+
+  # 只保留最近一次校验通过的完整备份目录，旧目录逐个精确删除。
+  while IFS= read -r dir; do
+    [[ "$dir" == "$latest_backup" ]] && continue
+    is_complete_backup "$dir" || continue
+    rm -rf -- "$dir"
+    log "已删除旧发布备份: $dir"
+  done < <(find "$APP_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name 'bluegreen-*' -print)
+  log "发布资产清理完成，保留最新完整备份: $latest_backup"
+}
+
 case "$ACTION" in
   backup-release)
     backup_release
+    ;;
+  cleanup-release)
+    cleanup_release
     ;;
   load-candidate)
     [[ "$IMAGE" =~ ^weishaw/sub2api:[A-Za-z0-9._-]+$ ]] || { log '候选镜像标签无效'; exit 1; }
@@ -112,8 +180,9 @@ case "$ACTION" in
     ;;
   prepare-bluegreen)
     prepare_nginx
-    docker inspect sub2api --format '{{.Config.Image}}' > "$BLUE_IMAGE_FILE"
 	active=$(active_port)
+	active_container=$(container_for_port "$active")
+	docker inspect "$active_container" --format '{{.Config.Image}}' > "$BLUE_IMAGE_FILE"
 	if [[ "$active" == "$GREEN_PORT" ]]; then
 		candidate_name=sub2api-canary
 		candidate_port=$CANARY_PORT
@@ -141,10 +210,17 @@ case "$ACTION" in
     log "新请求已平滑切至候选 api_only: $candidate_name:$candidate_port；上一次健康实例保留作即时回退"
     ;;
   return-blue)
-    health "$BLUE_PORT"
-    write_active "$BLUE_PORT"; nginx_reload
+    if [[ -f "$PREVIOUS_ACTIVE_FILE" ]]; then
+      IFS='|' read -r previous_port previous_name previous_image < "$PREVIOUS_ACTIVE_FILE"
+      [[ "$previous_port" =~ ^(8080|18081|18082)$ ]] || { log '历史活跃槽位无效'; exit 1; }
+      health "$previous_port"
+      write_active "$previous_port"; nginx_reload
+    else
+      health "$BLUE_PORT"
+      write_active "$BLUE_PORT"; nginx_reload
+    fi
     curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null
-    log '新请求已平滑切回稳定蓝色；绿色 api_only 继续保温'
+    log '新请求已平滑切回上一版本健康实例；候选 api_only 继续保温'
     ;;
   rollback)
     if [[ -f "$PREVIOUS_ACTIVE_FILE" ]]; then
