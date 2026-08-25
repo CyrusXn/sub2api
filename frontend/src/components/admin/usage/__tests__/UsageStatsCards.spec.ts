@@ -46,6 +46,7 @@ const stats = {
   total_cost: 0.001,
   total_actual_cost: 0.001,
   total_account_cost: 0.001,
+  total_upstream_cost: 0.00025,
   average_duration_ms: 250,
 }
 
@@ -79,7 +80,7 @@ describe('UsageStatsCards', () => {
   it('shows upstream cost and profit only for admin metrics', () => {
     const wrapper = mount(UsageStatsCards, {
       props: {
-        stats: { ...stats, total_actual_cost: 2, total_account_cost: 0.75 },
+        stats: { ...stats, total_actual_cost: 2, total_account_cost: 0.75, total_upstream_cost: 0.25 },
         showUpstreamMetrics: true,
       },
       global: { stubs: { Icon: true } },
@@ -88,7 +89,7 @@ describe('UsageStatsCards', () => {
     expect(wrapper.text()).toContain('Upstream Total Tokens')
     expect(wrapper.text()).toContain('Original token count')
     expect(wrapper.text()).toContain('184')
-    expect(wrapper.text()).toContain('$0.7500')
-    expect(wrapper.text()).toContain('$1.2500')
+    expect(wrapper.text()).toContain('$0.2500')
+    expect(wrapper.text()).toContain('$1.7500')
   })
 })

@@ -342,6 +342,81 @@ describe('admin UsageView distribution metric toggles', () => {
     expect((wrapper.vm as any).requestedModelStats).toEqual([{ model: 'B', total_tokens: 20 }])
   })
 
+  it('resets the time range to the latest 24 hours when refreshing', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    const staleStart = '2026-08-18T00:00:00'
+    const staleEnd = '2026-08-25T00:00:00'
+    vm.startDate = staleStart
+    vm.endDate = staleEnd
+    vm.filters.start_date = staleStart
+    vm.filters.end_date = staleEnd
+
+    list.mockClear()
+    getStats.mockClear()
+    getSnapshotV2.mockClear()
+    getModelStats.mockClear()
+
+    vm.refreshData()
+    await flushPromises()
+
+    const now = new Date()
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const expectedStart = `${formatLocalDate(yesterday)}T${String(yesterday.getHours()).padStart(2, '0')}:${String(yesterday.getMinutes()).padStart(2, '0')}:${String(yesterday.getSeconds()).padStart(2, '0')}`
+    const expectedEnd = `${formatLocalDate(now)}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+
+    expect(vm.startDate).toBe(expectedStart)
+    expect(vm.endDate).toBe(expectedEnd)
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({
+      start_date: expectedStart,
+      end_date: expectedEnd,
+    }), expect.anything())
+  })
+
+  it('resets the time range when a cached usage page is activated again', async () => {
+    const Host = defineComponent({
+      components: { UsageView },
+      setup: () => ({ visible: ref(true) }),
+      template: '<KeepAlive><UsageView v-if="visible" /></KeepAlive>',
+    })
+    const wrapper = mount(Host, {
+      global: { stubs: {
+        AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+        UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
+        UserBalanceHistoryModal: true, Pagination: true, Select: true,
+        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        ModelDistributionChart: true, GroupDistributionChart: true,
+        EndpointDistributionChart: true, UserTokenRanking: true,
+      } },
+    })
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    const usageView = wrapper.findComponent(UsageView)
+    const vm = usageView.vm as any
+    vm.startDate = '2026-08-18T00:00:00'
+    vm.endDate = '2026-08-25T00:00:00'
+    vm.filters.start_date = vm.startDate
+    vm.filters.end_date = vm.endDate
+    list.mockClear()
+
+    ;(wrapper.vm as any).visible = false
+    await wrapper.vm.$nextTick()
+    ;(wrapper.vm as any).visible = true
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    const now = new Date()
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({
+      start_date: `${formatLocalDate(yesterday)}T${String(yesterday.getHours()).padStart(2, '0')}:${String(yesterday.getMinutes()).padStart(2, '0')}:${String(yesterday.getSeconds()).padStart(2, '0')}`,
+      end_date: `${formatLocalDate(now)}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`,
+    }), expect.anything())
+  })
+
   it('keeps model and group metric toggles independent without refetching chart data', async () => {
     const wrapper = mount(UsageView, {
       global: {

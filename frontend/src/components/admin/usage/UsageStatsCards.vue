@@ -141,7 +141,10 @@ const totalAccountCost = computed(() => {
   const stats = props.stats as (AdminUsageStatsResponse & { total_account_cost?: number }) | null
   return stats?.total_account_cost ?? null
 })
-const totalUpstreamCost = computed(() => totalAccountCost.value ?? 0)
+const totalUpstreamCost = computed(() => {
+  const stats = props.stats as (AdminUsageStatsResponse & { total_upstream_cost?: number }) | null
+  return stats?.total_upstream_cost ?? 0
+})
 const totalProfit = computed(() => (props.stats?.total_actual_cost || 0) - totalUpstreamCost.value)
 const showAccountCost = computed(() => props.showAccountCost)
 const strikeStandardCost = computed(() => props.strikeStandardCost)

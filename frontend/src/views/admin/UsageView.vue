@@ -183,7 +183,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, onActivated, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import { useRoute } from 'vue-router'
@@ -232,6 +232,7 @@ let abortController: AbortController | null = null; let exportAbortController: A
 let chartReqSeq = 0
 let statsReqSeq = 0
 let modelStatsReqSeq = 0
+let activationCount = 0
 const exportProgress = reactive({ show: false, progress: 0, current: 0, total: 0, estimatedTime: '' })
 const cleanupDialogVisible = ref(false)
 // Balance history modal state
@@ -556,7 +557,20 @@ const applyFilters = () => {
     errRows.value = []
   }
 }
+// 刷新和重新进入记录页时仅刷新时间窗口，保留用户当前的其它筛选条件。
+const resetTimeRangeToLast24Hours = () => {
+  const range = getLast24HoursRangeDates()
+  startDate.value = range.start
+  endDate.value = range.end
+  filters.value = {
+    ...filters.value,
+    start_date: range.start,
+    end_date: range.end,
+  }
+  granularity.value = getGranularityForRange(range.start, range.end)
+}
 const refreshData = () => {
+  resetTimeRangeToLast24Hours()
   invalidateModelStatsCache()
   loadLogs()
   loadStats(true)
@@ -566,9 +580,7 @@ const refreshData = () => {
   if (rankingMounted.value) rankingRef.value?.reload()
 }
 const resetFilters = () => {
-  const range = getLast24HoursRangeDates()
-  startDate.value = range.start
-  endDate.value = range.end
+  resetTimeRangeToLast24Hours()
   filters.value = {
     start_date: startDate.value,
     end_date: endDate.value,
@@ -924,6 +936,11 @@ onMounted(() => {
   loadSavedColumns()
   loadSavedErrColumns()
   document.addEventListener('click', handleColumnClickOutside)
+})
+onActivated(() => {
+  activationCount += 1
+  if (activationCount === 1) return
+  refreshData()
 })
 onUnmounted(() => { abortController?.abort(); exportAbortController?.abort(); document.removeEventListener('click', handleColumnClickOutside) })
 

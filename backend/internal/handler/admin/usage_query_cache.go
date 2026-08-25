@@ -11,18 +11,28 @@ import (
 var usageStatsCache = newSnapshotCache(30 * time.Second)
 
 type usageStatsCacheKeyData struct {
-	StartTime             string `json:"start_time"`
-	EndTime               string `json:"end_time"`
-	UserID                int64  `json:"user_id"`
-	APIKeyID              int64  `json:"api_key_id"`
-	AccountID             int64  `json:"account_id"`
-	GroupID               int64  `json:"group_id"`
-	Model                 string `json:"model"`
-	BillingMode           string `json:"billing_mode"`
-	RequestType           *int16 `json:"request_type"`
-	Stream                *bool  `json:"stream"`
-	BillingType           *int8  `json:"billing_type"`
-	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
+	StartTime               string   `json:"start_time"`
+	EndTime                 string   `json:"end_time"`
+	UserID                  int64    `json:"user_id"`
+	APIKeyID                int64    `json:"api_key_id"`
+	AccountID               int64    `json:"account_id"`
+	GroupID                 int64    `json:"group_id"`
+	Model                   string   `json:"model"`
+	BillingMode             string   `json:"billing_mode"`
+	RequestType             *int16   `json:"request_type"`
+	Stream                  *bool    `json:"stream"`
+	BillingType             *int8    `json:"billing_type"`
+	UpstreamModelMismatch   *bool    `json:"upstream_model_mismatch"`
+	UserIDs                 []int64  `json:"user_ids,omitempty"`
+	APIKeyIDs               []int64  `json:"api_key_ids,omitempty"`
+	AccountIDs              []int64  `json:"account_ids,omitempty"`
+	GroupIDs                []int64  `json:"group_ids,omitempty"`
+	Models                  []string `json:"models,omitempty"`
+	RequestTypes            []int16  `json:"request_types,omitempty"`
+	BillingTypes            []int8   `json:"billing_types,omitempty"`
+	BillingModes            []string `json:"billing_modes,omitempty"`
+	UpstreamModelMismatches []bool   `json:"upstream_model_mismatches,omitempty"`
+	UpstreamSiteAccountIDs  []int64  `json:"upstream_site_account_ids,omitempty"`
 }
 
 func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
@@ -35,18 +45,28 @@ func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
 		end = filters.EndTime.UTC().Format(time.RFC3339)
 	}
 	return mustMarshalDashboardCacheKey(usageStatsCacheKeyData{
-		StartTime:             start,
-		EndTime:               end,
-		UserID:                filters.UserID,
-		APIKeyID:              filters.APIKeyID,
-		AccountID:             filters.AccountID,
-		GroupID:               filters.GroupID,
-		Model:                 filters.Model,
-		BillingMode:           filters.BillingMode,
-		RequestType:           filters.RequestType,
-		Stream:                filters.Stream,
-		BillingType:           filters.BillingType,
-		UpstreamModelMismatch: filters.UpstreamModelMismatch,
+		StartTime:               start,
+		EndTime:                 end,
+		UserID:                  filters.UserID,
+		APIKeyID:                filters.APIKeyID,
+		AccountID:               filters.AccountID,
+		GroupID:                 filters.GroupID,
+		Model:                   filters.Model,
+		BillingMode:             filters.BillingMode,
+		RequestType:             filters.RequestType,
+		Stream:                  filters.Stream,
+		BillingType:             filters.BillingType,
+		UpstreamModelMismatch:   filters.UpstreamModelMismatch,
+		UserIDs:                 filters.UserIDs,
+		APIKeyIDs:               filters.APIKeyIDs,
+		AccountIDs:              filters.AccountIDs,
+		GroupIDs:                filters.GroupIDs,
+		Models:                  filters.Models,
+		RequestTypes:            filters.RequestTypes,
+		BillingTypes:            filters.BillingTypes,
+		BillingModes:            filters.BillingModes,
+		UpstreamModelMismatches: filters.UpstreamModelMismatches,
+		UpstreamSiteAccountIDs:  filters.UpstreamSiteAccountIDs,
 	})
 }
 

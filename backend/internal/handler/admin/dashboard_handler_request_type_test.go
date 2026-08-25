@@ -15,16 +15,30 @@ import (
 
 type dashboardUsageRepoCapture struct {
 	service.UsageLogRepository
-	trendRequestType *int16
-	trendStream      *bool
-	modelRequestType *int16
-	modelStream      *bool
-	trendMismatch    *bool
-	modelMismatch    *bool
-	groupMismatch    *bool
-	rankingLimit     int
-	ranking          []usagestats.UserSpendingRankingItem
-	rankingTotal     float64
+	trendRequestType          *int16
+	trendStream               *bool
+	modelRequestType          *int16
+	modelStream               *bool
+	trendMismatch             *bool
+	modelMismatch             *bool
+	groupMismatch             *bool
+	trendUpstreamSiteAccounts []int64
+	modelUpstreamSiteAccounts []int64
+	groupUpstreamSiteAccounts []int64
+	trendAccounts             []int64
+	modelAccounts             []int64
+	groupAccounts             []int64
+	trendUsers                []int64
+	trendAPIKeys              []int64
+	trendGroups               []int64
+	trendModels               []string
+	trendRequestTypes         []int16
+	trendBillingTypes         []int8
+	trendBillingModes         []string
+	trendMismatches           []bool
+	rankingLimit              int
+	ranking                   []usagestats.UserSpendingRankingItem
+	rankingTotal              float64
 }
 
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
@@ -36,6 +50,16 @@ func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
 	s.trendRequestType = filters.RequestType
 	s.trendStream = filters.Stream
 	s.trendMismatch = filters.UpstreamModelMismatch
+	s.trendUpstreamSiteAccounts = append([]int64(nil), filters.UpstreamSiteAccountIDs...)
+	s.trendAccounts = append([]int64(nil), filters.AccountIDs...)
+	s.trendUsers = append([]int64(nil), filters.UserIDs...)
+	s.trendAPIKeys = append([]int64(nil), filters.APIKeyIDs...)
+	s.trendGroups = append([]int64(nil), filters.GroupIDs...)
+	s.trendModels = append([]string(nil), filters.Models...)
+	s.trendRequestTypes = append([]int16(nil), filters.RequestTypes...)
+	s.trendBillingTypes = append([]int8(nil), filters.BillingTypes...)
+	s.trendBillingModes = append([]string(nil), filters.BillingModes...)
+	s.trendMismatches = append([]bool(nil), filters.UpstreamModelMismatches...)
 	return []usagestats.TrendDataPoint{}, nil
 }
 
@@ -63,6 +87,8 @@ func (s *dashboardUsageRepoCapture) GetModelStatsWithUsageFiltersBySource(
 	s.modelRequestType = filters.RequestType
 	s.modelStream = filters.Stream
 	s.modelMismatch = filters.UpstreamModelMismatch
+	s.modelUpstreamSiteAccounts = append([]int64(nil), filters.UpstreamSiteAccountIDs...)
+	s.modelAccounts = append([]int64(nil), filters.AccountIDs...)
 	return []usagestats.ModelStat{}, nil
 }
 
@@ -72,6 +98,8 @@ func (s *dashboardUsageRepoCapture) GetGroupStatsWithUsageFilters(
 	filters usagestats.UsageLogFilters,
 ) ([]usagestats.GroupStat, error) {
 	s.groupMismatch = filters.UpstreamModelMismatch
+	s.groupUpstreamSiteAccounts = append([]int64(nil), filters.UpstreamSiteAccountIDs...)
+	s.groupAccounts = append([]int64(nil), filters.AccountIDs...)
 	return []usagestats.GroupStat{}, nil
 }
 
@@ -246,6 +274,66 @@ func TestDashboardModelAuditFilterRejectsInvalidBoolean(t *testing.T) {
 		router.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusBadRequest, rec.Code, path)
 	}
+}
+
+func TestDashboardUpstreamSiteFilterPropagatesToTrendModelAndGroupQueries(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?upstream_site_account_ids=11,12",
+		"/admin/dashboard/models?upstream_site_account_ids=11,12",
+		"/admin/dashboard/groups?upstream_site_account_ids=11,12",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
+	require.Equal(t, []int64{11, 12}, repo.trendUpstreamSiteAccounts)
+	require.Equal(t, []int64{11, 12}, repo.modelUpstreamSiteAccounts)
+	require.Equal(t, []int64{11, 12}, repo.groupUpstreamSiteAccounts)
+}
+
+func TestDashboardAccountMultiFilterPropagatesToTrendModelAndGroupQueries(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+	for _, path := range []string{
+		"/admin/dashboard/trend?account_ids=11,12",
+		"/admin/dashboard/models?account_ids=11,12",
+		"/admin/dashboard/groups?account_ids=11,12",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+	require.Equal(t, []int64{11, 12}, repo.trendAccounts)
+	require.Equal(t, []int64{11, 12}, repo.modelAccounts)
+	require.Equal(t, []int64{11, 12}, repo.groupAccounts)
+}
+
+func TestDashboardAllMultiFiltersPropagateToTrendQuery(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/trend?user_ids=1,2&api_key_ids=3,4&account_ids=5,6&group_ids=7,8&models=claude,gpt&request_types=sync,stream&billing_types=1,2&billing_modes=token,image&upstream_model_mismatches=true,false&upstream_site_account_ids=9,10", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []int64{1, 2}, repo.trendUsers)
+	require.Equal(t, []int64{3, 4}, repo.trendAPIKeys)
+	require.Equal(t, []int64{5, 6}, repo.trendAccounts)
+	require.Equal(t, []int64{7, 8}, repo.trendGroups)
+	require.Equal(t, []string{"claude", "gpt"}, repo.trendModels)
+	require.Equal(t, []int16{int16(service.RequestTypeSync), int16(service.RequestTypeStream)}, repo.trendRequestTypes)
+	require.Equal(t, []int8{1, 2}, repo.trendBillingTypes)
+	require.Equal(t, []string{"token", "image"}, repo.trendBillingModes)
+	require.Equal(t, []bool{true, false}, repo.trendMismatches)
+	require.Equal(t, []int64{9, 10}, repo.trendUpstreamSiteAccounts)
 }
 
 func TestDashboardUsersRankingLimitAndCache(t *testing.T) {
