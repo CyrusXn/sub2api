@@ -874,6 +874,12 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
 		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost, opts)
 
+	// 上游核算不计入管理附加倍率，并固定使用所属分组配置的倍率。
+	upstreamGroupRateMultiplier := usageLog.RateMultiplier
+	if apiKey.Group != nil {
+		upstreamGroupRateMultiplier = apiKey.Group.RateMultiplier
+	}
+	captureUpstreamCostSnapshot(usageLog, usageLog.TotalCost, upstreamGroupRateMultiplier)
 	// 附加倍率只由管理端配置，但必须在请求结算时固化。放在原始定价之后，
 	// 避免改变单价、基础有效倍率及长上下文判定，并让后续所有扣费共用同一结果。
 	settlementMultiplier := resolveAdminUsageSettlementMultiplierForAccount(user, apiKey.Group, account)

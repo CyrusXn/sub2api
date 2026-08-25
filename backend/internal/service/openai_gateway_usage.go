@@ -419,6 +419,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.SubscriptionID = &subscription.ID
 	}
 
+	// 上游核算不计入管理附加倍率，并固定使用所属分组配置的倍率。
+	upstreamGroupRateMultiplier := usageLog.RateMultiplier
+	if apiKey.Group != nil {
+		upstreamGroupRateMultiplier = apiKey.Group.RateMultiplier
+	}
+	captureUpstreamCostSnapshot(usageLog, usageLog.TotalCost, upstreamGroupRateMultiplier)
 	// 附加倍率在本次请求结算时固化，但不覆盖单价、服务档位和原始有效倍率。
 	settlementMultiplier := resolveAdminUsageSettlementMultiplierForAccount(user, apiKey.Group, account)
 	applyAdminUsageSettlementMultiplier(usageLog, cost, settlementMultiplier)

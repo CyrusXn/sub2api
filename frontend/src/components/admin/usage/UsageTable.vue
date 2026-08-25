@@ -238,6 +238,14 @@
           <span class="text-sm font-medium text-red-600 dark:text-red-400">${{ upstreamBilled(row).toFixed(6) }}</span>
         </template>
 
+        <template #cell-upstream_cost_base="{ row }">
+          <span class="text-sm font-medium text-red-600 dark:text-red-400">{{ row.upstream_cost_base == null ? '-' : '$' + row.upstream_cost_base.toFixed(6) }}</span>
+        </template>
+
+        <template #cell-upstream_group_rate_multiplier="{ row }">
+          <span class="text-sm font-medium text-red-600 dark:text-red-400">{{ row.upstream_group_rate_multiplier == null ? '-' : row.upstream_group_rate_multiplier.toFixed(4) }}</span>
+        </template>
+
         <!-- 首字延迟只使用真实 first_token_ms，不再生成或读取随机派生值。 -->
         <!-- 合并首字/总耗时的健康度列：左侧色条上端随首字档、下端随总耗时档，中段(40%-60%)短渐变过渡，便于纵向扫视整体健康状况 -->
         <template #cell-latency="{ row }">
@@ -568,8 +576,16 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
   return Number.isFinite(result) ? result : 0
 }
 
-function upstreamBilled(row: { total_cost?: number | null; account_stats_cost?: number | null; account_rate_multiplier?: number | null }): number {
-  return accountBilled(row)
+function upstreamBilled(row: {
+  total_cost?: number | null
+  rate_multiplier?: number | null
+  upstream_cost_base?: number | null
+  upstream_group_rate_multiplier?: number | null
+}): number {
+  const base = row.upstream_cost_base ?? row.total_cost ?? 0
+  const multiplier = row.upstream_group_rate_multiplier ?? row.rate_multiplier ?? 1
+  const result = base * multiplier
+  return Number.isFinite(result) ? result : 0
 }
 
 

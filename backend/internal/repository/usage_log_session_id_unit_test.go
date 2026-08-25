@@ -32,7 +32,7 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 // arg slice / arg-type table so the five INSERT column lists stay in sync. session_id
 // is the penultimate arg (created_at is always last).
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 59, "arg-type table must include session_id")
+	require.Len(t, usageLogInsertArgTypes, 61, "arg-type table must include upstream snapshots and session_id")
 
 	sessionID := "sess-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))
@@ -49,6 +49,23 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 
 	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2],
 		"session_id arg type must be text")
+}
+
+func TestPrepareUsageLogInsert_PersistsUpstreamCostSnapshots(t *testing.T) {
+	base := 0.012345
+	rate := 0.07
+	prepared := prepareUsageLogInsert(&service.UsageLog{
+		UserID:                      1,
+		APIKeyID:                    2,
+		AccountID:                   3,
+		RequestID:                   "req-upstream-snapshot",
+		Model:                       "gpt-5",
+		UpstreamCostBase:            &base,
+		UpstreamGroupRateMultiplier: &rate,
+	})
+
+	require.Equal(t, &base, prepared.args[len(prepared.args)-4])
+	require.Equal(t, &rate, prepared.args[len(prepared.args)-3])
 }
 
 // TestPrepareUsageLogInsert_SessionIDNullWhenAbsent proves an absent session id is

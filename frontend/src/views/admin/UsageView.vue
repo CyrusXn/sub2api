@@ -610,10 +610,11 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
   return t('usage.unknown')
 }
 
-// 使用请求结算时固化的账号成本快照计算上游费用，避免读取当前倍率重算历史记录。
+// 新记录优先使用原始费用和分组倍率快照；历史记录按已固化的实际倍率回算。
 const getUpstreamCost = (log: AdminUsageLog): number => {
-  const base = log.account_stats_cost ?? log.total_cost ?? 0
-  const value = base * (log.account_rate_multiplier ?? 1)
+  const base = log.upstream_cost_base ?? log.total_cost ?? 0
+  const multiplier = log.upstream_group_rate_multiplier ?? log.rate_multiplier ?? 1
+  const value = base * multiplier
   return Number.isFinite(value) ? value : 0
 }
 
@@ -632,7 +633,7 @@ const exportToExcel = async () => {
       t('admin.usage.cacheReadTokens'), t('admin.usage.cacheCreationTokens'),
       t('admin.usage.inputCost'), t('admin.usage.outputCost'),
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
-      t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.upstreamTotalTokens'), t('usage.upstreamCost'), t('usage.profit'), t('usage.accountBilled'),
+      t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.upstreamTotalTokens'), t('usage.upstreamCost'), t('usage.upstreamOriginalCost'), t('usage.upstreamGroupRate'), t('usage.profit'), t('usage.accountBilled'),
       t('usage.firstToken'), t('usage.duration'),
       t('admin.usage.requestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
@@ -653,7 +654,7 @@ const exportToExcel = async () => {
         log.rate_multiplier?.toPrecision(4) || '1.00', (log.account_rate_multiplier ?? 1).toPrecision(4),
         log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
         (log.input_tokens + log.output_tokens + log.cache_read_tokens + log.cache_creation_tokens),
-        getUpstreamCost(log).toFixed(6),
+        getUpstreamCost(log).toFixed(6), log.upstream_cost_base?.toFixed(6) || '', log.upstream_group_rate_multiplier?.toPrecision(4) || '',
         (log.actual_cost - getUpstreamCost(log)).toFixed(6),
         getUpstreamCost(log).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
         log.request_id || '', log.user_agent || '', log.ip_address || ''
@@ -678,10 +679,10 @@ const exportToExcel = async () => {
 
 // Column visibility
 const ALWAYS_VISIBLE = ['user', 'created_at']
-const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'request_id', 'user_agent']
+const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'request_id', 'user_agent', 'upstream_cost_base', 'upstream_group_rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'usage-hidden-columns'
 const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
-const HIDDEN_COLUMNS_CURRENT_VERSION = 'request-id-hidden-by-default'
+const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-snapshots-hidden-by-default'
 
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
@@ -697,6 +698,8 @@ const allColumns = computed(() => [
   { key: 'tokens', label: t('usage.tokens'), sortable: false },
   { key: 'cost', label: t('usage.cost'), sortable: false },
   { key: 'upstream_cost', label: t('usage.upstreamCost'), sortable: false },
+  { key: 'upstream_cost_base', label: t('usage.upstreamOriginalCost'), sortable: false },
+  { key: 'upstream_group_rate_multiplier', label: t('usage.upstreamGroupRate'), sortable: false },
   { key: 'latency', label: t('usage.latency'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
@@ -809,6 +812,8 @@ const loadSavedColumns = () => {
       })
       if (localStorage.getItem(HIDDEN_COLUMNS_VERSION_KEY) !== HIDDEN_COLUMNS_CURRENT_VERSION) {
         hiddenColumns.add('request_id')
+        hiddenColumns.add('upstream_cost_base')
+        hiddenColumns.add('upstream_group_rate_multiplier')
         localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
         localStorage.setItem(HIDDEN_COLUMNS_VERSION_KEY, HIDDEN_COLUMNS_CURRENT_VERSION)
       }

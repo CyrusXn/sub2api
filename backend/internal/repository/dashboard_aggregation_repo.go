@@ -625,11 +625,12 @@ func (r *dashboardAggregationRepository) upsertDailyAggregates(ctx context.Conte
 func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx context.Context, start, end time.Time) error {
 	tzName := timezone.Name()
 	query := `
-		WITH admin_usage AS (
+	WITH admin_usage AS (
 			SELECT
 				(created_at AT TIME ZONE $3)::date AS bucket_date,
 				COALESCE(SUM(actual_cost), 0) AS admin_actual_cost,
-				COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS admin_account_cost
+				COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS admin_account_cost,
+				COALESCE(SUM(COALESCE(upstream_cost_base, total_cost) * COALESCE(upstream_group_rate_multiplier, rate_multiplier)), 0) AS admin_upstream_cost
 			FROM usage_logs
 			WHERE created_at >= $1 AND created_at < $2
 			  AND user_id = (
@@ -638,6 +639,13 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 				ORDER BY id ASC
 				LIMIT 1
 			  )
+			GROUP BY 1
+		), upstream_usage AS (
+			SELECT
+				(created_at AT TIME ZONE $3)::date AS bucket_date,
+				COALESCE(SUM(COALESCE(upstream_cost_base, total_cost) * COALESCE(upstream_group_rate_multiplier, rate_multiplier)), 0) AS upstream_cost
+			FROM usage_logs
+			WHERE created_at >= $1 AND created_at < $2
 			GROUP BY 1
 		), recharge AS (
 			SELECT
@@ -658,6 +666,8 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 			  AND bucket_date < ($2 AT TIME ZONE $3)::date
 			UNION
 			SELECT bucket_date FROM recharge
+			UNION
+			SELECT bucket_date FROM upstream_usage
 		)
 		INSERT INTO dashboard_business_daily (
 			bucket_date,
@@ -672,6 +682,8 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 			account_cost,
 			admin_actual_cost,
 			admin_account_cost,
+			upstream_cost,
+			admin_upstream_cost,
 			total_duration_ms,
 			computed_at
 		)
@@ -688,11 +700,14 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 			COALESCE(d.account_cost, 0),
 			COALESCE(admin_usage.admin_actual_cost, 0),
 			COALESCE(admin_usage.admin_account_cost, 0),
+			COALESCE(upstream_usage.upstream_cost, 0),
+			COALESCE(admin_usage.admin_upstream_cost, 0),
 			COALESCE(d.total_duration_ms, 0),
 			NOW()
 		FROM dates
 		LEFT JOIN usage_dashboard_daily d ON d.bucket_date = dates.bucket_date
 		LEFT JOIN admin_usage ON admin_usage.bucket_date = dates.bucket_date
+		LEFT JOIN upstream_usage ON upstream_usage.bucket_date = dates.bucket_date
 		LEFT JOIN recharge ON recharge.bucket_date = dates.bucket_date
 		ON CONFLICT (bucket_date)
 		DO UPDATE SET
@@ -707,6 +722,8 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 			account_cost = EXCLUDED.account_cost,
 			admin_actual_cost = EXCLUDED.admin_actual_cost,
 			admin_account_cost = EXCLUDED.admin_account_cost,
+			upstream_cost = EXCLUDED.upstream_cost,
+			admin_upstream_cost = EXCLUDED.admin_upstream_cost,
 			total_duration_ms = EXCLUDED.total_duration_ms,
 			computed_at = EXCLUDED.computed_at
 		WHERE dashboard_business_daily.finalized_at IS NULL

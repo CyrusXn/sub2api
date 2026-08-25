@@ -430,6 +430,10 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 	require.Equal(t, 1, rateRepo.calls)
 	require.NotNil(t, usageRepo.lastLog)
 	require.Equal(t, userRate, usageRepo.lastLog.RateMultiplier)
+	require.NotNil(t, usageRepo.lastLog.UpstreamCostBase)
+	require.NotNil(t, usageRepo.lastLog.UpstreamGroupRateMultiplier)
+	require.InDelta(t, usageRepo.lastLog.TotalCost, *usageRepo.lastLog.UpstreamCostBase, 1e-12)
+	require.InDelta(t, groupRate, *usageRepo.lastLog.UpstreamGroupRateMultiplier, 1e-12, "上游倍率必须取分组配置，不跟随用户专属倍率")
 	require.Equal(t, 12, usageRepo.lastLog.InputTokens)
 	require.Equal(t, 3, usageRepo.lastLog.CacheReadTokens)
 
@@ -544,6 +548,8 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.Equal(t, 3.0, usageRepo.lastLog.RateMultiplier)
+	require.NotNil(t, usageRepo.lastLog.UpstreamGroupRateMultiplier)
+	require.InDelta(t, groupRate, *usageRepo.lastLog.UpstreamGroupRateMultiplier, 1e-12, "上游倍率不能叠加高峰倍率")
 	require.Equal(t, usage.ImageOutputTokens, usageRepo.lastLog.ImageOutputTokens)
 
 	expected, err := svc.billingService.CalculateCostUnified(CostInput{

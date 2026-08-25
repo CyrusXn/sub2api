@@ -70,6 +70,10 @@ const (
 	FieldActualCost = "actual_cost"
 	// FieldRateMultiplier holds the string denoting the rate_multiplier field in the database.
 	FieldRateMultiplier = "rate_multiplier"
+	// FieldUpstreamCostBase holds the string denoting the upstream_cost_base field in the database.
+	FieldUpstreamCostBase = "upstream_cost_base"
+	// FieldUpstreamGroupRateMultiplier holds the string denoting the upstream_group_rate_multiplier field in the database.
+	FieldUpstreamGroupRateMultiplier = "upstream_group_rate_multiplier"
 	// FieldLongContextBillingApplied holds the string denoting the long_context_billing_applied field in the database.
 	FieldLongContextBillingApplied = "long_context_billing_applied"
 	// FieldAccountRateMultiplier holds the string denoting the account_rate_multiplier field in the database.
@@ -188,6 +192,8 @@ var Columns = []string{
 	FieldTotalCost,
 	FieldActualCost,
 	FieldRateMultiplier,
+	FieldUpstreamCostBase,
+	FieldUpstreamGroupRateMultiplier,
 	FieldLongContextBillingApplied,
 	FieldAccountRateMultiplier,
 	FieldBillingType,
@@ -438,6 +444,16 @@ func ByActualCost(opts ...sql.OrderTermOption) OrderOption {
 // ByRateMultiplier orders the results by the rate_multiplier field.
 func ByRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRateMultiplier, opts...).ToFunc()
+}
+
+// ByUpstreamCostBase orders the results by the upstream_cost_base field.
+func ByUpstreamCostBase(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamCostBase, opts...).ToFunc()
+}
+
+// ByUpstreamGroupRateMultiplier orders the results by the upstream_group_rate_multiplier field.
+func ByUpstreamGroupRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamGroupRateMultiplier, opts...).ToFunc()
 }
 
 // ByLongContextBillingApplied orders the results by the long_context_billing_applied field.

@@ -146,19 +146,23 @@ func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *test
 	ipAddress := "203.0.113.10"
 	accountRateMultiplier := 1.5
 	accountStatsCost := 0.21
+	upstreamCostBase := 0.10
+	upstreamGroupRateMultiplier := 0.07
 	log := &service.UsageLog{
-		RequestID:             "req_user_visible_billing",
-		Model:                 "gpt-5.4",
-		InputCost:             0.01,
-		OutputCost:            0.02,
-		CacheCreationCost:     0.03,
-		CacheReadCost:         0.04,
-		TotalCost:             0.10,
-		ActualCost:            0.08,
-		RateMultiplier:        0.8,
-		IPAddress:             &ipAddress,
-		AccountRateMultiplier: &accountRateMultiplier,
-		AccountStatsCost:      &accountStatsCost,
+		RequestID:                   "req_user_visible_billing",
+		Model:                       "gpt-5.4",
+		InputCost:                   0.01,
+		OutputCost:                  0.02,
+		CacheCreationCost:           0.03,
+		CacheReadCost:               0.04,
+		TotalCost:                   0.10,
+		ActualCost:                  0.08,
+		RateMultiplier:              0.8,
+		IPAddress:                   &ipAddress,
+		AccountRateMultiplier:       &accountRateMultiplier,
+		AccountStatsCost:            &accountStatsCost,
+		UpstreamCostBase:            &upstreamCostBase,
+		UpstreamGroupRateMultiplier: &upstreamGroupRateMultiplier,
 	}
 
 	userDTO := UsageLogFromService(log)
@@ -177,6 +181,8 @@ func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *test
 	require.NotContains(t, string(userJSON), "account_rate_multiplier")
 	require.NotContains(t, string(userJSON), "account_stats_cost")
 	require.NotContains(t, string(userJSON), "account_cost")
+	require.NotContains(t, string(userJSON), "upstream_cost_base")
+	require.NotContains(t, string(userJSON), "upstream_group_rate_multiplier")
 }
 
 func TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing(t *testing.T) {

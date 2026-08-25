@@ -286,6 +286,8 @@ export default {
     totalCost: '总消费',
     upstreamTotalCost: '上游总消费',
     upstreamCost: '上游费用',
+    upstreamOriginalCost: '上游原始消费费用',
+    upstreamGroupRate: '上游分组倍率',
     upstreamCostSnapshot: '按请求结算时上游快照',
     profit: '赚取金额',
     profitFormula: '总消费 - 上游总消费',

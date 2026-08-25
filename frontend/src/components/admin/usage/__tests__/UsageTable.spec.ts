@@ -179,7 +179,7 @@ describe('admin UsageTable tooltip', () => {
     expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith(apiKey, 'API Key copied')
   })
 
-  it('uses the settled account cost snapshot and multiplier for upstream cost', () => {
+  it('按历史记录的实际分组倍率回算上游费用，不读取账号统计成本', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
@@ -187,6 +187,7 @@ describe('admin UsageTable tooltip', () => {
           account_stats_cost: 0.2,
           account_rate_multiplier: 1.5,
           total_cost: 9,
+          rate_multiplier: 0.07,
         }],
         loading: false,
         columns: [{ key: 'upstream_cost', label: 'Upstream Cost', sortable: false }],
@@ -196,17 +197,19 @@ describe('admin UsageTable tooltip', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('$0.300000')
-    expect(wrapper.text()).not.toContain('$13.500000')
+    const upstreamCost = wrapper.findAll('span').find((item) => item.classes().includes('text-red-600'))
+    expect(upstreamCost?.text()).toBe('$0.630000')
   })
 
-  it('uses a multiplier of one when a historical upstream snapshot has no multiplier', () => {
+  it('优先使用新记录固化的原始消费费用和上游分组倍率快照', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
           ...baseImageRow,
-          account_stats_cost: 0.2,
-          account_rate_multiplier: null,
+          total_cost: 9,
+          rate_multiplier: 3,
+          upstream_cost_base: 4,
+          upstream_group_rate_multiplier: 0.07,
         }],
         loading: false,
         columns: [{ key: 'upstream_cost', label: 'Upstream Cost', sortable: false }],
@@ -216,7 +219,8 @@ describe('admin UsageTable tooltip', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('$0.200000')
+    expect(wrapper.text()).toContain('$0.280000')
+    expect(wrapper.text()).not.toContain('$27.000000')
   })
 
   it('marks only usage rows that actually applied long-context billing', () => {

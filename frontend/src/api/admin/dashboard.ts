@@ -55,6 +55,8 @@ export interface DashboardBusinessTotals {
   actual_cost_excluding_admin: number
   account_cost: number
   account_cost_excluding_admin: number
+  upstream_cost: number
+  upstream_cost_excluding_admin: number
 }
 
 export interface DashboardBusinessDailyPoint {
@@ -66,6 +68,8 @@ export interface DashboardBusinessDailyPoint {
   actual_cost_excluding_admin: number
   account_cost: number
   account_cost_excluding_admin: number
+  upstream_cost: number
+  upstream_cost_excluding_admin: number
 }
 
 export interface DashboardBusinessSummary {

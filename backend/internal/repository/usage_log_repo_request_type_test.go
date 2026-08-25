@@ -100,6 +100,8 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_cost_base
+			sqlmock.AnyArg(), // upstream_group_rate_multiplier
 			sqlmock.AnyArg(), // session_id
 			createdAt,
 		).
@@ -192,6 +194,8 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_cost_base
+			sqlmock.AnyArg(), // upstream_group_rate_multiplier
 			sqlmock.AnyArg(), // session_id
 			createdAt,
 		).
@@ -1073,6 +1077,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullFloat64{},
+			sql.NullFloat64{},
+			sql.NullFloat64{},
 			sql.NullString{},
 			now,
 		}})
@@ -1150,6 +1156,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullFloat64{}, // upstream_cost_base
+			sql.NullFloat64{}, // upstream_group_rate_multiplier
 			sql.NullString{},  // session_id
 			now,
 		}})
@@ -1210,6 +1218,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullFloat64{}, // upstream_cost_base
+			sql.NullFloat64{}, // upstream_group_rate_multiplier
 			sql.NullString{},  // session_id
 			now,
 		}})
@@ -1270,6 +1280,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullFloat64{}, // upstream_cost_base
+			sql.NullFloat64{}, // upstream_group_rate_multiplier
 			sql.NullString{},  // session_id
 			now,
 		}})

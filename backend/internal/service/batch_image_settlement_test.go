@@ -38,6 +38,10 @@ func TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly(t *te
 	require.NotEmpty(t, batchImageDerefString(repo.jobs[job.BatchID].ManifestHash))
 	require.NotNil(t, repo.jobs[job.BatchID].SettledAt)
 	require.Equal(t, "batch-settlement-session", batchImageDerefString(usageLogs.lastLog.SessionID))
+	require.NotNil(t, usageLogs.lastLog.UpstreamCostBase)
+	require.NotNil(t, usageLogs.lastLog.UpstreamGroupRateMultiplier)
+	require.InDelta(t, job.BaseUnitPrice*float64(job.SuccessCount), *usageLogs.lastLog.UpstreamCostBase, 1e-12)
+	require.InDelta(t, *job.UpstreamGroupRateMultiplier, *usageLogs.lastLog.UpstreamGroupRateMultiplier, 1e-12)
 	require.Len(t, billing.captures, 1)
 	require.Equal(t, int64(321), billing.captures[0].APIKeyID)
 	require.Equal(t, job.UserID, billing.captures[0].UserID)
@@ -396,22 +400,26 @@ func testSettlingBatchImageJob(batchID string) *BatchImageJob {
 	outputRef := "files/output"
 	holdAmount := 1.25
 	holdID := BatchImageHoldRequestID(batchID)
+	upstreamGroupRateMultiplier := 2.0
 	return &BatchImageJob{
-		BatchID:           batchID,
-		UserID:            123,
-		APIKeyID:          &apiKeyID,
-		AccountID:         &accountID,
-		Provider:          BatchImageProviderGeminiAPI,
-		Model:             "gemini-image",
-		Status:            BatchImageJobStatusSettling,
-		ProviderJobName:   &providerJobName,
-		ProviderOutputRef: &outputRef,
-		ItemCount:         3,
-		SuccessCount:      2,
-		FailCount:         1,
-		EstimatedCost:     holdAmount,
-		HoldAmount:        &holdAmount,
-		HoldID:            &holdID,
+		BatchID:                     batchID,
+		UserID:                      123,
+		APIKeyID:                    &apiKeyID,
+		AccountID:                   &accountID,
+		Provider:                    BatchImageProviderGeminiAPI,
+		Model:                       "gemini-image",
+		Status:                      BatchImageJobStatusSettling,
+		ProviderJobName:             &providerJobName,
+		ProviderOutputRef:           &outputRef,
+		ItemCount:                   3,
+		SuccessCount:                2,
+		FailCount:                   1,
+		EstimatedCost:               holdAmount,
+		HoldAmount:                  &holdAmount,
+		HoldID:                      &holdID,
+		BaseUnitPrice:               0.25,
+		GroupRateMultiplier:         0.5,
+		UpstreamGroupRateMultiplier: &upstreamGroupRateMultiplier,
 	}
 }
 

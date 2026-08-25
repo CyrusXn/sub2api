@@ -280,6 +280,10 @@ func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *B
 		SessionID:             job.SessionID,
 		CreatedAt:             createdAt,
 	}
+	// 批量生图的结算价包含用户、账号、管理附加和折扣倍率；上游核算只保留原始单价与分组默认倍率。
+	if job.UpstreamGroupRateMultiplier != nil {
+		captureUpstreamCostSnapshot(usageLog, job.BaseUnitPrice*float64(job.SuccessCount), *job.UpstreamGroupRateMultiplier)
+	}
 	writeUsageLogBestEffort(ctx, s.UsageLogRepo, usageLog, "service.batch_image_settlement")
 }
 

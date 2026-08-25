@@ -100,6 +100,7 @@ func TestApplyAdminUsageSettlementMultiplier(t *testing.T) {
 		BillingMode:       string(BillingModeToken),
 	}
 
+	captureUpstreamCostSnapshot(log, log.TotalCost, log.RateMultiplier)
 	applyAdminUsageSettlementMultiplier(log, cost, 10)
 
 	require.Equal(t, 14470, log.InputTokens)
@@ -115,6 +116,10 @@ func TestApplyAdminUsageSettlementMultiplier(t *testing.T) {
 	require.InDelta(t, 0.07684, log.TotalCost, 1e-12)
 	require.InDelta(t, 0.007684, log.ActualCost, 1e-12)
 	require.InDelta(t, 0.10, log.RateMultiplier, 1e-12, "原始有效倍率不能被附加倍率覆盖")
+	require.NotNil(t, log.UpstreamCostBase)
+	require.NotNil(t, log.UpstreamGroupRateMultiplier)
+	require.InDelta(t, 0.007684, *log.UpstreamCostBase, 1e-12, "上游原始消费费用必须在附加倍率前固化")
+	require.InDelta(t, 0.10, *log.UpstreamGroupRateMultiplier, 1e-12, "上游分组倍率必须保留本次请求的实际倍率")
 	require.InDelta(t, accountRate, *log.AccountRateMultiplier, 1e-12)
 	require.InDelta(t, log.InputCost, cost.InputCost, 1e-12)
 	require.InDelta(t, log.OutputCost, cost.OutputCost, 1e-12)

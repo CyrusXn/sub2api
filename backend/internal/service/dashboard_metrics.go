@@ -7,30 +7,34 @@ import (
 
 // DashboardBusinessTotals 是可长期保存并按时间范围汇总的经营指标。
 type DashboardBusinessTotals struct {
-	RechargeAmount            float64 `json:"recharge_amount"`
-	TotalRequests             int64   `json:"total_requests"`
-	InputTokens               int64   `json:"input_tokens"`
-	OutputTokens              int64   `json:"output_tokens"`
-	CacheCreationTokens       int64   `json:"cache_creation_tokens"`
-	CacheReadTokens           int64   `json:"cache_read_tokens"`
-	TotalTokens               int64   `json:"total_tokens"`
-	TotalCost                 float64 `json:"total_cost"`
-	ActualCost                float64 `json:"actual_cost"`
-	ActualCostExcludingAdmin  float64 `json:"actual_cost_excluding_admin"`
-	AccountCost               float64 `json:"account_cost"`
-	AccountCostExcludingAdmin float64 `json:"account_cost_excluding_admin"`
+	RechargeAmount             float64 `json:"recharge_amount"`
+	TotalRequests              int64   `json:"total_requests"`
+	InputTokens                int64   `json:"input_tokens"`
+	OutputTokens               int64   `json:"output_tokens"`
+	CacheCreationTokens        int64   `json:"cache_creation_tokens"`
+	CacheReadTokens            int64   `json:"cache_read_tokens"`
+	TotalTokens                int64   `json:"total_tokens"`
+	TotalCost                  float64 `json:"total_cost"`
+	ActualCost                 float64 `json:"actual_cost"`
+	ActualCostExcludingAdmin   float64 `json:"actual_cost_excluding_admin"`
+	AccountCost                float64 `json:"account_cost"`
+	AccountCostExcludingAdmin  float64 `json:"account_cost_excluding_admin"`
+	UpstreamCost               float64 `json:"upstream_cost"`
+	UpstreamCostExcludingAdmin float64 `json:"upstream_cost_excluding_admin"`
 }
 
 // DashboardBusinessDailyPoint 支持经营指标按日查询和后续利润分析。
 type DashboardBusinessDailyPoint struct {
-	BucketDate                time.Time `json:"bucket_date"`
-	RechargeAmount            float64   `json:"recharge_amount"`
-	TotalRequests             int64     `json:"total_requests"`
-	TotalTokens               int64     `json:"total_tokens"`
-	ActualCost                float64   `json:"actual_cost"`
-	ActualCostExcludingAdmin  float64   `json:"actual_cost_excluding_admin"`
-	AccountCost               float64   `json:"account_cost"`
-	AccountCostExcludingAdmin float64   `json:"account_cost_excluding_admin"`
+	BucketDate                 time.Time `json:"bucket_date"`
+	RechargeAmount             float64   `json:"recharge_amount"`
+	TotalRequests              int64     `json:"total_requests"`
+	TotalTokens                int64     `json:"total_tokens"`
+	ActualCost                 float64   `json:"actual_cost"`
+	ActualCostExcludingAdmin   float64   `json:"actual_cost_excluding_admin"`
+	AccountCost                float64   `json:"account_cost"`
+	AccountCostExcludingAdmin  float64   `json:"account_cost_excluding_admin"`
+	UpstreamCost               float64   `json:"upstream_cost"`
+	UpstreamCostExcludingAdmin float64   `json:"upstream_cost_excluding_admin"`
 }
 
 type DashboardBusinessSummary struct {

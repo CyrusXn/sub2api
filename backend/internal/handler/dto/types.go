@@ -586,6 +586,10 @@ type AdminUsageLog struct {
 	AccountRateMultiplier *float64 `json:"account_rate_multiplier"`
 	// AccountStatsCost 自定义定价规则计算的账号统计费用（nil 表示使用默认公式）
 	AccountStatsCost *float64 `json:"account_stats_cost,omitempty"`
+	// UpstreamCostBase 是未叠加管理附加倍率的原始消费费用快照，仅管理员可见。
+	UpstreamCostBase *float64 `json:"upstream_cost_base,omitempty"`
+	// UpstreamGroupRateMultiplier 是本次结算的上游分组倍率快照，仅管理员可见。
+	UpstreamGroupRateMultiplier *float64 `json:"upstream_group_rate_multiplier,omitempty"`
 
 	// IPAddress 用户请求 IP
 	IPAddress *string `json:"ip_address,omitempty"`

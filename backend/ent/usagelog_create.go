@@ -379,6 +379,34 @@ func (_c *UsageLogCreate) SetNillableRateMultiplier(v *float64) *UsageLogCreate 
 	return _c
 }
 
+// SetUpstreamCostBase sets the "upstream_cost_base" field.
+func (_c *UsageLogCreate) SetUpstreamCostBase(v float64) *UsageLogCreate {
+	_c.mutation.SetUpstreamCostBase(v)
+	return _c
+}
+
+// SetNillableUpstreamCostBase sets the "upstream_cost_base" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableUpstreamCostBase(v *float64) *UsageLogCreate {
+	if v != nil {
+		_c.SetUpstreamCostBase(*v)
+	}
+	return _c
+}
+
+// SetUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field.
+func (_c *UsageLogCreate) SetUpstreamGroupRateMultiplier(v float64) *UsageLogCreate {
+	_c.mutation.SetUpstreamGroupRateMultiplier(v)
+	return _c
+}
+
+// SetNillableUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableUpstreamGroupRateMultiplier(v *float64) *UsageLogCreate {
+	if v != nil {
+		_c.SetUpstreamGroupRateMultiplier(*v)
+	}
+	return _c
+}
+
 // SetLongContextBillingApplied sets the "long_context_billing_applied" field.
 func (_c *UsageLogCreate) SetLongContextBillingApplied(v bool) *UsageLogCreate {
 	_c.mutation.SetLongContextBillingApplied(v)
@@ -1058,6 +1086,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RateMultiplier(); ok {
 		_spec.SetField(usagelog.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
+	}
+	if value, ok := _c.mutation.UpstreamCostBase(); ok {
+		_spec.SetField(usagelog.FieldUpstreamCostBase, field.TypeFloat64, value)
+		_node.UpstreamCostBase = &value
+	}
+	if value, ok := _c.mutation.UpstreamGroupRateMultiplier(); ok {
+		_spec.SetField(usagelog.FieldUpstreamGroupRateMultiplier, field.TypeFloat64, value)
+		_node.UpstreamGroupRateMultiplier = &value
 	}
 	if value, ok := _c.mutation.LongContextBillingApplied(); ok {
 		_spec.SetField(usagelog.FieldLongContextBillingApplied, field.TypeBool, value)
@@ -1749,6 +1785,54 @@ func (u *UsageLogUpsert) UpdateRateMultiplier() *UsageLogUpsert {
 // AddRateMultiplier adds v to the "rate_multiplier" field.
 func (u *UsageLogUpsert) AddRateMultiplier(v float64) *UsageLogUpsert {
 	u.Add(usagelog.FieldRateMultiplier, v)
+	return u
+}
+
+// SetUpstreamCostBase sets the "upstream_cost_base" field.
+func (u *UsageLogUpsert) SetUpstreamCostBase(v float64) *UsageLogUpsert {
+	u.Set(usagelog.FieldUpstreamCostBase, v)
+	return u
+}
+
+// UpdateUpstreamCostBase sets the "upstream_cost_base" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateUpstreamCostBase() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldUpstreamCostBase)
+	return u
+}
+
+// AddUpstreamCostBase adds v to the "upstream_cost_base" field.
+func (u *UsageLogUpsert) AddUpstreamCostBase(v float64) *UsageLogUpsert {
+	u.Add(usagelog.FieldUpstreamCostBase, v)
+	return u
+}
+
+// ClearUpstreamCostBase clears the value of the "upstream_cost_base" field.
+func (u *UsageLogUpsert) ClearUpstreamCostBase() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldUpstreamCostBase)
+	return u
+}
+
+// SetUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsert) SetUpstreamGroupRateMultiplier(v float64) *UsageLogUpsert {
+	u.Set(usagelog.FieldUpstreamGroupRateMultiplier, v)
+	return u
+}
+
+// UpdateUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateUpstreamGroupRateMultiplier() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldUpstreamGroupRateMultiplier)
+	return u
+}
+
+// AddUpstreamGroupRateMultiplier adds v to the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsert) AddUpstreamGroupRateMultiplier(v float64) *UsageLogUpsert {
+	u.Add(usagelog.FieldUpstreamGroupRateMultiplier, v)
+	return u
+}
+
+// ClearUpstreamGroupRateMultiplier clears the value of the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsert) ClearUpstreamGroupRateMultiplier() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldUpstreamGroupRateMultiplier)
 	return u
 }
 
@@ -2684,6 +2768,62 @@ func (u *UsageLogUpsertOne) AddRateMultiplier(v float64) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateRateMultiplier() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetUpstreamCostBase sets the "upstream_cost_base" field.
+func (u *UsageLogUpsertOne) SetUpstreamCostBase(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUpstreamCostBase(v)
+	})
+}
+
+// AddUpstreamCostBase adds v to the "upstream_cost_base" field.
+func (u *UsageLogUpsertOne) AddUpstreamCostBase(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddUpstreamCostBase(v)
+	})
+}
+
+// UpdateUpstreamCostBase sets the "upstream_cost_base" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateUpstreamCostBase() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUpstreamCostBase()
+	})
+}
+
+// ClearUpstreamCostBase clears the value of the "upstream_cost_base" field.
+func (u *UsageLogUpsertOne) ClearUpstreamCostBase() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUpstreamCostBase()
+	})
+}
+
+// SetUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsertOne) SetUpstreamGroupRateMultiplier(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUpstreamGroupRateMultiplier(v)
+	})
+}
+
+// AddUpstreamGroupRateMultiplier adds v to the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsertOne) AddUpstreamGroupRateMultiplier(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddUpstreamGroupRateMultiplier(v)
+	})
+}
+
+// UpdateUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateUpstreamGroupRateMultiplier() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUpstreamGroupRateMultiplier()
+	})
+}
+
+// ClearUpstreamGroupRateMultiplier clears the value of the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsertOne) ClearUpstreamGroupRateMultiplier() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUpstreamGroupRateMultiplier()
 	})
 }
 
@@ -3840,6 +3980,62 @@ func (u *UsageLogUpsertBulk) AddRateMultiplier(v float64) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateRateMultiplier() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetUpstreamCostBase sets the "upstream_cost_base" field.
+func (u *UsageLogUpsertBulk) SetUpstreamCostBase(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUpstreamCostBase(v)
+	})
+}
+
+// AddUpstreamCostBase adds v to the "upstream_cost_base" field.
+func (u *UsageLogUpsertBulk) AddUpstreamCostBase(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddUpstreamCostBase(v)
+	})
+}
+
+// UpdateUpstreamCostBase sets the "upstream_cost_base" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateUpstreamCostBase() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUpstreamCostBase()
+	})
+}
+
+// ClearUpstreamCostBase clears the value of the "upstream_cost_base" field.
+func (u *UsageLogUpsertBulk) ClearUpstreamCostBase() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUpstreamCostBase()
+	})
+}
+
+// SetUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsertBulk) SetUpstreamGroupRateMultiplier(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUpstreamGroupRateMultiplier(v)
+	})
+}
+
+// AddUpstreamGroupRateMultiplier adds v to the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsertBulk) AddUpstreamGroupRateMultiplier(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddUpstreamGroupRateMultiplier(v)
+	})
+}
+
+// UpdateUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateUpstreamGroupRateMultiplier() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUpstreamGroupRateMultiplier()
+	})
+}
+
+// ClearUpstreamGroupRateMultiplier clears the value of the "upstream_group_rate_multiplier" field.
+func (u *UsageLogUpsertBulk) ClearUpstreamGroupRateMultiplier() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUpstreamGroupRateMultiplier()
 	})
 }
 

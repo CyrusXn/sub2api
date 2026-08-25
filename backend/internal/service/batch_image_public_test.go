@@ -94,6 +94,8 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 		job := repo.jobs[got.ID]
 		require.InDelta(t, 0.25, job.BaseUnitPrice, 1e-12)
 		require.InDelta(t, 0.5, job.GroupRateMultiplier, 1e-12)
+		require.NotNil(t, job.UpstreamGroupRateMultiplier)
+		require.InDelta(t, 2.0, *job.UpstreamGroupRateMultiplier, 1e-12)
 		require.InDelta(t, 1.25, job.AccountRateMultiplier, 1e-12)
 		require.InDelta(t, 0.8, job.BatchDiscountMultiplier, 1e-12)
 		// 配置的 hold(0.6) < discount(0.8) 属于会导致结算死锁的脏数据，
@@ -134,6 +136,32 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 		require.InDelta(t, 1.25, job.BillableUnitPrice, 1e-12)
 		require.InDelta(t, 1.5, job.HoldUnitPrice, 1e-12)
 		require.InDelta(t, 3.0, *job.HoldAmount, 1e-12)
+	})
+
+	t.Run("keeps upstream group snapshot when image rate is independent", func(t *testing.T) {
+		svc, repo, _, _, _ := newTestBatchImagePublicService(true)
+		groupID := int64(7)
+		svc.GroupRepo = &publicBatchImageGroupRepo{groups: map[int64]*Group{
+			groupID: {
+				ID:                           groupID,
+				Platform:                     PlatformGemini,
+				RateMultiplier:               2.0,
+				ImageRateIndependent:         true,
+				ImageRateMultiplier:          0.3,
+				AllowImageGeneration:         true,
+				AllowBatchImageGeneration:    true,
+				BatchImageDiscountMultiplier: 0.5,
+				BatchImageHoldMultiplier:     0.6,
+			},
+		}}
+
+		got, err := svc.Submit(ctx, BatchImageOwner{UserID: 11, APIKeyID: 22, GroupID: &groupID}, validBatchImageSubmitRequest(), "")
+		require.NoError(t, err)
+
+		job := repo.jobs[got.ID]
+		require.InDelta(t, 0.3, job.GroupRateMultiplier, 1e-12)
+		require.NotNil(t, job.UpstreamGroupRateMultiplier)
+		require.InDelta(t, 2.0, *job.UpstreamGroupRateMultiplier, 1e-12)
 	})
 
 	t.Run("uses configured group 1k image price for batch image base price", func(t *testing.T) {

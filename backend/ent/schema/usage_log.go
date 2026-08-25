@@ -111,6 +111,15 @@ func (UsageLog) Fields() []ent.Field {
 		field.Float("rate_multiplier").
 			Default(1).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
+		// 上游费用快照只供管理端核算，NULL 表示新增字段上线前的历史记录。
+		field.Float("upstream_cost_base").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		field.Float("upstream_group_rate_multiplier").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
 		field.Bool("long_context_billing_applied").
 			Default(false).
 			Comment("Whether long-context pricing changed token prices for this request"),

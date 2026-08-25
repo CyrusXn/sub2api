@@ -34,7 +34,9 @@ const response = {
     actual_cost: 80,
     actual_cost_excluding_admin: 70,
     account_cost: 60,
-    account_cost_excluding_admin: 50
+    account_cost_excluding_admin: 50,
+    upstream_cost: 45,
+    upstream_cost_excluding_admin: 40
   },
   range: {
     recharge_amount: 120,
@@ -48,11 +50,13 @@ const response = {
     actual_cost: 20,
     actual_cost_excluding_admin: 18,
     account_cost: 10,
-    account_cost_excluding_admin: 9
+    account_cost_excluding_admin: 9,
+    upstream_cost: 8,
+    upstream_cost_excluding_admin: 7
   },
   daily: [
-    { bucket_date: '2026-08-17T00:00:00Z', recharge_amount: 70, total_requests: 73, total_tokens: 1200, actual_cost: 12, actual_cost_excluding_admin: 11, account_cost: 7, account_cost_excluding_admin: 6 },
-    { bucket_date: '2026-08-16T00:00:00Z', recharge_amount: 50, total_requests: 50, total_tokens: 800, actual_cost: 8, actual_cost_excluding_admin: 7, account_cost: 3, account_cost_excluding_admin: 3 }
+    { bucket_date: '2026-08-17T00:00:00Z', recharge_amount: 70, total_requests: 73, total_tokens: 1200, actual_cost: 12, actual_cost_excluding_admin: 11, account_cost: 7, account_cost_excluding_admin: 6, upstream_cost: 5, upstream_cost_excluding_admin: 4 },
+    { bucket_date: '2026-08-16T00:00:00Z', recharge_amount: 50, total_requests: 50, total_tokens: 800, actual_cost: 8, actual_cost_excluding_admin: 7, account_cost: 3, account_cost_excluding_admin: 3, upstream_cost: 3, upstream_cost_excluding_admin: 3 }
   ]
 }
 
@@ -77,7 +81,7 @@ describe('BusinessHistoryView', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('默认从 2026 年 7 月 9 日查询并展示范围内三项经营指标', async () => {
+  it('默认从 2026 年 7 月 9 日查询并展示范围内经营指标与上游消费', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -86,6 +90,8 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$20.00')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$18.00')
+    expect(wrapper.get('[data-test="range-upstream-cost"]').text()).toContain('$8.00')
+    expect(wrapper.get('[data-test="range-upstream-cost"]').text()).toContain('$7.00')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
   })
@@ -93,6 +99,13 @@ describe('BusinessHistoryView', () => {
   it('明确标注排除管理员后的消费口径', () => {
     expect(zhBusinessHistory.businessHistory.excludingAdmin).toBe("消费总额（已排除 admin{'@'}example.com）")
     expect(enBusinessHistory.businessHistory.excludingAdmin).toBe("消费总额（已排除 admin{'@'}example.com）")
+  })
+
+  it('不再显示与页面标题重复的经营历史说明', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('按日期查询永久保存的请求数、Token 和消费汇总')
   })
 
   it('按管理员选择的日期范围重新查询', async () => {

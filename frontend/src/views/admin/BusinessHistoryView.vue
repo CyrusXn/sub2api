@@ -3,7 +3,6 @@
     <main class="mx-auto w-full max-w-[1480px] space-y-6 px-4 py-5 sm:px-6">
       <header class="border-b border-gray-200 pb-4 dark:border-dark-700">
         <h1 class="text-xl font-semibold text-gray-900 dark:text-white">{{ t('admin.businessHistory.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.description') }}</p>
       </header>
 
       <section class="flex flex-col gap-3 border-b border-gray-200 pb-5 dark:border-dark-700 sm:flex-row sm:items-end" aria-label="经营历史查询">
@@ -28,7 +27,7 @@
         {{ t('admin.businessHistory.loadFailed') }}
       </p>
 
-      <section class="grid grid-cols-1 gap-4 lg:grid-cols-3" aria-label="经营指标">
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-4" aria-label="经营指标">
         <article class="card p-5">
           <div class="flex items-center gap-3">
             <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30"><Icon name="document" size="md" class="text-blue-600 dark:text-blue-400" /></div>
@@ -69,6 +68,21 @@
             </div>
           </div>
         </article>
+
+        <article class="card p-5">
+          <div class="flex items-start gap-3">
+            <div class="rounded-lg bg-red-100 p-2 dark:bg-red-900/30"><Icon name="dollar" size="md" class="text-red-600 dark:text-red-400" /></div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamConsumption') }}</p>
+              <p data-test="range-upstream-cost" class="mt-1 flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
+                <span>{{ formatMoney(summary?.range.upstream_cost) }}</span>
+                <span class="text-gray-300 dark:text-dark-500">/</span>
+                <span class="text-red-600 dark:text-red-400">{{ formatMoney(summary?.range.upstream_cost_excluding_admin) }}</span>
+              </p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.allAccounts') }} / {{ t('admin.businessHistory.upstreamExcludingAdmin') }}</p>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section class="card p-4">
@@ -90,7 +104,7 @@
       <section class="space-y-3">
         <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.businessHistory.dailyDetails') }}</h2>
         <div class="overflow-x-auto border-y border-gray-200 dark:border-dark-700">
-          <table class="w-full min-w-[860px] text-sm">
+          <table class="w-full min-w-[1100px] text-sm">
             <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-dark-800 dark:text-gray-400">
               <tr>
                 <th class="px-3 py-2">{{ t('admin.businessHistory.date') }}</th>
@@ -98,6 +112,8 @@
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.totalTokens') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.totalConsumption') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.excludingAdmin') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.upstreamConsumption') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.upstreamExcludingAdmin') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.effectiveRecharge') }}</th>
               </tr>
             </thead>
@@ -108,9 +124,11 @@
                 <td class="px-3 py-3 text-right">{{ formatTokens(point.total_tokens) }}</td>
                 <td class="px-3 py-3 text-right">{{ formatMoney(point.actual_cost) }}</td>
                 <td class="px-3 py-3 text-right text-emerald-600 dark:text-emerald-400">{{ formatMoney(point.actual_cost_excluding_admin) }}</td>
+                <td class="px-3 py-3 text-right text-red-600 dark:text-red-400">{{ formatMoney(point.upstream_cost) }}</td>
+                <td class="px-3 py-3 text-right text-red-600 dark:text-red-400">{{ formatMoney(point.upstream_cost_excluding_admin) }}</td>
                 <td class="px-3 py-3 text-right">{{ formatMoney(point.recharge_amount) }}</td>
               </tr>
-              <tr v-if="!loading && daily.length === 0"><td colspan="6" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.noData') }}</td></tr>
+              <tr v-if="!loading && daily.length === 0"><td colspan="8" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.noData') }}</td></tr>
             </tbody>
           </table>
         </div>

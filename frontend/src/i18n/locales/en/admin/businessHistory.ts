@@ -2,7 +2,6 @@
 export default {
   businessHistory: {
     title: '经营历史',
-    description: '按日期查询永久保存的请求数、Token 和消费汇总',
     startDate: '开始日期',
     endDate: '结束日期',
     query: '查询',
@@ -11,8 +10,10 @@ export default {
     totalRequests: '总请求数',
     totalTokens: '总 Token',
     totalConsumption: '总消费',
+    upstreamConsumption: '上游站点总消费',
     allAccounts: '全部账号',
     excludingAdmin: "消费总额（已排除 admin{'@'}example.com）",
+    upstreamExcludingAdmin: "上游站点总消费（已排除 admin{'@'}example.com）",
     inputTokens: '输入',
     outputTokens: '输出',
     cacheCreationTokens: '缓存创建',

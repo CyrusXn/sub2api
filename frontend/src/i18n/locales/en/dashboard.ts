@@ -281,6 +281,8 @@ export default {
     totalCost: 'Total Cost',
     upstreamTotalCost: 'Upstream Total Cost',
     upstreamCost: 'Upstream Cost',
+    upstreamOriginalCost: 'Upstream Original Cost',
+    upstreamGroupRate: 'Upstream Group Rate',
     upstreamCostSnapshot: 'Settled upstream snapshot',
     profit: 'Profit',
     profitFormula: 'Total cost - upstream cost',

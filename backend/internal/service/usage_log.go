@@ -199,6 +199,10 @@ type UsageLog struct {
 	ActualCost                float64
 	RateMultiplier            float64
 	LongContextBillingApplied bool
+	// UpstreamCostBase 是未叠加管理附加倍率时的原始消费费用快照，仅供管理端核算上游费用。
+	UpstreamCostBase *float64
+	// UpstreamGroupRateMultiplier 是本次请求实际使用的上游分组倍率快照，仅供管理端核算上游费用。
+	UpstreamGroupRateMultiplier *float64
 	// AccountRateMultiplier 账号计费倍率快照（nil 表示历史数据，按 1.0 处理）
 	AccountRateMultiplier *float64
 	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）

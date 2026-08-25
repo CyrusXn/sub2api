@@ -37,6 +37,8 @@ const messages: Record<string, string> = {
 	'usage.sentUpstreamModel': 'Sent upstream model',
 	'usage.upstreamResponseModel': 'Upstream response model',
 	'usage.upstreamModelMismatch': 'Upstream model mismatch',
+	'usage.upstreamOriginalCost': 'Upstream original cost',
+	'usage.upstreamGroupRate': 'Upstream group rate',
 	'common.yes': 'Yes',
 	'common.no': 'No',
 }
@@ -445,6 +447,12 @@ describe('admin UsageView request ID column visibility', () => {
     expect(usageTable.props('columns')).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'request_id' })]),
     )
+    expect(usageTable.props('columns')).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'upstream_cost_base' }),
+        expect.objectContaining({ key: 'upstream_group_rate_multiplier' }),
+      ]),
+    )
 
     await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
     const requestIdToggle = wrapper.findAll('button').find((button) => button.text() === 'Request ID')
@@ -456,7 +464,55 @@ describe('admin UsageView request ID column visibility', () => {
     )
     expect(localStorage.setItem).toHaveBeenCalledWith(
       'usage-hidden-columns-version',
-      'request-id-hidden-by-default',
+      'upstream-snapshots-hidden-by-default',
+    )
+
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Upstream original cost')).toBe(true)
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Upstream group rate')).toBe(true)
+  })
+
+  it('upgrades saved column settings by hiding new upstream snapshots', async () => {
+    vi.mocked(localStorage.getItem).mockImplementation((key: string) => {
+      if (key === 'usage-hidden-columns') return JSON.stringify(['request_id'])
+      if (key === 'usage-hidden-columns-version') return 'request-id-hidden-by-default'
+      return null
+    })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: UsageTableStub,
+          UsageExportProgress: true,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          AuditLogModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          GroupDistributionChart: true,
+          EndpointDistributionChart: true,
+          UserTokenRanking: true,
+        },
+      },
+    })
+    await wrapper.vm.$nextTick()
+
+    const usageTable = wrapper.findComponent(UsageTableStub)
+    expect(usageTable.props('columns')).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'upstream_cost_base' }),
+        expect.objectContaining({ key: 'upstream_group_rate_multiplier' }),
+      ]),
+    )
+    expect(localStorage.setItem).toHaveBeenCalledWith(
+      'usage-hidden-columns',
+      expect.stringContaining('upstream_cost_base'),
     )
   })
 })

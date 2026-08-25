@@ -44489,86 +44489,90 @@ func (m *UsageCleanupTaskMutation) ResetEdge(name string) error {
 // UsageLogMutation represents an operation that mutates the UsageLog nodes in the graph.
 type UsageLogMutation struct {
 	config
-	op                           Op
-	typ                          string
-	id                           *int64
-	request_id                   *string
-	model                        *string
-	requested_model              *string
-	upstream_model               *string
-	upstream_response_model      *string
-	upstream_model_mismatch      *bool
-	channel_id                   *int64
-	addchannel_id                *int64
-	model_mapping_chain          *string
-	billing_tier                 *string
-	billing_mode                 *string
-	input_tokens                 *int
-	addinput_tokens              *int
-	output_tokens                *int
-	addoutput_tokens             *int
-	cache_creation_tokens        *int
-	addcache_creation_tokens     *int
-	cache_read_tokens            *int
-	addcache_read_tokens         *int
-	cache_creation_5m_tokens     *int
-	addcache_creation_5m_tokens  *int
-	cache_creation_1h_tokens     *int
-	addcache_creation_1h_tokens  *int
-	input_cost                   *float64
-	addinput_cost                *float64
-	output_cost                  *float64
-	addoutput_cost               *float64
-	cache_creation_cost          *float64
-	addcache_creation_cost       *float64
-	cache_read_cost              *float64
-	addcache_read_cost           *float64
-	total_cost                   *float64
-	addtotal_cost                *float64
-	actual_cost                  *float64
-	addactual_cost               *float64
-	rate_multiplier              *float64
-	addrate_multiplier           *float64
-	long_context_billing_applied *bool
-	account_rate_multiplier      *float64
-	addaccount_rate_multiplier   *float64
-	billing_type                 *int8
-	addbilling_type              *int8
-	stream                       *bool
-	duration_ms                  *int
-	addduration_ms               *int
-	first_token_ms               *int
-	addfirst_token_ms            *int
-	user_agent                   *string
-	ip_address                   *string
-	image_count                  *int
-	addimage_count               *int
-	image_size                   *string
-	image_input_size             *string
-	image_output_size            *string
-	image_size_source            *string
-	image_size_breakdown         *map[string]int
-	video_count                  *int
-	addvideo_count               *int
-	video_resolution             *string
-	video_duration_seconds       *int
-	addvideo_duration_seconds    *int
-	cache_ttl_overridden         *bool
-	created_at                   *time.Time
-	clearedFields                map[string]struct{}
-	user                         *int64
-	cleareduser                  bool
-	api_key                      *int64
-	clearedapi_key               bool
-	account                      *int64
-	clearedaccount               bool
-	group                        *int64
-	clearedgroup                 bool
-	subscription                 *int64
-	clearedsubscription          bool
-	done                         bool
-	oldValue                     func(context.Context) (*UsageLog, error)
-	predicates                   []predicate.UsageLog
+	op                                Op
+	typ                               string
+	id                                *int64
+	request_id                        *string
+	model                             *string
+	requested_model                   *string
+	upstream_model                    *string
+	upstream_response_model           *string
+	upstream_model_mismatch           *bool
+	channel_id                        *int64
+	addchannel_id                     *int64
+	model_mapping_chain               *string
+	billing_tier                      *string
+	billing_mode                      *string
+	input_tokens                      *int
+	addinput_tokens                   *int
+	output_tokens                     *int
+	addoutput_tokens                  *int
+	cache_creation_tokens             *int
+	addcache_creation_tokens          *int
+	cache_read_tokens                 *int
+	addcache_read_tokens              *int
+	cache_creation_5m_tokens          *int
+	addcache_creation_5m_tokens       *int
+	cache_creation_1h_tokens          *int
+	addcache_creation_1h_tokens       *int
+	input_cost                        *float64
+	addinput_cost                     *float64
+	output_cost                       *float64
+	addoutput_cost                    *float64
+	cache_creation_cost               *float64
+	addcache_creation_cost            *float64
+	cache_read_cost                   *float64
+	addcache_read_cost                *float64
+	total_cost                        *float64
+	addtotal_cost                     *float64
+	actual_cost                       *float64
+	addactual_cost                    *float64
+	rate_multiplier                   *float64
+	addrate_multiplier                *float64
+	upstream_cost_base                *float64
+	addupstream_cost_base             *float64
+	upstream_group_rate_multiplier    *float64
+	addupstream_group_rate_multiplier *float64
+	long_context_billing_applied      *bool
+	account_rate_multiplier           *float64
+	addaccount_rate_multiplier        *float64
+	billing_type                      *int8
+	addbilling_type                   *int8
+	stream                            *bool
+	duration_ms                       *int
+	addduration_ms                    *int
+	first_token_ms                    *int
+	addfirst_token_ms                 *int
+	user_agent                        *string
+	ip_address                        *string
+	image_count                       *int
+	addimage_count                    *int
+	image_size                        *string
+	image_input_size                  *string
+	image_output_size                 *string
+	image_size_source                 *string
+	image_size_breakdown              *map[string]int
+	video_count                       *int
+	addvideo_count                    *int
+	video_resolution                  *string
+	video_duration_seconds            *int
+	addvideo_duration_seconds         *int
+	cache_ttl_overridden              *bool
+	created_at                        *time.Time
+	clearedFields                     map[string]struct{}
+	user                              *int64
+	cleareduser                       bool
+	api_key                           *int64
+	clearedapi_key                    bool
+	account                           *int64
+	clearedaccount                    bool
+	group                             *int64
+	clearedgroup                      bool
+	subscription                      *int64
+	clearedsubscription               bool
+	done                              bool
+	oldValue                          func(context.Context) (*UsageLog, error)
+	predicates                        []predicate.UsageLog
 }
 
 var _ ent.Mutation = (*UsageLogMutation)(nil)
@@ -46088,6 +46092,146 @@ func (m *UsageLogMutation) ResetRateMultiplier() {
 	m.addrate_multiplier = nil
 }
 
+// SetUpstreamCostBase sets the "upstream_cost_base" field.
+func (m *UsageLogMutation) SetUpstreamCostBase(f float64) {
+	m.upstream_cost_base = &f
+	m.addupstream_cost_base = nil
+}
+
+// UpstreamCostBase returns the value of the "upstream_cost_base" field in the mutation.
+func (m *UsageLogMutation) UpstreamCostBase() (r float64, exists bool) {
+	v := m.upstream_cost_base
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamCostBase returns the old "upstream_cost_base" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldUpstreamCostBase(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamCostBase is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamCostBase requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamCostBase: %w", err)
+	}
+	return oldValue.UpstreamCostBase, nil
+}
+
+// AddUpstreamCostBase adds f to the "upstream_cost_base" field.
+func (m *UsageLogMutation) AddUpstreamCostBase(f float64) {
+	if m.addupstream_cost_base != nil {
+		*m.addupstream_cost_base += f
+	} else {
+		m.addupstream_cost_base = &f
+	}
+}
+
+// AddedUpstreamCostBase returns the value that was added to the "upstream_cost_base" field in this mutation.
+func (m *UsageLogMutation) AddedUpstreamCostBase() (r float64, exists bool) {
+	v := m.addupstream_cost_base
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearUpstreamCostBase clears the value of the "upstream_cost_base" field.
+func (m *UsageLogMutation) ClearUpstreamCostBase() {
+	m.upstream_cost_base = nil
+	m.addupstream_cost_base = nil
+	m.clearedFields[usagelog.FieldUpstreamCostBase] = struct{}{}
+}
+
+// UpstreamCostBaseCleared returns if the "upstream_cost_base" field was cleared in this mutation.
+func (m *UsageLogMutation) UpstreamCostBaseCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldUpstreamCostBase]
+	return ok
+}
+
+// ResetUpstreamCostBase resets all changes to the "upstream_cost_base" field.
+func (m *UsageLogMutation) ResetUpstreamCostBase() {
+	m.upstream_cost_base = nil
+	m.addupstream_cost_base = nil
+	delete(m.clearedFields, usagelog.FieldUpstreamCostBase)
+}
+
+// SetUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field.
+func (m *UsageLogMutation) SetUpstreamGroupRateMultiplier(f float64) {
+	m.upstream_group_rate_multiplier = &f
+	m.addupstream_group_rate_multiplier = nil
+}
+
+// UpstreamGroupRateMultiplier returns the value of the "upstream_group_rate_multiplier" field in the mutation.
+func (m *UsageLogMutation) UpstreamGroupRateMultiplier() (r float64, exists bool) {
+	v := m.upstream_group_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamGroupRateMultiplier returns the old "upstream_group_rate_multiplier" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldUpstreamGroupRateMultiplier(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamGroupRateMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamGroupRateMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamGroupRateMultiplier: %w", err)
+	}
+	return oldValue.UpstreamGroupRateMultiplier, nil
+}
+
+// AddUpstreamGroupRateMultiplier adds f to the "upstream_group_rate_multiplier" field.
+func (m *UsageLogMutation) AddUpstreamGroupRateMultiplier(f float64) {
+	if m.addupstream_group_rate_multiplier != nil {
+		*m.addupstream_group_rate_multiplier += f
+	} else {
+		m.addupstream_group_rate_multiplier = &f
+	}
+}
+
+// AddedUpstreamGroupRateMultiplier returns the value that was added to the "upstream_group_rate_multiplier" field in this mutation.
+func (m *UsageLogMutation) AddedUpstreamGroupRateMultiplier() (r float64, exists bool) {
+	v := m.addupstream_group_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearUpstreamGroupRateMultiplier clears the value of the "upstream_group_rate_multiplier" field.
+func (m *UsageLogMutation) ClearUpstreamGroupRateMultiplier() {
+	m.upstream_group_rate_multiplier = nil
+	m.addupstream_group_rate_multiplier = nil
+	m.clearedFields[usagelog.FieldUpstreamGroupRateMultiplier] = struct{}{}
+}
+
+// UpstreamGroupRateMultiplierCleared returns if the "upstream_group_rate_multiplier" field was cleared in this mutation.
+func (m *UsageLogMutation) UpstreamGroupRateMultiplierCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldUpstreamGroupRateMultiplier]
+	return ok
+}
+
+// ResetUpstreamGroupRateMultiplier resets all changes to the "upstream_group_rate_multiplier" field.
+func (m *UsageLogMutation) ResetUpstreamGroupRateMultiplier() {
+	m.upstream_group_rate_multiplier = nil
+	m.addupstream_group_rate_multiplier = nil
+	delete(m.clearedFields, usagelog.FieldUpstreamGroupRateMultiplier)
+}
+
 // SetLongContextBillingApplied sets the "long_context_billing_applied" field.
 func (m *UsageLogMutation) SetLongContextBillingApplied(b bool) {
 	m.long_context_billing_applied = &b
@@ -47241,7 +47385,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 49)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47325,6 +47469,12 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.rate_multiplier != nil {
 		fields = append(fields, usagelog.FieldRateMultiplier)
+	}
+	if m.upstream_cost_base != nil {
+		fields = append(fields, usagelog.FieldUpstreamCostBase)
+	}
+	if m.upstream_group_rate_multiplier != nil {
+		fields = append(fields, usagelog.FieldUpstreamGroupRateMultiplier)
 	}
 	if m.long_context_billing_applied != nil {
 		fields = append(fields, usagelog.FieldLongContextBillingApplied)
@@ -47447,6 +47597,10 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.ActualCost()
 	case usagelog.FieldRateMultiplier:
 		return m.RateMultiplier()
+	case usagelog.FieldUpstreamCostBase:
+		return m.UpstreamCostBase()
+	case usagelog.FieldUpstreamGroupRateMultiplier:
+		return m.UpstreamGroupRateMultiplier()
 	case usagelog.FieldLongContextBillingApplied:
 		return m.LongContextBillingApplied()
 	case usagelog.FieldAccountRateMultiplier:
@@ -47550,6 +47704,10 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldActualCost(ctx)
 	case usagelog.FieldRateMultiplier:
 		return m.OldRateMultiplier(ctx)
+	case usagelog.FieldUpstreamCostBase:
+		return m.OldUpstreamCostBase(ctx)
+	case usagelog.FieldUpstreamGroupRateMultiplier:
+		return m.OldUpstreamGroupRateMultiplier(ctx)
 	case usagelog.FieldLongContextBillingApplied:
 		return m.OldLongContextBillingApplied(ctx)
 	case usagelog.FieldAccountRateMultiplier:
@@ -47793,6 +47951,20 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRateMultiplier(v)
 		return nil
+	case usagelog.FieldUpstreamCostBase:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamCostBase(v)
+		return nil
+	case usagelog.FieldUpstreamGroupRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamGroupRateMultiplier(v)
+		return nil
 	case usagelog.FieldLongContextBillingApplied:
 		v, ok := value.(bool)
 		if !ok {
@@ -47976,6 +48148,12 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addrate_multiplier != nil {
 		fields = append(fields, usagelog.FieldRateMultiplier)
 	}
+	if m.addupstream_cost_base != nil {
+		fields = append(fields, usagelog.FieldUpstreamCostBase)
+	}
+	if m.addupstream_group_rate_multiplier != nil {
+		fields = append(fields, usagelog.FieldUpstreamGroupRateMultiplier)
+	}
 	if m.addaccount_rate_multiplier != nil {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
@@ -48033,6 +48211,10 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedActualCost()
 	case usagelog.FieldRateMultiplier:
 		return m.AddedRateMultiplier()
+	case usagelog.FieldUpstreamCostBase:
+		return m.AddedUpstreamCostBase()
+	case usagelog.FieldUpstreamGroupRateMultiplier:
+		return m.AddedUpstreamGroupRateMultiplier()
 	case usagelog.FieldAccountRateMultiplier:
 		return m.AddedAccountRateMultiplier()
 	case usagelog.FieldBillingType:
@@ -48154,6 +48336,20 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddRateMultiplier(v)
 		return nil
+	case usagelog.FieldUpstreamCostBase:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUpstreamCostBase(v)
+		return nil
+	case usagelog.FieldUpstreamGroupRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUpstreamGroupRateMultiplier(v)
+		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		v, ok := value.(float64)
 		if !ok {
@@ -48241,6 +48437,12 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldSubscriptionID) {
 		fields = append(fields, usagelog.FieldSubscriptionID)
 	}
+	if m.FieldCleared(usagelog.FieldUpstreamCostBase) {
+		fields = append(fields, usagelog.FieldUpstreamCostBase)
+	}
+	if m.FieldCleared(usagelog.FieldUpstreamGroupRateMultiplier) {
+		fields = append(fields, usagelog.FieldUpstreamGroupRateMultiplier)
+	}
 	if m.FieldCleared(usagelog.FieldAccountRateMultiplier) {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
@@ -48320,6 +48522,12 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldSubscriptionID:
 		m.ClearSubscriptionID()
+		return nil
+	case usagelog.FieldUpstreamCostBase:
+		m.ClearUpstreamCostBase()
+		return nil
+	case usagelog.FieldUpstreamGroupRateMultiplier:
+		m.ClearUpstreamGroupRateMultiplier()
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ClearAccountRateMultiplier()
@@ -48448,6 +48656,12 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldRateMultiplier:
 		m.ResetRateMultiplier()
+		return nil
+	case usagelog.FieldUpstreamCostBase:
+		m.ResetUpstreamCostBase()
+		return nil
+	case usagelog.FieldUpstreamGroupRateMultiplier:
+		m.ResetUpstreamGroupRateMultiplier()
 		return nil
 	case usagelog.FieldLongContextBillingApplied:
 		m.ResetLongContextBillingApplied()

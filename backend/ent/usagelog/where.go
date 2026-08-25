@@ -195,6 +195,16 @@ func RateMultiplier(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldRateMultiplier, v))
 }
 
+// UpstreamCostBase applies equality check predicate on the "upstream_cost_base" field. It's identical to UpstreamCostBaseEQ.
+func UpstreamCostBase(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldUpstreamCostBase, v))
+}
+
+// UpstreamGroupRateMultiplier applies equality check predicate on the "upstream_group_rate_multiplier" field. It's identical to UpstreamGroupRateMultiplierEQ.
+func UpstreamGroupRateMultiplier(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldUpstreamGroupRateMultiplier, v))
+}
+
 // LongContextBillingApplied applies equality check predicate on the "long_context_billing_applied" field. It's identical to LongContextBillingAppliedEQ.
 func LongContextBillingApplied(v bool) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldLongContextBillingApplied, v))
@@ -1573,6 +1583,106 @@ func RateMultiplierLT(v float64) predicate.UsageLog {
 // RateMultiplierLTE applies the LTE predicate on the "rate_multiplier" field.
 func RateMultiplierLTE(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldRateMultiplier, v))
+}
+
+// UpstreamCostBaseEQ applies the EQ predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldUpstreamCostBase, v))
+}
+
+// UpstreamCostBaseNEQ applies the NEQ predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseNEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldUpstreamCostBase, v))
+}
+
+// UpstreamCostBaseIn applies the In predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldUpstreamCostBase, vs...))
+}
+
+// UpstreamCostBaseNotIn applies the NotIn predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseNotIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldUpstreamCostBase, vs...))
+}
+
+// UpstreamCostBaseGT applies the GT predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseGT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldUpstreamCostBase, v))
+}
+
+// UpstreamCostBaseGTE applies the GTE predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseGTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldUpstreamCostBase, v))
+}
+
+// UpstreamCostBaseLT applies the LT predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseLT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldUpstreamCostBase, v))
+}
+
+// UpstreamCostBaseLTE applies the LTE predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseLTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldUpstreamCostBase, v))
+}
+
+// UpstreamCostBaseIsNil applies the IsNil predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldUpstreamCostBase))
+}
+
+// UpstreamCostBaseNotNil applies the NotNil predicate on the "upstream_cost_base" field.
+func UpstreamCostBaseNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldUpstreamCostBase))
+}
+
+// UpstreamGroupRateMultiplierEQ applies the EQ predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldUpstreamGroupRateMultiplier, v))
+}
+
+// UpstreamGroupRateMultiplierNEQ applies the NEQ predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierNEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldUpstreamGroupRateMultiplier, v))
+}
+
+// UpstreamGroupRateMultiplierIn applies the In predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldUpstreamGroupRateMultiplier, vs...))
+}
+
+// UpstreamGroupRateMultiplierNotIn applies the NotIn predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierNotIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldUpstreamGroupRateMultiplier, vs...))
+}
+
+// UpstreamGroupRateMultiplierGT applies the GT predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierGT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldUpstreamGroupRateMultiplier, v))
+}
+
+// UpstreamGroupRateMultiplierGTE applies the GTE predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierGTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldUpstreamGroupRateMultiplier, v))
+}
+
+// UpstreamGroupRateMultiplierLT applies the LT predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierLT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldUpstreamGroupRateMultiplier, v))
+}
+
+// UpstreamGroupRateMultiplierLTE applies the LTE predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierLTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldUpstreamGroupRateMultiplier, v))
+}
+
+// UpstreamGroupRateMultiplierIsNil applies the IsNil predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldUpstreamGroupRateMultiplier))
+}
+
+// UpstreamGroupRateMultiplierNotNil applies the NotNil predicate on the "upstream_group_rate_multiplier" field.
+func UpstreamGroupRateMultiplierNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldUpstreamGroupRateMultiplier))
 }
 
 // LongContextBillingAppliedEQ applies the EQ predicate on the "long_context_billing_applied" field.

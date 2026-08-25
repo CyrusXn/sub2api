@@ -1745,6 +1745,10 @@ export interface AdminUsageLog extends UsageLog {
   account_rate_multiplier?: number | null
   // 自定义定价规则计算的账号统计费用（nil 时使用 total_cost * multiplier）
   account_stats_cost?: number | null
+  // 未叠加管理附加倍率的原始消费费用快照（仅管理员接口返回）
+  upstream_cost_base?: number | null
+  // 本次结算使用的上游分组倍率快照（仅管理员接口返回）
+  upstream_group_rate_multiplier?: number | null
 
   // 渠道 ID 和计费等级（仅管理员可见）
   channel_id?: number | null

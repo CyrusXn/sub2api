@@ -35,6 +35,15 @@ func scaleSettlementToken(value int, multiplier float64) int {
 	return int(math.Round(float64(value) * multiplier))
 }
 
+// captureUpstreamCostSnapshot 在管理附加倍率写入前固化上游核算所需的原始费用和分组倍率。
+func captureUpstreamCostSnapshot(log *UsageLog, upstreamCostBase, upstreamGroupRateMultiplier float64) {
+	if log == nil {
+		return
+	}
+	log.UpstreamCostBase = &upstreamCostBase
+	log.UpstreamGroupRateMultiplier = &upstreamGroupRateMultiplier
+}
+
 // applyAdminUsageSettlementMultiplier 将附加倍率固化到本次请求的计量和结算结果。
 // RateMultiplier、AccountRateMultiplier、BillingMode 等原始计费元数据保持不变。
 func applyAdminUsageSettlementMultiplier(log *UsageLog, cost *CostBreakdown, multiplier float64) {

@@ -582,6 +582,60 @@ func (_u *UsageLogUpdate) AddRateMultiplier(v float64) *UsageLogUpdate {
 	return _u
 }
 
+// SetUpstreamCostBase sets the "upstream_cost_base" field.
+func (_u *UsageLogUpdate) SetUpstreamCostBase(v float64) *UsageLogUpdate {
+	_u.mutation.ResetUpstreamCostBase()
+	_u.mutation.SetUpstreamCostBase(v)
+	return _u
+}
+
+// SetNillableUpstreamCostBase sets the "upstream_cost_base" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableUpstreamCostBase(v *float64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetUpstreamCostBase(*v)
+	}
+	return _u
+}
+
+// AddUpstreamCostBase adds value to the "upstream_cost_base" field.
+func (_u *UsageLogUpdate) AddUpstreamCostBase(v float64) *UsageLogUpdate {
+	_u.mutation.AddUpstreamCostBase(v)
+	return _u
+}
+
+// ClearUpstreamCostBase clears the value of the "upstream_cost_base" field.
+func (_u *UsageLogUpdate) ClearUpstreamCostBase() *UsageLogUpdate {
+	_u.mutation.ClearUpstreamCostBase()
+	return _u
+}
+
+// SetUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field.
+func (_u *UsageLogUpdate) SetUpstreamGroupRateMultiplier(v float64) *UsageLogUpdate {
+	_u.mutation.ResetUpstreamGroupRateMultiplier()
+	_u.mutation.SetUpstreamGroupRateMultiplier(v)
+	return _u
+}
+
+// SetNillableUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableUpstreamGroupRateMultiplier(v *float64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetUpstreamGroupRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddUpstreamGroupRateMultiplier adds value to the "upstream_group_rate_multiplier" field.
+func (_u *UsageLogUpdate) AddUpstreamGroupRateMultiplier(v float64) *UsageLogUpdate {
+	_u.mutation.AddUpstreamGroupRateMultiplier(v)
+	return _u
+}
+
+// ClearUpstreamGroupRateMultiplier clears the value of the "upstream_group_rate_multiplier" field.
+func (_u *UsageLogUpdate) ClearUpstreamGroupRateMultiplier() *UsageLogUpdate {
+	_u.mutation.ClearUpstreamGroupRateMultiplier()
+	return _u
+}
+
 // SetLongContextBillingApplied sets the "long_context_billing_applied" field.
 func (_u *UsageLogUpdate) SetLongContextBillingApplied(v bool) *UsageLogUpdate {
 	_u.mutation.SetLongContextBillingApplied(v)
@@ -1269,6 +1323,24 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(usagelog.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.UpstreamCostBase(); ok {
+		_spec.SetField(usagelog.FieldUpstreamCostBase, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamCostBase(); ok {
+		_spec.AddField(usagelog.FieldUpstreamCostBase, field.TypeFloat64, value)
+	}
+	if _u.mutation.UpstreamCostBaseCleared() {
+		_spec.ClearField(usagelog.FieldUpstreamCostBase, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.UpstreamGroupRateMultiplier(); ok {
+		_spec.SetField(usagelog.FieldUpstreamGroupRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamGroupRateMultiplier(); ok {
+		_spec.AddField(usagelog.FieldUpstreamGroupRateMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.UpstreamGroupRateMultiplierCleared() {
+		_spec.ClearField(usagelog.FieldUpstreamGroupRateMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.LongContextBillingApplied(); ok {
 		_spec.SetField(usagelog.FieldLongContextBillingApplied, field.TypeBool, value)
@@ -2096,6 +2168,60 @@ func (_u *UsageLogUpdateOne) AddRateMultiplier(v float64) *UsageLogUpdateOne {
 	return _u
 }
 
+// SetUpstreamCostBase sets the "upstream_cost_base" field.
+func (_u *UsageLogUpdateOne) SetUpstreamCostBase(v float64) *UsageLogUpdateOne {
+	_u.mutation.ResetUpstreamCostBase()
+	_u.mutation.SetUpstreamCostBase(v)
+	return _u
+}
+
+// SetNillableUpstreamCostBase sets the "upstream_cost_base" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableUpstreamCostBase(v *float64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetUpstreamCostBase(*v)
+	}
+	return _u
+}
+
+// AddUpstreamCostBase adds value to the "upstream_cost_base" field.
+func (_u *UsageLogUpdateOne) AddUpstreamCostBase(v float64) *UsageLogUpdateOne {
+	_u.mutation.AddUpstreamCostBase(v)
+	return _u
+}
+
+// ClearUpstreamCostBase clears the value of the "upstream_cost_base" field.
+func (_u *UsageLogUpdateOne) ClearUpstreamCostBase() *UsageLogUpdateOne {
+	_u.mutation.ClearUpstreamCostBase()
+	return _u
+}
+
+// SetUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field.
+func (_u *UsageLogUpdateOne) SetUpstreamGroupRateMultiplier(v float64) *UsageLogUpdateOne {
+	_u.mutation.ResetUpstreamGroupRateMultiplier()
+	_u.mutation.SetUpstreamGroupRateMultiplier(v)
+	return _u
+}
+
+// SetNillableUpstreamGroupRateMultiplier sets the "upstream_group_rate_multiplier" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableUpstreamGroupRateMultiplier(v *float64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetUpstreamGroupRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddUpstreamGroupRateMultiplier adds value to the "upstream_group_rate_multiplier" field.
+func (_u *UsageLogUpdateOne) AddUpstreamGroupRateMultiplier(v float64) *UsageLogUpdateOne {
+	_u.mutation.AddUpstreamGroupRateMultiplier(v)
+	return _u
+}
+
+// ClearUpstreamGroupRateMultiplier clears the value of the "upstream_group_rate_multiplier" field.
+func (_u *UsageLogUpdateOne) ClearUpstreamGroupRateMultiplier() *UsageLogUpdateOne {
+	_u.mutation.ClearUpstreamGroupRateMultiplier()
+	return _u
+}
+
 // SetLongContextBillingApplied sets the "long_context_billing_applied" field.
 func (_u *UsageLogUpdateOne) SetLongContextBillingApplied(v bool) *UsageLogUpdateOne {
 	_u.mutation.SetLongContextBillingApplied(v)
@@ -2813,6 +2939,24 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(usagelog.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.UpstreamCostBase(); ok {
+		_spec.SetField(usagelog.FieldUpstreamCostBase, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamCostBase(); ok {
+		_spec.AddField(usagelog.FieldUpstreamCostBase, field.TypeFloat64, value)
+	}
+	if _u.mutation.UpstreamCostBaseCleared() {
+		_spec.ClearField(usagelog.FieldUpstreamCostBase, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.UpstreamGroupRateMultiplier(); ok {
+		_spec.SetField(usagelog.FieldUpstreamGroupRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamGroupRateMultiplier(); ok {
+		_spec.AddField(usagelog.FieldUpstreamGroupRateMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.UpstreamGroupRateMultiplierCleared() {
+		_spec.ClearField(usagelog.FieldUpstreamGroupRateMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.LongContextBillingApplied(); ok {
 		_spec.SetField(usagelog.FieldLongContextBillingApplied, field.TypeBool, value)

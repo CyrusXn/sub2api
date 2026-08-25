@@ -79,6 +79,10 @@ type UsageLog struct {
 	ActualCost float64 `json:"actual_cost,omitempty"`
 	// RateMultiplier holds the value of the "rate_multiplier" field.
 	RateMultiplier float64 `json:"rate_multiplier,omitempty"`
+	// UpstreamCostBase holds the value of the "upstream_cost_base" field.
+	UpstreamCostBase *float64 `json:"upstream_cost_base,omitempty"`
+	// UpstreamGroupRateMultiplier holds the value of the "upstream_group_rate_multiplier" field.
+	UpstreamGroupRateMultiplier *float64 `json:"upstream_group_rate_multiplier,omitempty"`
 	// Whether long-context pricing changed token prices for this request
 	LongContextBillingApplied bool `json:"long_context_billing_applied,omitempty"`
 	// AccountRateMultiplier holds the value of the "account_rate_multiplier" field.
@@ -204,7 +208,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case usagelog.FieldUpstreamModelMismatch, usagelog.FieldLongContextBillingApplied, usagelog.FieldStream, usagelog.FieldCacheTTLOverridden:
 			values[i] = new(sql.NullBool)
-		case usagelog.FieldInputCost, usagelog.FieldOutputCost, usagelog.FieldCacheCreationCost, usagelog.FieldCacheReadCost, usagelog.FieldTotalCost, usagelog.FieldActualCost, usagelog.FieldRateMultiplier, usagelog.FieldAccountRateMultiplier:
+		case usagelog.FieldInputCost, usagelog.FieldOutputCost, usagelog.FieldCacheCreationCost, usagelog.FieldCacheReadCost, usagelog.FieldTotalCost, usagelog.FieldActualCost, usagelog.FieldRateMultiplier, usagelog.FieldUpstreamCostBase, usagelog.FieldUpstreamGroupRateMultiplier, usagelog.FieldAccountRateMultiplier:
 			values[i] = new(sql.NullFloat64)
 		case usagelog.FieldID, usagelog.FieldUserID, usagelog.FieldAPIKeyID, usagelog.FieldAccountID, usagelog.FieldChannelID, usagelog.FieldGroupID, usagelog.FieldSubscriptionID, usagelog.FieldInputTokens, usagelog.FieldOutputTokens, usagelog.FieldCacheCreationTokens, usagelog.FieldCacheReadTokens, usagelog.FieldCacheCreation5mTokens, usagelog.FieldCacheCreation1hTokens, usagelog.FieldBillingType, usagelog.FieldDurationMs, usagelog.FieldFirstTokenMs, usagelog.FieldImageCount, usagelog.FieldVideoCount, usagelog.FieldVideoDurationSeconds:
 			values[i] = new(sql.NullInt64)
@@ -410,6 +414,20 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field rate_multiplier", values[i])
 			} else if value.Valid {
 				_m.RateMultiplier = value.Float64
+			}
+		case usagelog.FieldUpstreamCostBase:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field upstream_cost_base", values[i])
+			} else if value.Valid {
+				_m.UpstreamCostBase = new(float64)
+				*_m.UpstreamCostBase = value.Float64
+			}
+		case usagelog.FieldUpstreamGroupRateMultiplier:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field upstream_group_rate_multiplier", values[i])
+			} else if value.Valid {
+				_m.UpstreamGroupRateMultiplier = new(float64)
+				*_m.UpstreamGroupRateMultiplier = value.Float64
 			}
 		case usagelog.FieldLongContextBillingApplied:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -702,6 +720,16 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("rate_multiplier=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RateMultiplier))
+	builder.WriteString(", ")
+	if v := _m.UpstreamCostBase; v != nil {
+		builder.WriteString("upstream_cost_base=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.UpstreamGroupRateMultiplier; v != nil {
+		builder.WriteString("upstream_group_rate_multiplier=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("long_context_billing_applied=")
 	builder.WriteString(fmt.Sprintf("%v", _m.LongContextBillingApplied))

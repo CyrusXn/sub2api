@@ -50,6 +50,8 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			COALESCE(SUM(account_cost), 0),
 			COALESCE(SUM(admin_actual_cost), 0),
 			COALESCE(SUM(admin_account_cost), 0),
+			COALESCE(SUM(upstream_cost), 0),
+			COALESCE(SUM(admin_upstream_cost), 0),
 			COALESCE(SUM(recharge_amount) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
 			COALESCE(SUM(total_requests) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
 			COALESCE(SUM(input_tokens) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
@@ -60,12 +62,15 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			COALESCE(SUM(actual_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
 			COALESCE(SUM(account_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
 			COALESCE(SUM(admin_actual_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
-			COALESCE(SUM(admin_account_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0)
+			COALESCE(SUM(admin_account_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
+			COALESCE(SUM(upstream_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
+			COALESCE(SUM(admin_upstream_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0)
 		FROM dashboard_business_daily
 	`
 	result := &service.DashboardBusinessSummary{Daily: make([]service.DashboardBusinessDailyPoint, 0)}
 	var lifetimeAdminActual, lifetimeAdminAccount float64
 	var rangeAdminActual, rangeAdminAccount float64
+	var lifetimeAdminUpstream, rangeAdminUpstream float64
 	values := []any{
 		&result.Lifetime.RechargeAmount,
 		&result.Lifetime.TotalRequests,
@@ -78,6 +83,8 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 		&result.Lifetime.AccountCost,
 		&lifetimeAdminActual,
 		&lifetimeAdminAccount,
+		&result.Lifetime.UpstreamCost,
+		&lifetimeAdminUpstream,
 		&result.Range.RechargeAmount,
 		&result.Range.TotalRequests,
 		&result.Range.InputTokens,
@@ -89,6 +96,8 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 		&result.Range.AccountCost,
 		&rangeAdminActual,
 		&rangeAdminAccount,
+		&result.Range.UpstreamCost,
+		&rangeAdminUpstream,
 	}
 	if err := scanSingleRow(ctx, r.sql, query, []any{start, end}, values...); err != nil {
 		return nil, err
@@ -96,9 +105,11 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	result.Lifetime.TotalTokens = result.Lifetime.InputTokens + result.Lifetime.OutputTokens + result.Lifetime.CacheCreationTokens + result.Lifetime.CacheReadTokens
 	result.Lifetime.ActualCostExcludingAdmin = result.Lifetime.ActualCost - lifetimeAdminActual
 	result.Lifetime.AccountCostExcludingAdmin = result.Lifetime.AccountCost - lifetimeAdminAccount
+	result.Lifetime.UpstreamCostExcludingAdmin = result.Lifetime.UpstreamCost - lifetimeAdminUpstream
 	result.Range.TotalTokens = result.Range.InputTokens + result.Range.OutputTokens + result.Range.CacheCreationTokens + result.Range.CacheReadTokens
 	result.Range.ActualCostExcludingAdmin = result.Range.ActualCost - rangeAdminActual
 	result.Range.AccountCostExcludingAdmin = result.Range.AccountCost - rangeAdminAccount
+	result.Range.UpstreamCostExcludingAdmin = result.Range.UpstreamCost - rangeAdminUpstream
 
 	rows, err := r.sql.QueryContext(ctx, `
 		SELECT
@@ -109,7 +120,9 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			actual_cost,
 			actual_cost - admin_actual_cost AS actual_cost_excluding_admin,
 			account_cost,
-			account_cost - admin_account_cost AS account_cost_excluding_admin
+			account_cost - admin_account_cost AS account_cost_excluding_admin,
+			upstream_cost,
+			upstream_cost - admin_upstream_cost AS upstream_cost_excluding_admin
 		FROM dashboard_business_daily
 		WHERE bucket_date >= $1::date AND bucket_date < $2::date
 		ORDER BY bucket_date ASC
@@ -129,6 +142,8 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			&point.ActualCostExcludingAdmin,
 			&point.AccountCost,
 			&point.AccountCostExcludingAdmin,
+			&point.UpstreamCost,
+			&point.UpstreamCostExcludingAdmin,
 		); err != nil {
 			return nil, err
 		}
