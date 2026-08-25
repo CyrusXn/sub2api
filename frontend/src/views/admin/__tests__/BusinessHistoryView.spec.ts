@@ -91,8 +91,8 @@ describe('BusinessHistoryView', () => {
   })
 
   it('明确标注排除管理员后的消费口径', () => {
-    expect(zhBusinessHistory.businessHistory.excludingAdmin).toBe('消费总额（已排除 admin@example.com）')
-    expect(enBusinessHistory.businessHistory.excludingAdmin).toBe('消费总额（已排除 admin@example.com）')
+    expect(zhBusinessHistory.businessHistory.excludingAdmin).toBe("消费总额（已排除 admin{'@'}example.com）")
+    expect(enBusinessHistory.businessHistory.excludingAdmin).toBe("消费总额（已排除 admin{'@'}example.com）")
   })
 
   it('按管理员选择的日期范围重新查询', async () => {

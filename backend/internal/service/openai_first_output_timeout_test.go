@@ -329,7 +329,7 @@ func TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) 
 	require.NotNil(t, result.firstTokenMs)
 	require.Contains(t, rec.Body.String(), "response.output_text.delta")
 	require.Contains(t, rec.Body.String(), "response.completed")
-	require.Empty(t, rec.Result().Header.Get("X-Request-Id"))
+	require.Equal(t, "request-winning", rec.Result().Header.Get("X-Request-Id"))
 	require.Equal(t, "42", rec.Result().Header.Get("X-Ratelimit-Remaining-Requests"))
 }
 
@@ -425,7 +425,7 @@ func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *te
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.NotNil(t, result.firstTokenMs, "终态结构帧也应记录第一帧时间")
+	require.Nil(t, result.firstTokenMs, "仅含用量的终态帧不属于可见输出")
 	require.Equal(t, "resp_eof", result.responseID)
 	require.Equal(t, 3, result.usage.InputTokens)
 	require.Equal(t, 2, result.usage.OutputTokens)
@@ -433,7 +433,7 @@ func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *te
 	require.Contains(t, rec.Body.String(), `"id":"resp_eof"`)
 	require.True(t, strings.HasSuffix(rec.Body.String(), "\n"))
 	require.False(t, strings.HasSuffix(rec.Body.String(), "\n\n"), "EOF dispatch must not synthesize a blank line")
-	require.Empty(t, rec.Result().Header.Get("X-Request-Id"))
+	require.Equal(t, "request-eof", rec.Result().Header.Get("X-Request-Id"))
 	require.Equal(t, "17", rec.Result().Header.Get("X-Ratelimit-Remaining-Requests"))
 }
 
@@ -539,7 +539,7 @@ func TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary(t *
 	require.Contains(t, rec.Body.String(), `"delta":"ready"`)
 	require.Contains(t, rec.Body.String(), `"id":"resp_large_image"`)
 	require.Contains(t, rec.Body.String(), strings.Repeat("i", 1024))
-	require.Empty(t, rec.Result().Header.Get("X-Request-Id"))
+	require.Equal(t, "request-large-image", rec.Result().Header.Get("X-Request-Id"))
 }
 
 func TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepalive(t *testing.T) {

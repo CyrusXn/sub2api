@@ -177,9 +177,10 @@ func TestDuplicateAccountDoesNotCopyCodexFingerprintSeed(t *testing.T) {
 	repo := &codexSeedDuplicateRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: make(map[int64]*Account)}}
 	svc := &adminServiceImpl{accountRepo: repo, accountDuplicateRepo: repo}
 	source := &Account{
-		Name:     "source",
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
+		Name:                  "source",
+		Platform:              PlatformOpenAI,
+		Type:                  AccountTypeAPIKey,
+		UpstreamRechargeScale: 1,
 		Extra: map[string]any{
 			codexFingerprintModeExtraKey: "session",
 			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,

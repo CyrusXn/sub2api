@@ -11,7 +11,7 @@ export default {
     totalTokens: '总 Token',
     totalConsumption: '总消费',
     allAccounts: '全部账号',
-    excludingAdmin: '消费总额（已排除 admin@example.com）',
+    excludingAdmin: "消费总额（已排除 admin{'@'}example.com）",
     inputTokens: '输入',
     outputTokens: '输出',
     cacheCreationTokens: '缓存创建',

@@ -322,7 +322,7 @@ describe('admin AccountsView bulk edit scope', () => {
     )
   })
 
-  it('loads the preferred group first and probes each visible account without blocking the table', async () => {
+  it('waits for groups before loading accounts and probes expired visible snapshots without blocking the table', async () => {
     let resolveGroups!: (groups: Array<{ id: number; name: string }>) => void
     getAllGroups.mockReturnValue(new Promise(resolve => {
       resolveGroups = resolve
@@ -351,7 +351,7 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(listAccounts).toHaveBeenCalledWith(
       expect.any(Number),
       expect.any(Number),
-      expect.objectContaining({ group: '42' }),
+      expect.objectContaining({ group: '' }),
       expect.any(Object)
     )
     expect(probeUpstreamBilling).toHaveBeenCalledWith(7)
@@ -777,10 +777,9 @@ describe('admin AccountsView bulk edit scope', () => {
     mountAccountsForSortAndProbe()
     await flushPromises()
 
-    expect(probeUpstreamBilling).toHaveBeenCalledTimes(3)
+    expect(probeUpstreamBilling).toHaveBeenCalledTimes(2)
     expect(probeUpstreamBilling).toHaveBeenNthCalledWith(1, 1)
     expect(probeUpstreamBilling).toHaveBeenNthCalledWith(2, 4)
-    expect(probeUpstreamBilling).toHaveBeenNthCalledWith(3, 6)
     expect(probeUpstreamBillingBatch).not.toHaveBeenCalled()
   })
 

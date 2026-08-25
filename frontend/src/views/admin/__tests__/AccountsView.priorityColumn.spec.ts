@@ -133,7 +133,8 @@ describe('admin AccountsView priority column preferences', () => {
     expect(wrapper.find('[data-column="priority"]').exists()).toBe(false)
     expect(JSON.parse(localStorage.getItem('account-hidden-columns') || '[]')).toEqual([
       'priority',
-      'today_stats'
+      'today_stats',
+      'scheduler_score'
     ])
   })
 

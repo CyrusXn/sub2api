@@ -472,22 +472,9 @@ func (s *OpsService) RecordErrorBatch(ctx context.Context, entries []*OpsInsertE
 	}
 
 	if _, err := s.opsRepo.BatchInsertErrorLogs(ctx, prepared); err != nil {
-		log.Printf("[Ops] RecordErrorBatch failed, fallback to single inserts: %v", err)
-		var firstErr error
-		inserted := make([]*OpsInsertErrorLogInput, 0, len(prepared))
-		for _, entry := range prepared {
-			if errorLogID, insertErr := s.opsRepo.InsertErrorLog(ctx, entry); insertErr != nil {
-				log.Printf("[Ops] RecordErrorBatch fallback insert failed: %v", insertErr)
-				if firstErr == nil {
-					firstErr = insertErr
-				}
-			} else {
-				entry.ErrorLogID = errorLogID
-				inserted = append(inserted, entry)
-			}
-		}
-		s.notifyAccountRequestAlert(inserted)
-		return firstErr
+		// 批量写入结果未知时不能再逐条写入，避免已部分提交时产生重复告警记录。
+		log.Printf("[Ops] RecordErrorBatch failed: %v", err)
+		return err
 	}
 	s.notifyAccountRequestAlert(prepared)
 	return nil

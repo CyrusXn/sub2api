@@ -1078,7 +1078,7 @@ func TestExchangePendingOAuthCompletionInvitationRequiredFalseFalsePersistsDecis
 }
 
 func TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession(t *testing.T) {
-	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "fresh@example.com", "246810")
+	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "fresh@qq.com", "246810")
 	ctx := context.Background()
 
 	session, err := client.PendingAuthSession.Create().
@@ -1098,7 +1098,7 @@ func TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession(t *tes
 		Save(ctx)
 	require.NoError(t, err)
 
-	body := bytes.NewBufferString(`{"email":"fresh@example.com","password":"secret-123","adopt_display_name":false,"adopt_avatar":false}`)
+	body := bytes.NewBufferString(`{"email":"fresh@qq.com","password":"secret-123","adopt_display_name":false,"adopt_avatar":false}`)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
@@ -1117,7 +1117,7 @@ func TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession(t *tes
 	require.NotEmpty(t, payload["refresh_token"])
 	require.Equal(t, "Bearer", payload["token_type"])
 
-	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("fresh@example.com")).Only(ctx)
+	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("fresh@qq.com")).Only(ctx)
 	require.NoError(t, err)
 	require.Equal(t, service.StatusActive, createdUser.Status)
 
@@ -1140,7 +1140,7 @@ func TestCreateOIDCOAuthAccountAppliesPromoCodeFromPendingSession(t *testing.T) 
 	promoRepo := newOAuthPendingFlowPromoRepoStub("WELCOME2024", 25)
 	emailCache := &oauthPendingFlowEmailCacheStub{
 		verificationCodes: map[string]*service.VerificationCodeData{
-			"promo@example.com": {
+			"promo@qq.com": {
 				Code:      "246810",
 				CreatedAt: time.Now().UTC(),
 				ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
@@ -1170,7 +1170,7 @@ func TestCreateOIDCOAuthAccountAppliesPromoCodeFromPendingSession(t *testing.T) 
 		Save(ctx)
 	require.NoError(t, err)
 
-	body := bytes.NewBufferString(`{"email":"promo@example.com","password":"secret-123"}`)
+	body := bytes.NewBufferString(`{"email":"promo@qq.com","password":"secret-123"}`)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
@@ -1183,7 +1183,7 @@ func TestCreateOIDCOAuthAccountAppliesPromoCodeFromPendingSession(t *testing.T) 
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, []string{"WELCOME2024"}, promoRepo.applyCalls)
-	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("promo@example.com")).Only(ctx)
+	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("promo@qq.com")).Only(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 25.0, createdUser.Balance)
 	require.Len(t, promoRepo.usages, 1)
@@ -1194,7 +1194,7 @@ func TestCreateOIDCOAuthAccountWithoutPromoCodeDoesNotApplyPromo(t *testing.T) {
 	promoRepo := newOAuthPendingFlowPromoRepoStub("WELCOME2024", 25)
 	emailCache := &oauthPendingFlowEmailCacheStub{
 		verificationCodes: map[string]*service.VerificationCodeData{
-			"no-promo@example.com": {
+			"no-promo@qq.com": {
 				Code:      "246810",
 				CreatedAt: time.Now().UTC(),
 				ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
@@ -1223,7 +1223,7 @@ func TestCreateOIDCOAuthAccountWithoutPromoCodeDoesNotApplyPromo(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
-	body := bytes.NewBufferString(`{"email":"no-promo@example.com","password":"secret-123"}`)
+	body := bytes.NewBufferString(`{"email":"no-promo@qq.com","password":"secret-123"}`)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
@@ -1236,7 +1236,7 @@ func TestCreateOIDCOAuthAccountWithoutPromoCodeDoesNotApplyPromo(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Empty(t, promoRepo.applyCalls)
-	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("no-promo@example.com")).Only(ctx)
+	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("no-promo@qq.com")).Only(ctx)
 	require.NoError(t, err)
 	require.Zero(t, createdUser.Balance)
 }
@@ -1245,7 +1245,7 @@ func TestCreateOIDCOAuthAccountDoesNotApplyPromoWhenDisabled(t *testing.T) {
 	promoRepo := newOAuthPendingFlowPromoRepoStub("WELCOME2024", 25)
 	emailCache := &oauthPendingFlowEmailCacheStub{
 		verificationCodes: map[string]*service.VerificationCodeData{
-			"promo-disabled@example.com": {
+			"promo-disabled@qq.com": {
 				Code:      "246810",
 				CreatedAt: time.Now().UTC(),
 				ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
@@ -1275,7 +1275,7 @@ func TestCreateOIDCOAuthAccountDoesNotApplyPromoWhenDisabled(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
-	body := bytes.NewBufferString(`{"email":"promo-disabled@example.com","password":"secret-123"}`)
+	body := bytes.NewBufferString(`{"email":"promo-disabled@qq.com","password":"secret-123"}`)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
@@ -1288,7 +1288,7 @@ func TestCreateOIDCOAuthAccountDoesNotApplyPromoWhenDisabled(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Empty(t, promoRepo.applyCalls)
-	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("promo-disabled@example.com")).Only(ctx)
+	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("promo-disabled@qq.com")).Only(ctx)
 	require.NoError(t, err)
 	require.Zero(t, createdUser.Balance)
 }
@@ -1304,7 +1304,7 @@ func TestOAuthExistingUserLoginDoesNotApplyPromoCode(t *testing.T) {
 	ctx := context.Background()
 
 	existingUser, err := client.User.Create().
-		SetEmail("existing-promo@example.com").
+		SetEmail("existing-promo@qq.com").
 		SetUsername("existing").
 		SetPasswordHash("hash").
 		SetRole(service.RoleUser).
@@ -1460,7 +1460,8 @@ func TestCreateOIDCOAuthAccountExistingEmailNormalizesLegacySpacingAndCase(t *te
 	require.Equal(t, "owner@example.com", storedSession.ResolvedEmail)
 }
 
-func TestCreateOIDCOAuthAccountRejectsSecondEmailOutsideRegistrationSuffixWhitelist(t *testing.T) {
+// 全局注册域名规则优先于历史后缀配额策略，避免 OAuth 入口绕过 qq.com/163.com 限制。
+func TestCreateOIDCOAuthAccountRejectsUnsupportedDomainBeforeLegacyQuota(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		emailVerifyEnabled: true,
 		emailCache: &oauthPendingFlowEmailCacheStub{
@@ -1514,16 +1515,15 @@ func TestCreateOIDCOAuthAccountRejectsSecondEmailOutsideRegistrationSuffixWhitel
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	payload := decodeJSONBody(t, recorder)
-	require.Equal(t, "EMAIL_DOMAIN_REGISTRATION_LIMIT", payload["reason"])
+	require.Equal(t, "REGISTRATION_EMAIL_DOMAIN_NOT_ALLOWED", payload["reason"])
 
 	count, err := client.User.Query().Where(dbuser.EmailEQ("foo@gmail.com")).Count(ctx)
 	require.NoError(t, err)
 	require.Zero(t, count)
 }
 
-// 域名限量注册开关默认关闭：白名单外域名保持 PR5423 之前的严格拒绝语义，
-// 即使该域名下还没有任何账户也不放行。
-func TestCreateOIDCOAuthAccountRejectsEmailOutsideWhitelistWhenQuotaDisabled(t *testing.T) {
+// 即使历史白名单策略关闭，全局注册域名规则仍必须先拒绝不受支持的邮箱。
+func TestCreateOIDCOAuthAccountRejectsUnsupportedDomainWhenLegacyQuotaDisabled(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		emailVerifyEnabled: true,
 		emailCache: &oauthPendingFlowEmailCacheStub{
@@ -1568,7 +1568,7 @@ func TestCreateOIDCOAuthAccountRejectsEmailOutsideWhitelistWhenQuotaDisabled(t *
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	payload := decodeJSONBody(t, recorder)
-	require.Equal(t, "EMAIL_SUFFIX_NOT_ALLOWED", payload["reason"])
+	require.Equal(t, "REGISTRATION_EMAIL_DOMAIN_NOT_ALLOWED", payload["reason"])
 
 	count, err := client.User.Query().Where(dbuser.EmailEQ("foo@gmail.com")).Count(ctx)
 	require.NoError(t, err)
@@ -1580,7 +1580,7 @@ func TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser(t *testing.T)
 		emailVerifyEnabled: true,
 		emailCache: &oauthPendingFlowEmailCacheStub{
 			verificationCodes: map[string]*service.VerificationCodeData{
-				"fresh@example.com": {
+				"fresh@qq.com": {
 					Code:      "246810",
 					CreatedAt: time.Now().UTC(),
 					ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
@@ -1607,7 +1607,7 @@ func TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser(t *testing.T)
 		Save(ctx)
 	require.NoError(t, err)
 
-	body := bytes.NewBufferString(`{"email":"fresh@example.com","password":"secret-123"}`)
+	body := bytes.NewBufferString(`{"email":"fresh@qq.com","password":"secret-123"}`)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
@@ -1620,7 +1620,7 @@ func TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser(t *testing.T)
 
 	require.Equal(t, http.StatusForbidden, recorder.Code)
 
-	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh@example.com")).Count(ctx)
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh@qq.com")).Count(ctx)
 	require.NoError(t, err)
 	require.Zero(t, userCount)
 
@@ -1650,7 +1650,7 @@ func TestLogoutClearsPendingOAuthAndBindCookies(t *testing.T) {
 }
 
 func TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails(t *testing.T) {
-	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, true, "fresh@example.com", "246810")
+	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, true, "fresh@qq.com", "246810")
 	ctx := context.Background()
 
 	conflictOwner, err := client.User.Create().
@@ -1696,7 +1696,7 @@ func TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails(t *testing.T
 		Save(ctx)
 	require.NoError(t, err)
 
-	body := bytes.NewBufferString(`{"email":"fresh@example.com","password":"secret-123","invitation_code":"INVITE123"}`)
+	body := bytes.NewBufferString(`{"email":"fresh@qq.com","password":"secret-123","invitation_code":"INVITE123"}`)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
@@ -1709,7 +1709,7 @@ func TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails(t *testing.T
 
 	require.Equal(t, http.StatusConflict, recorder.Code)
 
-	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh@example.com")).Count(ctx)
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh@qq.com")).Count(ctx)
 	require.NoError(t, err)
 	require.Zero(t, userCount)
 
@@ -1729,7 +1729,7 @@ func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t
 		emailVerifyEnabled: true,
 		emailCache: &oauthPendingFlowEmailCacheStub{
 			verificationCodes: map[string]*service.VerificationCodeData{
-				"fresh@example.com": {
+				"fresh@qq.com": {
 					Code:      "246810",
 					CreatedAt: time.Now().UTC(),
 					ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
@@ -1764,7 +1764,7 @@ func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t
 		pendingOAuthCreateAccountPreCommitHook = nil
 	})
 
-	body := bytes.NewBufferString(`{"email":"fresh@example.com","password":"secret-123"}`)
+	body := bytes.NewBufferString(`{"email":"fresh@qq.com","password":"secret-123"}`)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
@@ -1777,7 +1777,7 @@ func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t
 
 	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 
-	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh@example.com")).Count(ctx)
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh@qq.com")).Count(ctx)
 	require.NoError(t, err)
 	require.Zero(t, userCount)
 

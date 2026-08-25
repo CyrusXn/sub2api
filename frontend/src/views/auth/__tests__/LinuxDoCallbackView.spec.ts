@@ -303,7 +303,7 @@ describe('LinuxDoCallbackView', () => {
       .mockResolvedValueOnce({
         step: 'bind_login_required',
         redirect: '/profile/security',
-        email: 'existing@example.com',
+        email: 'existing@qq.com',
         adoption_required: true,
         suggested_display_name: 'LinuxDo Nick',
         suggested_avatar_url: 'https://cdn.example/linuxdo.png'
@@ -327,7 +327,7 @@ describe('LinuxDoCallbackView', () => {
     expect(showSuccess).not.toHaveBeenCalled()
     expect(replace).not.toHaveBeenCalled()
     expect((wrapper.get('[data-testid="linuxdo-bind-login-email"]').element as HTMLInputElement).value).toBe(
-      'existing@example.com'
+      'existing@qq.com'
     )
   })
 
@@ -335,7 +335,7 @@ describe('LinuxDoCallbackView', () => {
     exchangePendingOAuthCompletion.mockResolvedValue({
       error: 'adopt_existing_user_by_email',
       redirect: '/profile/security',
-      email: 'existing@example.com'
+      email: 'existing@qq.com'
     })
 
     const wrapper = mount(LinuxDoCallbackView, {
@@ -354,7 +354,7 @@ describe('LinuxDoCallbackView', () => {
     expect(showSuccess).not.toHaveBeenCalled()
     expect(replace).not.toHaveBeenCalled()
     expect((wrapper.get('[data-testid="linuxdo-bind-login-email"]').element as HTMLInputElement).value).toBe(
-      'existing@example.com'
+      'existing@qq.com'
     )
   })
 
@@ -443,8 +443,8 @@ describe('LinuxDoCallbackView', () => {
       auth_result: 'pending_session',
       step: 'choose_account_action_required',
       redirect: '/dashboard',
-      email: 'fresh@example.com',
-      resolved_email: 'fresh@example.com',
+      email: 'fresh@qq.com',
+      resolved_email: 'fresh@qq.com',
       force_email_on_signup: true,
       adoption_required: true
     })
@@ -514,14 +514,14 @@ describe('LinuxDoCallbackView', () => {
     const checkboxes = wrapper.findAll('input[type="checkbox"]')
     expect(checkboxes).toHaveLength(2)
     await checkboxes[1].setValue(false)
-    await wrapper.get('[data-testid="linuxdo-create-account-email"]').setValue('  new@example.com  ')
+    await wrapper.get('[data-testid="linuxdo-create-account-email"]').setValue('  new@qq.com  ')
     await wrapper.get('[data-testid="linuxdo-create-account-password"]').setValue('secret-123')
     await wrapper.get('[data-testid="linuxdo-create-account-invitation-code"]').setValue(' INVITE123 ')
     await wrapper.get('[data-testid="linuxdo-create-account-submit"]').trigger('click')
     await flushPromises()
 
     expect(apiClientPost).toHaveBeenCalledWith('/auth/oauth/pending/create-account', {
-      email: 'new@example.com',
+      email: 'new@qq.com',
       password: 'secret-123',
       invitation_code: 'INVITE123',
       adopt_display_name: true,
@@ -557,13 +557,13 @@ describe('LinuxDoCallbackView', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-testid="linuxdo-create-account-email"]').setValue('existing@example.com')
+    await wrapper.get('[data-testid="linuxdo-create-account-email"]').setValue('existing@qq.com')
     await wrapper.get('[data-testid="linuxdo-create-account-password"]').setValue('secret-123')
     await wrapper.get('[data-testid="linuxdo-create-account-submit"]').trigger('click')
     await flushPromises()
 
     expect((wrapper.get('[data-testid="linuxdo-bind-login-email"]').element as HTMLInputElement).value).toBe(
-      'existing@example.com'
+      'existing@qq.com'
     )
   })
 
@@ -586,7 +586,7 @@ describe('LinuxDoCallbackView', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-testid="linuxdo-create-account-email"]').setValue('new@example.com')
+    await wrapper.get('[data-testid="linuxdo-create-account-email"]').setValue('new@qq.com')
     await wrapper.get('[data-testid="linuxdo-create-account-password"]').setValue('secret-123')
     await wrapper.get('[data-testid="linuxdo-create-account-submit"]').trigger('click')
     await flushPromises()
@@ -599,7 +599,7 @@ describe('LinuxDoCallbackView', () => {
     exchangePendingOAuthCompletion.mockResolvedValue({
       error: 'bind_login_required',
       redirect: '/profile/security',
-      email: 'existing@example.com',
+      email: 'existing@qq.com',
       adoption_required: true,
       suggested_display_name: 'LinuxDo Nick',
       suggested_avatar_url: 'https://cdn.example/linuxdo.png'
@@ -630,13 +630,13 @@ describe('LinuxDoCallbackView', () => {
     const checkboxes = wrapper.findAll('input[type="checkbox"]')
     expect(checkboxes).toHaveLength(2)
     await checkboxes[0].setValue(false)
-    await wrapper.get('[data-testid="linuxdo-bind-login-email"]').setValue('existing@example.com')
+    await wrapper.get('[data-testid="linuxdo-bind-login-email"]').setValue('existing@qq.com')
     await wrapper.get('[data-testid="linuxdo-bind-login-password"]').setValue('secret-password')
     await wrapper.get('[data-testid="linuxdo-bind-login-submit"]').trigger('click')
     await flushPromises()
 
     expect(apiClientPost).toHaveBeenCalledWith('/auth/oauth/pending/bind-login', {
-      email: 'existing@example.com',
+      email: 'existing@qq.com',
       password: 'secret-password',
       adopt_display_name: false,
       adopt_avatar: true
@@ -649,7 +649,7 @@ describe('LinuxDoCallbackView', () => {
     exchangePendingOAuthCompletion.mockResolvedValue({
       error: 'bind_login_required',
       redirect: '/profile',
-      email: 'existing@example.com',
+      email: 'existing@qq.com',
       adoption_required: true,
       suggested_display_name: 'LinuxDo Nick',
       suggested_avatar_url: 'https://cdn.example/linuxdo.png'
