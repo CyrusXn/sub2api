@@ -399,21 +399,6 @@
             <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
           </div>
 
-          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <SystemMetricTrendCard
-              :title="t('admin.dashboard.bandwidthTrend')"
-              metric="network"
-              :points="systemMetricsTrend.points"
-              :network-daily="systemMetricsTrend.network_daily"
-              :network-totals="systemMetricsTrend.network_totals"
-              :loading="systemMetricsLoading"
-              @refresh="loadSystemMetricsTrend"
-            />
-            <SystemMetricTrendCard :title="t('admin.dashboard.cpuTrend')" metric="cpu" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
-            <SystemMetricTrendCard :title="t('admin.dashboard.memoryTrend')" metric="memory" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
-            <SystemMetricTrendCard :title="t('admin.dashboard.diskTrend')" metric="disk" :points="systemMetricsTrend.points" :loading="systemMetricsLoading" @refresh="loadSystemMetricsTrend" />
-          </div>
-
           <!-- User Usage Trend (Full Width) -->
           <div class="card p-4">
             <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
@@ -461,11 +446,7 @@ import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
-import SystemMetricTrendCard from '@/components/charts/SystemMetricTrendCard.vue'
-import type {
-  DashboardBusinessSummary,
-  DashboardSystemMetricTrend
-} from '@/api/admin/dashboard'
+import type { DashboardBusinessSummary } from '@/api/admin/dashboard'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
 import {
@@ -502,11 +483,9 @@ const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
 const rankingError = ref(false)
 const businessLoading = ref(false)
-const systemMetricsLoading = ref(false)
 const topMetricsLoading = ref(false)
 const businessSummary = ref<DashboardBusinessSummary | null>(null)
 const businessError = ref(false)
-const systemMetricsTrend = ref<DashboardSystemMetricTrend>({ source: '', points: [] })
 
 // Chart data
 const trendData = ref<TrendDataPoint[]>([])
@@ -771,7 +750,7 @@ const onDateRangeChange = (range: {
     granularity.value = 'day'
   }
 
-  void Promise.all([loadChartData(), loadBusinessSummary(), loadSystemMetricsTrend()])
+  void Promise.all([loadChartData(), loadBusinessSummary()])
 }
 
 const rangeParams = () => ({ start_date: startDate.value, end_date: endDate.value })
@@ -787,13 +766,6 @@ const loadBusinessSummary = async () => {
   try { businessSummary.value = await adminAPI.dashboard.getBusinessSummary(rangeParams()) }
   catch (error) { console.error('读取历史经营汇总失败:', error); businessError.value = true }
   finally { businessLoading.value = false }
-}
-
-const loadSystemMetricsTrend = async () => {
-  systemMetricsLoading.value = true
-  try { systemMetricsTrend.value = await adminAPI.dashboard.getSystemMetricsTrend(rangeParams()) }
-  catch (error) { console.error('读取服务器资源趋势失败:', error); systemMetricsTrend.value = { source: '', points: [] } }
-  finally { systemMetricsLoading.value = false }
 }
 
 // 顶部刷新只读取指标快照，不重复加载趋势图和消费榜。
@@ -930,7 +902,6 @@ onMounted(() => {
   void refreshBatchImageAccess()
   void loadDashboardStats()
   void loadBusinessSummary()
-  void loadSystemMetricsTrend()
 })
 </script>
 

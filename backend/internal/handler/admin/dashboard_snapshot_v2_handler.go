@@ -46,27 +46,29 @@ type dashboardSnapshotV2Filters struct {
 	Stream                *bool
 	BillingType           *int8
 	UpstreamModelMismatch *bool
+	Multi                 usagestats.UsageLogFilters
 }
 
 type dashboardSnapshotV2CacheKey struct {
-	StartTime             string `json:"start_time"`
-	EndTime               string `json:"end_time"`
-	Granularity           string `json:"granularity"`
-	UserID                int64  `json:"user_id"`
-	APIKeyID              int64  `json:"api_key_id"`
-	AccountID             int64  `json:"account_id"`
-	GroupID               int64  `json:"group_id"`
-	Model                 string `json:"model"`
-	RequestType           *int16 `json:"request_type"`
-	Stream                *bool  `json:"stream"`
-	BillingType           *int8  `json:"billing_type"`
-	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
-	IncludeStats          bool   `json:"include_stats"`
-	IncludeTrend          bool   `json:"include_trend"`
-	IncludeModels         bool   `json:"include_models"`
-	IncludeGroups         bool   `json:"include_groups"`
-	IncludeUsersTrend     bool   `json:"include_users_trend"`
-	UsersTrendLimit       int    `json:"users_trend_limit"`
+	StartTime             string                     `json:"start_time"`
+	EndTime               string                     `json:"end_time"`
+	Granularity           string                     `json:"granularity"`
+	UserID                int64                      `json:"user_id"`
+	APIKeyID              int64                      `json:"api_key_id"`
+	AccountID             int64                      `json:"account_id"`
+	GroupID               int64                      `json:"group_id"`
+	Model                 string                     `json:"model"`
+	RequestType           *int16                     `json:"request_type"`
+	Stream                *bool                      `json:"stream"`
+	BillingType           *int8                      `json:"billing_type"`
+	UpstreamModelMismatch *bool                      `json:"upstream_model_mismatch"`
+	Multi                 usagestats.UsageLogFilters `json:"multi"`
+	IncludeStats          bool                       `json:"include_stats"`
+	IncludeTrend          bool                       `json:"include_trend"`
+	IncludeModels         bool                       `json:"include_models"`
+	IncludeGroups         bool                       `json:"include_groups"`
+	IncludeUsersTrend     bool                       `json:"include_users_trend"`
+	UsersTrendLimit       int                        `json:"users_trend_limit"`
 }
 
 func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
@@ -107,6 +109,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		Stream:                filters.Stream,
 		BillingType:           filters.BillingType,
 		UpstreamModelMismatch: filters.UpstreamModelMismatch,
+		Multi:                 filters.Multi,
 		IncludeStats:          includeStats,
 		IncludeTrend:          includeTrend,
 		IncludeModels:         includeModels,
@@ -174,20 +177,13 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeTrend {
-		trend, _, err := h.getUsageTrendCached(
+		usageFilters := filters.usageLogFilters()
+		trend, err := h.dashboardService.GetUsageTrendWithUsageFilters(
 			ctx,
 			startTime,
 			endTime,
 			granularity,
-			filters.UserID,
-			filters.APIKeyID,
-			filters.AccountID,
-			filters.GroupID,
-			filters.Model,
-			filters.RequestType,
-			filters.Stream,
-			filters.BillingType,
-			filters.UpstreamModelMismatch,
+			usageFilters,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get usage trend")
@@ -196,19 +192,12 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeModels {
-		models, _, err := h.getModelStatsCached(
+		models, err := h.dashboardService.GetModelStatsWithUsageFiltersBySource(
 			ctx,
 			startTime,
 			endTime,
-			filters.UserID,
-			filters.APIKeyID,
-			filters.AccountID,
-			filters.GroupID,
+			filters.usageLogFilters(),
 			usagestats.ModelSourceRequested,
-			filters.RequestType,
-			filters.Stream,
-			filters.BillingType,
-			filters.UpstreamModelMismatch,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get model statistics")
@@ -217,18 +206,11 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeGroups {
-		groups, _, err := h.getGroupStatsCached(
+		groups, err := h.dashboardService.GetGroupStatsWithUsageFilters(
 			ctx,
 			startTime,
 			endTime,
-			filters.UserID,
-			filters.APIKeyID,
-			filters.AccountID,
-			filters.GroupID,
-			filters.RequestType,
-			filters.Stream,
-			filters.BillingType,
-			filters.UpstreamModelMismatch,
+			filters.usageLogFilters(),
 		)
 		if err != nil {
 			return nil, errors.New("failed to get group statistics")
@@ -251,6 +233,11 @@ func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filter
 	filters := &dashboardSnapshotV2Filters{
 		Model: strings.TrimSpace(c.Query("model")),
 	}
+	multi, err := parseUsageMultiFilters(c)
+	if err != nil {
+		return nil, err
+	}
+	filters.Multi = multi
 
 	if userIDStr := strings.TrimSpace(c.Query("user_id")); userIDStr != "" {
 		id, err := strconv.ParseInt(userIDStr, 10, 64)
@@ -314,4 +301,20 @@ func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filter
 	}
 
 	return filters, nil
+}
+
+func (filters *dashboardSnapshotV2Filters) usageLogFilters() usagestats.UsageLogFilters {
+	result := filters.Multi
+	result.UserID = filters.UserID
+	result.APIKeyID = filters.APIKeyID
+	result.AccountID = filters.AccountID
+	result.GroupID = filters.GroupID
+	result.Model = filters.Model
+	result.ModelFilterSource = usagestats.ModelSourceRequested
+	result.RequestType = filters.RequestType
+	result.Stream = filters.Stream
+	result.BillingType = filters.BillingType
+	result.UpstreamModelMismatch = filters.UpstreamModelMismatch
+	result.AdminView = true
+	return result
 }

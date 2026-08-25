@@ -574,12 +574,16 @@ func groupListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 		if descending {
 			return []func(*entsql.Selector){
 				groupPlatformPriorityOrder(true),
+				dbent.Desc(group.FieldIsExclusive),
+				dbent.Desc(group.FieldRateMultiplier),
 				dbent.Desc(group.FieldSortOrder),
 				dbent.Desc(group.FieldID),
 			}
 		}
 		return []func(*entsql.Selector){
 			groupPlatformPriorityOrder(false),
+			dbent.Asc(group.FieldIsExclusive),
+			dbent.Asc(group.FieldRateMultiplier),
 			dbent.Asc(group.FieldSortOrder),
 			dbent.Asc(group.FieldID),
 		}
@@ -641,15 +645,15 @@ func groupPlatformPriorityOrder(descending bool) func(*entsql.Selector) {
 		if descending {
 			direction = "DESC"
 		}
-		// 未知平台统一排在六个受支持平台之后，再由 sort_order 和 ID 保证稳定顺序。
+		// 默认分组顺序：GPT、Claude、Grok、Gemini；其它平台随后。
 		expression := fmt.Sprintf(
 			"CASE %s WHEN '%s' THEN 1 WHEN '%s' THEN 2 WHEN '%s' THEN 3 WHEN '%s' THEN 4 WHEN '%s' THEN 5 WHEN '%s' THEN 6 ELSE 7 END %s",
 			selector.C(group.FieldPlatform),
-			service.PlatformAnthropic,
 			service.PlatformOpenAI,
+			service.PlatformAnthropic,
+			service.PlatformGrok,
 			service.PlatformGemini,
 			service.PlatformAntigravity,
-			service.PlatformGrok,
 			service.PlatformComposite,
 			direction,
 		)
@@ -662,6 +666,8 @@ func (r *groupRepository) ListActive(ctx context.Context) ([]service.Group, erro
 		Where(group.StatusEQ(service.StatusActive)).
 		Order(
 			groupPlatformPriorityOrder(false),
+			dbent.Asc(group.FieldIsExclusive),
+			dbent.Asc(group.FieldRateMultiplier),
 			dbent.Asc(group.FieldSortOrder),
 			dbent.Asc(group.FieldID),
 		).

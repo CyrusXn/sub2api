@@ -1,10 +1,10 @@
 <template>
-  <div class="flex items-center gap-5 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
+  <div class="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-300 xl:text-sm">
     <span class="font-semibold text-gray-800 dark:text-gray-100">
       {{ t('admin.dashboard.realtimePerformance') }}
     </span>
-    <span>RPM <strong class="text-gray-900 dark:text-white">{{ formatMetric(metricsStore.metrics?.requests_per_minute) }}</strong></span>
-    <span>TPM <strong class="text-gray-900 dark:text-white">{{ formatMetric(metricsStore.metrics?.tokens_per_minute) }}</strong></span>
+    <span>RPM <strong class="text-red-700 dark:text-red-300">{{ formatMetric(metricsStore.metrics?.requests_per_minute) }}</strong></span>
+    <span>TPM <strong class="text-red-700 dark:text-red-300">{{ formatMetric(metricsStore.metrics?.tokens_per_minute) }}</strong></span>
     <span>
       {{ t('admin.dashboard.currentConcurrency') }}
       <strong class="text-red-600 dark:text-red-400">{{ formatMetric(metricsStore.metrics?.active_requests) }}</strong>

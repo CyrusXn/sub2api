@@ -647,7 +647,8 @@ const upstreamBillingChangeDirections = reactive(new Map<number, 'up' | 'down'>(
 const attemptedExpiredUpstreamBilling = new Set<number>()
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
 const upstreamBillingNow = ref(Date.now())
-const DEFAULT_ACCOUNT_GROUP_NAME = '【GPT】plus 低并发稳定'
+// 默认账号筛选使用稳定的分组 ID；分组名称允许管理员随时调整。
+const DEFAULT_ACCOUNT_GROUP_ID = 2
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 
 // Account tools dropdown
@@ -1279,7 +1280,8 @@ const visibleUpstreamBillingAccountIDs = (options: { force?: boolean } = {}) => 
       const probeEnabled = account.extra?.upstream_billing_probe_enabled === true
       if (!probeEnabled || attemptedExpiredUpstreamBilling.has(account.id)) return false
       const snapshot = account.extra?.upstream_billing_probe
-      if (!snapshot) return true
+      // 仅自动刷新已有快照且 fresh_until 已过期的倍率；没有快照的账号留给手动探测。
+      if (!snapshot) return false
       // fresh_until 已过期就立即探测；旧 next_probe_at 不能阻止页面会话内的首次刷新。
       return probeTimestampIsDue(snapshot.fresh_until, now)
     })
@@ -2738,7 +2740,7 @@ onMounted(() => {
   void adminAPI.groups.getAll()
     .then((result) => {
       groups.value = result
-      const defaultGroup = result.find(group => group.name === DEFAULT_ACCOUNT_GROUP_NAME)
+      const defaultGroup = result.find(group => group.id === DEFAULT_ACCOUNT_GROUP_ID)
       if (defaultGroup) {
         params.group = String(defaultGroup.id)
       }

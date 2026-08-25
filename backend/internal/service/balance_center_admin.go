@@ -37,13 +37,14 @@ type BalanceCenterOverviewItem struct {
 }
 
 type BalanceCenterSite struct {
-	ID               int64     `json:"id"`
-	Name             string    `json:"name"`
-	NormalizedDomain string    `json:"normalized_domain"`
-	BaseURL          string    `json:"base_url"`
-	Source           string    `json:"source"`
-	ProbeSupported   bool      `json:"probe_supported"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                      int64     `json:"id"`
+	Name                    string    `json:"name"`
+	NormalizedDomain        string    `json:"normalized_domain"`
+	BaseURL                 string    `json:"base_url"`
+	Source                  string    `json:"source"`
+	ProbeSupported          bool      `json:"probe_supported"`
+	HistoricalRechargeTotal float64   `json:"historical_recharge_total"`
+	UpdatedAt               time.Time `json:"updated_at"`
 }
 
 type BalanceCenterManualRow struct {

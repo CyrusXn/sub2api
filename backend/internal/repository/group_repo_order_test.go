@@ -10,7 +10,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 )
 
-func TestGroupListOrderDefaultsToPlatformPriorityThenSortOrder(t *testing.T) {
+func TestGroupListOrderDefaultsToPlatformPriorityThenMultiplier(t *testing.T) {
 	for _, params := range []pagination.PaginationParams{
 		{},
 		{SortBy: "platform", SortOrder: pagination.SortOrderAsc},
@@ -23,13 +23,15 @@ func TestGroupListOrderDefaultsToPlatformPriorityThenSortOrder(t *testing.T) {
 
 		positions := []int{
 			strings.Index(query, "CASE"),
-			strings.Index(query, "anthropic"),
 			strings.Index(query, "openai"),
+			strings.Index(query, "anthropic"),
+			strings.Index(query, "grok"),
 			strings.Index(query, "gemini"),
 			strings.Index(query, "antigravity"),
-			strings.Index(query, "grok"),
 			strings.Index(query, "composite"),
 			strings.Index(query, "ELSE 7"),
+			strings.LastIndex(query, "is_exclusive"),
+			strings.LastIndex(query, "rate_multiplier"),
 			strings.LastIndex(query, "sort_order"),
 			strings.LastIndex(query, "id"),
 		}

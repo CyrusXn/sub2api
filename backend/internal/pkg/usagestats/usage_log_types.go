@@ -270,21 +270,32 @@ type PlatformDashboardStats struct {
 
 // UsageLogFilters represents filters for usage log queries
 type UsageLogFilters struct {
-	UserID    int64
-	APIKeyID  int64
-	AccountID int64
-	GroupID   int64
-	RequestID string
-	Model     string
+	UserID     int64
+	APIKeyID   int64
+	AccountID  int64
+	GroupID    int64
+	UserIDs    []int64
+	APIKeyIDs  []int64
+	AccountIDs []int64
+	GroupIDs   []int64
+	// UpstreamSiteAccountIDs 是上游站点映射出的账号集合；与显式账号筛选同时存在时取交集。
+	UpstreamSiteAccountIDs []int64
+	RequestID              string
+	Model                  string
+	Models                 []string
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
-	ModelFilterSource     string
-	RequestType           *int16
-	Stream                *bool
-	BillingType           *int8
-	BillingMode           string
-	UpstreamModelMismatch *bool
-	StartTime             *time.Time
-	EndTime               *time.Time
+	ModelFilterSource       string
+	RequestType             *int16
+	RequestTypes            []int16
+	Stream                  *bool
+	BillingType             *int8
+	BillingTypes            []int8
+	BillingMode             string
+	BillingModes            []string
+	UpstreamModelMismatch   *bool
+	UpstreamModelMismatches []bool
+	StartTime               *time.Time
+	EndTime                 *time.Time
 	// AdminView 标识管理端查询。用量已经在请求结算时固化，不允许据此追溯换算历史值。
 	AdminView bool
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.

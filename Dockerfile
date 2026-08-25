@@ -8,8 +8,7 @@
 # =============================================================================
 
 ARG NODE_IMAGE=node:24-alpine
-# 与 backend/go.mod 的最低版本保持一致，避免容器构建阶段拒绝下载依赖。
-ARG GOLANG_IMAGE=golang:1.26.6-alpine
+ARG GOLANG_IMAGE=golang:1.27.0-alpine
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
@@ -57,8 +56,6 @@ FROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} AS backend-builder
 ARG VERSION=
 ARG COMMIT=docker
 ARG DATE
-ARG BUILD_TYPE=release
-ARG EDITION=
 ARG GOPROXY
 ARG GOSUMDB
 # Populated by buildx from the --platform target (e.g. linux/amd64).
@@ -95,7 +92,7 @@ RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
     DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -tags embed \
-    -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=${BUILD_TYPE} -X main.Edition=${EDITION}" \
+    -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=release" \
     -trimpath \
     -o /app/sub2api \
     ./cmd/server

@@ -193,22 +193,20 @@ func (h *UsageHandler) List(c *gin.Context) {
 	var startTime, endTime *time.Time
 	userTZ := c.Query("timezone") // Get user's timezone from request
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
-		t, err := timezone.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		t, err := parseAdminDateTime(startDateStr, userTZ, false)
 		if err != nil {
-			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 			return
 		}
 		startTime = &t
 	}
 
 	if endDateStr := c.Query("end_date"); endDateStr != "" {
-		t, err := timezone.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		t, err := parseAdminDateTime(endDateStr, userTZ, true)
 		if err != nil {
-			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 			return
 		}
-		// Use half-open range [start, end), move to next calendar day start (DST-safe).
-		t = t.AddDate(0, 0, 1)
 		endTime = &t
 	}
 
@@ -236,6 +234,21 @@ func (h *UsageHandler) List(c *gin.Context) {
 		ExactTotal:            exactTotal,
 		AdminView:             true,
 	}
+	multiFilters, err := parseUsageMultiFilters(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	filters.UserIDs = multiFilters.UserIDs
+	filters.APIKeyIDs = multiFilters.APIKeyIDs
+	filters.AccountIDs = multiFilters.AccountIDs
+	filters.GroupIDs = multiFilters.GroupIDs
+	filters.UpstreamSiteAccountIDs = multiFilters.UpstreamSiteAccountIDs
+	filters.Models = multiFilters.Models
+	filters.RequestTypes = multiFilters.RequestTypes
+	filters.BillingTypes = multiFilters.BillingTypes
+	filters.BillingModes = multiFilters.BillingModes
+	filters.UpstreamModelMismatches = multiFilters.UpstreamModelMismatches
 
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
 	if err != nil {
@@ -441,18 +454,16 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 
 	if startDateStr != "" && endDateStr != "" {
 		var err error
-		startTime, err = timezone.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		startTime, err = parseAdminDateTime(startDateStr, userTZ, false)
 		if err != nil {
-			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 			return
 		}
-		endTime, err = timezone.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		endTime, err = parseAdminDateTime(endDateStr, userTZ, true)
 		if err != nil {
-			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 			return
 		}
-		// 与 SQL 条件 created_at < end 对齐，使用次日 00:00 作为上边界（DST-safe）。
-		endTime = endTime.AddDate(0, 0, 1)
 	} else {
 		period := c.DefaultQuery("period", "today")
 		switch period {
@@ -485,6 +496,21 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		EndTime:               &endTime,
 		AdminView:             true,
 	}
+	multiFilters, err := parseUsageMultiFilters(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	filters.UserIDs = multiFilters.UserIDs
+	filters.APIKeyIDs = multiFilters.APIKeyIDs
+	filters.AccountIDs = multiFilters.AccountIDs
+	filters.GroupIDs = multiFilters.GroupIDs
+	filters.UpstreamSiteAccountIDs = multiFilters.UpstreamSiteAccountIDs
+	filters.Models = multiFilters.Models
+	filters.RequestTypes = multiFilters.RequestTypes
+	filters.BillingTypes = multiFilters.BillingTypes
+	filters.BillingModes = multiFilters.BillingModes
+	filters.UpstreamModelMismatches = multiFilters.UpstreamModelMismatches
 
 	var stats *usagestats.UsageStats
 	// nocache: 绕过缓存直接回源,刷新者本人拿最新;不回写缓存(管理台"我刷新我自己拿最新"语义,非全局失效)。

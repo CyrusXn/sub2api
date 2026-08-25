@@ -528,6 +528,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/mock-accounts',
+    name: 'AdminMockAccounts',
+    component: () => import('@/views/admin/MockAccountsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Mock Account Pool',
+      titleKey: 'admin.accounts.mock.title',
+      descriptionKey: 'admin.accounts.mock.description'
+    }
+  },
+  {
     path: '/admin/upstream-sites',
     name: 'AdminUpstreamSites',
     component: () => import('@/views/admin/UpstreamSitesView.vue'),
@@ -561,6 +573,18 @@ const routes: RouteRecordRaw[] = [
       title: '经营历史',
       titleKey: 'admin.businessHistory.title',
       descriptionKey: 'admin.businessHistory.description'
+    }
+  },
+  {
+    path: '/admin/plugins',
+    name: 'AdminPlugins',
+    component: () => import('@/views/admin/PluginsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Plugin Management',
+      titleKey: 'admin.plugins.title',
+      descriptionKey: 'admin.plugins.description'
     }
   },
   {

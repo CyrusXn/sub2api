@@ -147,8 +147,8 @@ const app = useAppStore()
 type TrendMetric = 'requests' | 'tokens' | 'consumption'
 
 const today = new Date()
-const rangeStart = new Date(today)
-rangeStart.setDate(rangeStart.getDate() - 29)
+// 经营历史默认从 2026 年 7 月 9 日开始，结束日期仍使用当前日期。
+const rangeStart = new Date(2026, 6, 9)
 
 const startDate = ref(formatLocalDate(rangeStart))
 const endDate = ref(formatLocalDate(today))

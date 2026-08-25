@@ -81,7 +81,6 @@ export default defineConfig(({ mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
-  const devPort = Number(env.VITE_DEV_PORT || 3000)
 
   return {
     plugins: [
@@ -156,7 +155,9 @@ export default defineConfig(({ mode }) => {
   },
     server: {
       host: '0.0.0.0',
-      port: devPort,
+      // 本地验收地址固定为 3000，端口被占用时显式失败，避免自动切换地址。
+      port: 3000,
+      strictPort: true,
       proxy: {
         '/api': {
           target: backendUrl,

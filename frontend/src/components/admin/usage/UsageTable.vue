@@ -234,6 +234,10 @@
           </div>
         </template>
 
+        <template #cell-upstream_cost="{ row }">
+          <span class="text-sm font-medium text-red-600 dark:text-red-400">${{ upstreamBilled(row).toFixed(6) }}</span>
+        </template>
+
         <!-- 首字延迟只使用真实 first_token_ms，不再生成或读取随机派生值。 -->
         <!-- 合并首字/总耗时的健康度列：左侧色条上端随首字档、下端随总耗时档，中段(40%-60%)短渐变过渡，便于纵向扫视整体健康状况 -->
         <template #cell-latency="{ row }">
@@ -557,11 +561,15 @@ import {
   hasImageInputCost,
 } from '@/utils/imageUsage'
 
-/** Compute the account-billed cost for display: (account_stats_cost ?? total_cost) * rate_multiplier */
+// 上游费用按请求结算时固化的账号成本和倍率计算，不能读取当前账号配置重算历史记录。
 function accountBilled(row: { total_cost?: number | null; account_stats_cost?: number | null; account_rate_multiplier?: number | null }): number {
   const base = row.account_stats_cost != null ? row.account_stats_cost : (row.total_cost ?? 0)
   const result = base * (row.account_rate_multiplier ?? 1)
-  return Number.isNaN(result) ? 0 : result
+  return Number.isFinite(result) ? result : 0
+}
+
+function upstreamBilled(row: { total_cost?: number | null; account_stats_cost?: number | null; account_rate_multiplier?: number | null }): number {
+  return accountBilled(row)
 }
 
 

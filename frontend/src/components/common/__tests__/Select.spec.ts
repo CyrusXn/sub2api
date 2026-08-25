@@ -161,7 +161,7 @@ describe('Select remote search', () => {
   }
 
   const typeSearchQuery = async (query: string) => {
-    const dropdown = await openDropdown()
+    const dropdown = document.body.querySelector<HTMLElement>('.select-dropdown-portal')!
     const input = dropdown.querySelector<HTMLInputElement>('.select-search-input')
     expect(input).not.toBeNull()
     input!.value = query
@@ -183,7 +183,8 @@ describe('Select remote search', () => {
 
     expect(wrapper.emitted('search')).toEqual([['zzz']])
     // 远程模式不做本地过滤：无命中的 query 下选项仍完整展示（由父组件更新 options）。
-    const dropdown = await openDropdown()
+    const dropdown = document.body.querySelector<HTMLElement>('.select-dropdown-portal')
+    expect(dropdown).not.toBeNull()
     const labels = [...dropdown.querySelectorAll('.select-option-label')].map((el) => el.textContent)
     expect(labels).toContain('Alpha account')
     expect(labels).toContain('Beta account')
@@ -237,5 +238,41 @@ describe('Select remote search', () => {
     const dropdown = await openDropdown()
     const labels = [...dropdown.querySelectorAll('.select-option-label')].map((el) => el.textContent)
     expect(labels).toEqual(['Alpha account'])
+  })
+})
+
+describe('Select multiple', () => {
+  it('toggles multiple values without closing the dropdown and clears them together', async () => {
+    const wrapper = mount(Select, {
+      props: {
+        modelValue: [],
+        multiple: true,
+        clearable: true,
+        options: [
+          { value: 'openai', label: 'OpenAI' },
+          { value: 'claude', label: 'Claude' },
+        ],
+      },
+    })
+    unmountWrapper = () => wrapper.unmount()
+    await wrapper.get('button').trigger('click')
+    await nextTick()
+
+    const dropdown = document.body.querySelector<HTMLElement>('.select-dropdown-portal')
+    expect(dropdown).not.toBeNull()
+    const options = dropdown.querySelectorAll<HTMLElement>('.select-option')
+    options[0].click()
+    await nextTick()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual(['openai'])
+    expect(document.body.querySelector('.select-dropdown-portal')).not.toBeNull()
+
+    await wrapper.setProps({ modelValue: ['openai'] })
+    options[1].click()
+    await nextTick()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual(['openai', 'claude'])
+
+    await wrapper.setProps({ modelValue: ['openai', 'claude'] })
+    await wrapper.get('.select-clear').trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual([])
   })
 })

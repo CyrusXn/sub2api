@@ -15,8 +15,8 @@ vi.mock('vue-i18n', async () => ({
 }))
 
 const sites = [
-  { id: 1, name: 'HBY', normalized_domain: 'hby.example', base_url: 'https://hby.example', source: 'sub2api', probe_supported: true, updated_at: '2026-08-14T00:00:00Z' },
-  { id: 2, name: 'VoVo', normalized_domain: 'vovo.example', base_url: 'https://vovo.example', source: 'sub2api', probe_supported: true, updated_at: '2026-08-14T00:00:00Z' }
+  { id: 1, name: 'HBY', normalized_domain: 'hby.example', base_url: 'https://hby.example', source: 'sub2api', probe_supported: true, updated_at: '2026-08-14T00:00:00Z', historical_recharge_total: 20 },
+  { id: 2, name: 'VoVo', normalized_domain: 'vovo.example', base_url: 'https://vovo.example', source: 'sub2api', probe_supported: true, updated_at: '2026-08-14T00:00:00Z', historical_recharge_total: 80 }
 ]
 const summary = {
   total_amount: 80,
@@ -63,6 +63,15 @@ describe('BalanceCenterView', () => {
     expect(wrapper.get('[data-test="tab-add-recharge"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.findAll('[data-test="site-recharge-row"]')).toHaveLength(2)
     expect(wrapper.find('[data-test="total-amount"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="recharge-list-scroll"]').classes()).toContain('overflow-y-auto')
+    expect(wrapper.findAll('[data-test="site-recharge-row"]')[0].text()).toContain('VoVo')
+  })
+
+  it('回到此刻按钮将充值时间重置为当前秒', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="recharge-time-now"]').trigger('click')
+    expect((wrapper.get('[data-test="recharge-time"]').element as HTMLInputElement).value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.000)?$/)
   })
 
   it('切换到充值记录时才加载汇总并隐藏新增充值', async () => {
@@ -78,7 +87,7 @@ describe('BalanceCenterView', () => {
     expect(wrapper.find('[data-test="site-recharge-row"]').exists()).toBe(false)
   })
 
-  it('站点金额回车后使用当前分钟新增并刷新统计', async () => {
+  it('站点金额回车后使用当前秒新增并刷新统计', async () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.get('[data-test="recharge-time"]').setValue('2026-08-14T10:20')
@@ -124,6 +133,22 @@ describe('BalanceCenterView', () => {
     await wrapper.get('[data-test="expand-site-1"]').trigger('click')
     expect(wrapper.findAll('[data-test="site-history-item"]')).toHaveLength(2)
     expect(wrapper.text()).toContain('HBY')
+  })
+
+  it('站点维度按筛选范围内充值总额降序展示', async () => {
+    api.rechargeSummary.mockResolvedValue({
+      ...summary,
+      sites: [
+        { site_id: 1, site_name: 'HBY', total_amount: 20, record_count: 1, items: [] },
+        { site_id: 2, site_name: 'VoVo', total_amount: 80, record_count: 1, items: [] }
+      ]
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="dimension-site"]').trigger('click')
+    expect(wrapper.findAll('[data-test="site-summary-row"]')[0].text()).toContain('VoVo')
   })
 
   it('未绑定账号的旧站点仍按独立标签展示', async () => {

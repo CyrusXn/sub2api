@@ -2,9 +2,7 @@
   <AppLayout>
     <main class="mx-auto w-full max-w-[1480px] space-y-6 px-4 py-5 sm:px-6">
       <header class="flex flex-col gap-3 border-b border-gray-200 pb-4 dark:border-dark-700 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 class="text-xl font-semibold text-gray-900 dark:text-white">{{ t('admin.balanceCenter.title') }}</h1>
-        </div>
+        <!-- 页面标题已由 AppLayout 外层统一展示，这里只保留余额中心快捷入口。 -->
         <RouterLink to="/admin/accounts" class="btn btn-secondary self-start sm:self-auto">
           <Icon name="server" size="sm" />{{ t('admin.balanceCenter.accountCenter') }}
         </RouterLink>
@@ -42,10 +40,15 @@
           <div>
             <h2 id="recharge-entry-title" class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.balanceCenter.addRecharge') }}</h2>
           </div>
-          <label class="w-full sm:w-64">
-            <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.rechargeAt') }}</span>
-            <input v-model="rechargeTime" data-test="recharge-time" type="datetime-local" class="input w-full" />
-          </label>
+          <div class="flex w-full items-end gap-2 sm:w-auto">
+            <label class="min-w-0 flex-1 sm:w-64 sm:flex-none">
+              <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.rechargeAt') }}</span>
+              <input v-model="rechargeTime" data-test="recharge-time" type="datetime-local" step="1" class="input w-full" />
+            </label>
+            <button type="button" data-test="recharge-time-now" class="btn btn-secondary h-10 shrink-0" @click="resetRechargeTime">
+              {{ t('admin.balanceCenter.backToNow') }}
+            </button>
+          </div>
         </div>
 
         <div class="overflow-hidden border-y border-gray-200 dark:border-dark-700">
@@ -54,36 +57,38 @@
             <span>{{ t('admin.balanceCenter.domain') }}</span>
             <span>{{ t('admin.balanceCenter.amount') }}</span>
           </div>
-          <div
-            v-for="site in sites"
-            :key="site.id"
-            data-test="site-recharge-row"
-            class="grid gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 dark:border-dark-700 sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.4fr)_minmax(170px,0.8fr)] sm:items-center sm:gap-4"
-          >
-            <div class="min-w-0">
-              <span class="font-medium text-gray-900 dark:text-gray-100">{{ site.name }}</span>
-              <span class="ml-2 text-xs text-gray-400 sm:hidden">{{ site.normalized_domain }}</span>
+          <div data-test="recharge-list-scroll" class="max-h-[58vh] overflow-y-auto">
+            <div
+              v-for="site in sortedSites"
+              :key="site.id"
+              data-test="site-recharge-row"
+              class="grid gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 dark:border-dark-700 sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.4fr)_minmax(170px,0.8fr)] sm:items-center sm:gap-4"
+            >
+              <div class="min-w-0">
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{ site.name }}</span>
+                <span class="ml-2 text-xs text-gray-400 sm:hidden">{{ site.normalized_domain }}</span>
+              </div>
+              <span class="hidden truncate text-sm text-gray-500 dark:text-gray-400 sm:block">{{ site.normalized_domain }}</span>
+              <div class="flex items-center gap-2">
+                <input
+                  v-model="amounts[site.id]"
+                  :data-test="`recharge-amount-${site.id}`"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  inputmode="decimal"
+                  class="input min-w-0 flex-1"
+                  :placeholder="t('admin.balanceCenter.amountPlaceholder')"
+                  @keyup.enter="addRecharge(site)"
+                />
+                <button type="button" class="btn btn-primary h-10 w-10 shrink-0 p-0" :title="t('admin.balanceCenter.addRecharge')" :disabled="busySiteID === site.id" @click="addRecharge(site)">
+                  <Icon name="plus" size="sm" />
+                </button>
+              </div>
             </div>
-            <span class="hidden truncate text-sm text-gray-500 dark:text-gray-400 sm:block">{{ site.normalized_domain }}</span>
-            <div class="flex items-center gap-2">
-              <input
-                v-model="amounts[site.id]"
-                :data-test="`recharge-amount-${site.id}`"
-                type="number"
-                min="0.01"
-                step="0.01"
-                inputmode="decimal"
-                class="input min-w-0 flex-1"
-                :placeholder="t('admin.balanceCenter.amountPlaceholder')"
-                @keyup.enter="addRecharge(site)"
-              />
-              <button type="button" class="btn btn-primary h-10 w-10 shrink-0 p-0" :title="t('admin.balanceCenter.addRecharge')" :disabled="busySiteID === site.id" @click="addRecharge(site)">
-                <Icon name="plus" size="sm" />
-              </button>
+            <div v-if="!sitesLoading && sites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.balanceCenter.noSites') }}
             </div>
-          </div>
-          <div v-if="!sitesLoading && sites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
-            {{ t('admin.balanceCenter.noSites') }}
           </div>
         </div>
       </section>
@@ -139,7 +144,7 @@
         </div>
 
         <div v-else class="divide-y divide-gray-200 border-y border-gray-200 dark:divide-dark-700 dark:border-dark-700">
-          <div v-for="site in summary.sites" :key="siteKey(site.site_id)" data-test="site-summary-row">
+          <div v-for="site in sortedSummarySites" :key="siteKey(site.site_id)" data-test="site-summary-row">
             <button type="button" class="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-3 py-3 text-left hover:bg-gray-50 dark:hover:bg-dark-800" :data-test="`expand-site-${siteKey(site.site_id)}`" @click="toggleSite(site.site_id)">
               <span class="truncate font-medium text-gray-900 dark:text-gray-100"><Icon :name="expandedSites.has(siteKey(site.site_id)) ? 'chevronDown' : 'chevronRight'" size="sm" class="mr-2 inline-block" />{{ site.site_name }}</span>
               <span class="text-sm text-gray-500 dark:text-gray-400">{{ site.record_count }} {{ t('admin.balanceCenter.records') }}</span>
@@ -160,7 +165,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { BalanceCenterListParams, BalanceCenterRechargeEvent, BalanceCenterRechargeSummary, BalanceCenterSite } from '@/api/admin/balanceCenter'
@@ -185,7 +190,7 @@ const busySiteID = ref<number>()
 const dimension = ref<Dimension>('time')
 const rangePreset = ref<RangePreset | 'custom'>('24h')
 const customDate = ref('')
-const rechargeTime = ref(toLocalMinute(new Date()))
+const rechargeTime = ref(toLocalSecond(new Date()))
 const expandedSites = ref(new Set<string>())
 const rangePresets: RangePreset[] = ['24h', 'today', 'yesterday', 'all']
 const selectedButtonClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900'
@@ -194,9 +199,22 @@ const activeTabClass = 'border-primary-600 text-primary-700 dark:border-primary-
 const inactiveTabClass = 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
 const summary = reactive<BalanceCenterRechargeSummary>({ total_amount: 0, items: [], sites: [], total: 0, page: 1, page_size: 20 })
 
-function toLocalMinute(value: Date) {
+const sortedSites = computed(() => [...sites.value].sort((left, right) => {
+  const totalDifference = (right.historical_recharge_total ?? 0) - (left.historical_recharge_total ?? 0)
+  return totalDifference || left.normalized_domain.localeCompare(right.normalized_domain)
+}))
+const sortedSummarySites = computed(() => [...summary.sites].sort((left, right) => {
+  const totalDifference = right.total_amount - left.total_amount
+  return totalDifference || left.site_name.localeCompare(right.site_name)
+}))
+
+function toLocalSecond(value: Date) {
   const pad = (input: number) => String(input).padStart(2, '0')
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`
+}
+
+function resetRechargeTime() {
+  rechargeTime.value = toLocalSecond(new Date())
 }
 
 function dayRange(value: Date) {
@@ -270,6 +288,7 @@ async function addRecharge(site: BalanceCenterSite) {
       note: ''
     })
     amounts[site.id] = ''
+    site.historical_recharge_total = (site.historical_recharge_total ?? 0) + amount
     app.showSuccess(t('admin.balanceCenter.rechargeAdded'))
   } catch (error) {
     notifyError(error)

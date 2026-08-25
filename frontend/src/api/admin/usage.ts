@@ -130,6 +130,16 @@ export async function getStats(params: {
   end_date?: string
   timezone?: string
   nocache?: number
+  user_ids?: string
+  api_key_ids?: string
+  account_ids?: string
+  group_ids?: string
+  models?: string
+  request_types?: string
+  billing_types?: string
+  billing_modes?: string
+  upstream_model_mismatches?: string
+  upstream_site_account_ids?: string
 }): Promise<AdminUsageStatsResponse> {
   const { data } = await apiClient.get<AdminUsageStatsResponse>('/admin/usage/stats', {
     params

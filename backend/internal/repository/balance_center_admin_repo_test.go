@@ -32,6 +32,27 @@ func TestBalanceCenterAdminOverviewReadsCurrentStatesOnly(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestBalanceCenterSitesOrderByHistoricalRechargeTotal(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	mock.ExpectQuery("LEFT JOIN balance_center_recharge_events[\\s\\S]+ORDER BY COALESCE\\(SUM\\(e.amount\\), 0\\) DESC").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "normalized_domain", "base_url", "source", "probe_supported", "historical_recharge_total", "updated_at",
+		}).
+			AddRow(2, "VoVo", "vovo.example", "https://vovo.example", "sub2api", true, 80.0, now).
+			AddRow(1, "HBY", "hby.example", "https://hby.example", "sub2api", true, 20.0, now))
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	items, err := repo.ListBalanceCenterSites(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "VoVo", items[0].Name)
+	require.Equal(t, 80.0, items[0].HistoricalRechargeTotal)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBalanceCenterAdminSnapshotsUsesFiltersAndPagination(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

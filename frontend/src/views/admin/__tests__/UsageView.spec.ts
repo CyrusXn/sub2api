@@ -124,9 +124,11 @@ const UsageFiltersStub = defineComponent({
       userSearchRevision += 1
       userKeyword.value = email
     }
+    const setSelectedUser = (_id: number, email: string) => setUserKeyword(email)
     expose({
       getUserSearchRevision: () => userSearchRevision,
       setUserKeyword,
+      setSelectedUser,
       simulateUserInput: setUserKeyword,
     })
     return { userKeyword }
@@ -199,7 +201,7 @@ describe('admin UsageView route filters', () => {
     vi.useRealTimers()
   })
 
-  it('shows the routed user while applying user_id to usage requests', async () => {
+  it('shows the routed user while applying user_ids to usage requests', async () => {
     routeQuery.user_id = '42'
     getById.mockResolvedValue({ id: 42, email: 'route-user@test.com' })
 
@@ -207,7 +209,7 @@ describe('admin UsageView route filters', () => {
     await flushPromises()
 
     expect(getById).toHaveBeenCalledWith(42, true)
-    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_ids: '42' }), expect.anything())
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('route-user@test.com')
   })
 
@@ -218,7 +220,7 @@ describe('admin UsageView route filters', () => {
 
     const wrapper = mountRouteFilteredUsageView()
     await wrapper.vm.$nextTick()
-    ;(wrapper.vm as any).filters.user_id = 84
+    ;(wrapper.vm as any).filters.user_ids = [84]
     ;(wrapper.findComponent(UsageFiltersStub).vm as any).setUserKeyword('current-user@test.com')
 
     resolveLookup({ id: 42, email: 'stale-user@test.com' })
@@ -239,7 +241,7 @@ describe('admin UsageView route filters', () => {
     resolveLookup({ id: 42, email: 'route-user@test.com' })
     await flushPromises()
 
-    expect((wrapper.vm as any).filters.user_id).toBe(42)
+    expect((wrapper.vm as any).filters.user_ids).toEqual([42])
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('new-search@test.com')
   })
 
@@ -255,7 +257,7 @@ describe('admin UsageView route filters', () => {
     rejectLookup(new Error('lookup failed'))
     await flushPromises()
 
-    expect((wrapper.vm as any).filters.user_id).toBe(42)
+    expect((wrapper.vm as any).filters.user_ids).toEqual([42])
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('new-search@test.com')
   })
 
@@ -266,7 +268,7 @@ describe('admin UsageView route filters', () => {
     const wrapper = mountRouteFilteredUsageView()
     await flushPromises()
 
-    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_ids: '42' }), expect.anything())
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('42')
   })
 })
@@ -368,8 +370,8 @@ describe('admin UsageView distribution metric toggles', () => {
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
     expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
-      start_date: formatLocalDate(yesterday),
-      end_date: formatLocalDate(now),
+      start_date: expect.stringMatching(new RegExp(`^${formatLocalDate(yesterday)}T\\d{2}:\\d{2}:\\d{2}$`)),
+      end_date: expect.stringMatching(new RegExp(`^${formatLocalDate(now)}T\\d{2}:\\d{2}:\\d{2}$`)),
       granularity: 'hour'
     }))
 
@@ -618,14 +620,14 @@ describe('admin UsageView ranking tab', () => {
     await flushPromises()
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(true)
 
-    // 下钻:设置 user_id、切回用量明细 tab 并按新筛选重新拉取列表
+    // 下钻:设置 user_ids、切回用量明细 tab 并按新筛选重新拉取列表
     list.mockClear()
     await wrapper.find('[data-test="ranking"] .pick-user').trigger('click')
     await flushPromises()
 
     expect((wrapper.vm as any).activeTab).toBe('usage')
-    expect((wrapper.vm as any).filters.user_id).toBe(5)
-    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 5 }), expect.anything())
+    expect((wrapper.vm as any).filters.user_ids).toEqual([5])
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_ids: '5' }), expect.anything())
   })
 })
 

@@ -514,6 +514,7 @@ export default {
       searchUserPlaceholder: 'Search user by email...',
       searchApiKeyPlaceholder: 'Search API key by name...',
       searchAccountPlaceholder: 'Search account by name...',
+      upstreamSite: 'Upstream site',
       selectedUser: 'Selected',
       user: 'User',
       apiKeyValue: 'Request API Key',

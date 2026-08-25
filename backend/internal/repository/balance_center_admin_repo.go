@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,8 +51,12 @@ ORDER BY s.normalized_domain ASC, cs.account_id NULLS LAST`)
 
 func (r *balanceCenterRepository) ListBalanceCenterSites(ctx context.Context) ([]service.BalanceCenterSite, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, normalized_domain, base_url, source, probe_supported, updated_at
-FROM balance_center_sites ORDER BY normalized_domain ASC`)
+SELECT s.id, s.name, s.normalized_domain, s.base_url, s.source, s.probe_supported,
+       COALESCE(SUM(e.amount), 0) AS historical_recharge_total, s.updated_at
+FROM balance_center_sites s
+LEFT JOIN balance_center_recharge_events e ON e.site_id = s.id
+GROUP BY s.id, s.name, s.normalized_domain, s.base_url, s.source, s.probe_supported, s.updated_at
+ORDER BY COALESCE(SUM(e.amount), 0) DESC, s.normalized_domain ASC, s.id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("查询余额站点失败: %w", err)
 	}
@@ -59,7 +64,7 @@ FROM balance_center_sites ORDER BY normalized_domain ASC`)
 	items := make([]service.BalanceCenterSite, 0)
 	for rows.Next() {
 		var item service.BalanceCenterSite
-		if err := rows.Scan(&item.ID, &item.Name, &item.NormalizedDomain, &item.BaseURL, &item.Source, &item.ProbeSupported, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.NormalizedDomain, &item.BaseURL, &item.Source, &item.ProbeSupported, &item.HistoricalRechargeTotal, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -218,6 +223,9 @@ ORDER BY s.occurred_at DESC, s.id DESC`, args...)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	sort.SliceStable(summary.Sites, func(i, j int) bool {
+		return summary.Sites[i].TotalAmount > summary.Sites[j].TotalAmount
+	})
 
 	summary.Total = int64(len(allItems))
 	if len(allItems) == 0 || filter.Page < 1 || filter.PageSize < 1 {

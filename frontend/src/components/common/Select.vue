@@ -20,7 +20,7 @@
       @keydown.up.prevent="onTriggerKeyDown"
     >
       <span class="select-value">
-        <slot name="selected" :option="selectedOption">
+        <slot name="selected" :option="selectedOption" :options="selectedOptions">
           {{ selectedLabel }}
         </slot>
       </span>
@@ -142,7 +142,7 @@ export interface SelectOption {
 }
 
 interface Props {
-  modelValue: string | number | boolean | null | undefined
+  modelValue: any
   options: SelectOption[] | Array<Record<string, unknown>>
   placeholder?: string
   disabled?: boolean
@@ -162,11 +162,13 @@ interface Props {
   remote?: boolean
   /** 远程搜索模式下的加载态：options 为空时下拉显示 loading 文案 */
   loading?: boolean
+  /** 多选模式：选项点击后切换选中状态并保留下拉菜单。 */
+  multiple?: boolean
 }
 
 interface Emits {
-  (e: 'update:modelValue', value: string | number | boolean | null): void
-  (e: 'change', value: string | number | boolean | null, option: SelectOption | null): void
+  (e: 'update:modelValue', value: any): void
+  (e: 'change', value: any, option: SelectOption | null): void
   (e: 'search', query: string): void
 }
 
@@ -180,7 +182,8 @@ const props = withDefaults(defineProps<Props>(), {
   valueKey: 'value',
   labelKey: 'label',
   remote: false,
-  loading: false
+  loading: false,
+  multiple: false
 })
 
 const emit = defineEmits<Emits>()
@@ -273,10 +276,22 @@ const isGroupHeaderOption = (option: any): boolean => {
 }
 
 const selectedOption = computed(() => {
+  if (props.multiple) return null
   return props.options.find((opt) => getOptionValue(opt) === props.modelValue) || null
 })
 
+const selectedOptions = computed(() => {
+  if (!props.multiple || !Array.isArray(props.modelValue)) return []
+  const selectedValues = props.modelValue as Array<string | number | boolean>
+  return props.options.filter((option) => selectedValues.includes(getOptionValue(option)))
+})
+
 const selectedLabel = computed(() => {
+  if (props.multiple && Array.isArray(props.modelValue)) {
+    if (props.modelValue.length === 0) return placeholderText.value
+    const labels = selectedOptions.value.map((option) => getOptionLabel(option))
+    return labels.length > 2 ? `${labels.slice(0, 2).join('、')} +${labels.length - 2}` : labels.join('、')
+  }
   if (selectedOption.value) {
     return getOptionLabel(selectedOption.value)
   }
@@ -288,7 +303,9 @@ const selectedLabel = computed(() => {
 })
 
 const hasValue = computed(
-  () => props.modelValue !== null && props.modelValue !== undefined && props.modelValue !== ''
+  () => Array.isArray(props.modelValue)
+    ? props.modelValue.length > 0
+    : props.modelValue !== null && props.modelValue !== undefined && props.modelValue !== ''
 )
 
 const filteredOptions = computed(() => {
@@ -314,7 +331,9 @@ const filteredOptions = computed(() => {
 })
 
 const isSelected = (option: any): boolean => {
-  return getOptionValue(option) === props.modelValue
+  return props.multiple && Array.isArray(props.modelValue)
+    ? (props.modelValue as Array<string | number | boolean>).includes(getOptionValue(option))
+    : getOptionValue(option) === props.modelValue
 }
 
 const findNextEnabledIndex = (startIndex: number): number => {
@@ -417,6 +436,15 @@ watch(searchQuery, (query) => {
 
 const selectOption = (option: any) => {
   const value = getOptionValue(option) ?? null
+  if (props.multiple) {
+    const current = Array.isArray(props.modelValue) ? [...props.modelValue] : []
+    const index = current.indexOf(value)
+    if (index >= 0) current.splice(index, 1)
+    else if (value !== null) current.push(value)
+    emit('update:modelValue', current)
+    emit('change', current, option)
+    return
+  }
   emit('update:modelValue', value)
   emit('change', value, option)
   isOpen.value = false
@@ -425,8 +453,9 @@ const selectOption = (option: any) => {
 
 const clearSelection = () => {
   if (props.disabled) return
-  emit('update:modelValue', null)
-  emit('change', null, null)
+  const value = props.multiple ? [] : null
+  emit('update:modelValue', value)
+  emit('change', value, null)
 }
 
 // Keyboards

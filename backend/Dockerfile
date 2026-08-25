@@ -1,5 +1,4 @@
-# 与 go.mod 的最低版本保持一致，保证独立后端镜像可以正常构建。
-FROM golang:1.26.6-alpine
+FROM golang:1.27.0-alpine
 
 WORKDIR /app
 

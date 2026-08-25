@@ -20,7 +20,7 @@
             @focus="showUserDropdown = true"
           />
           <button
-            v-if="filters.user_id"
+            v-if="filters.user_ids?.length"
             type="button"
             @click="clearUser"
             class="absolute right-2 top-9 text-gray-400"
@@ -28,6 +28,17 @@
           >
             ✕
           </button>
+          <div v-if="selectedUsers.length" class="mt-2 flex flex-wrap gap-1.5">
+            <button
+              v-for="user in selectedUsers"
+              :key="user.id"
+              type="button"
+              class="inline-flex max-w-full items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200"
+              @click="removeUser(user.id)"
+            >
+              <span class="truncate">{{ user.email }}</span><span aria-hidden="true">×</span>
+            </button>
+          </div>
           <div
             v-if="showUserDropdown && (userResults.length > 0 || userKeyword)"
             class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
@@ -61,7 +72,7 @@
             @focus="onApiKeyFocus"
           />
           <button
-            v-if="filters.api_key_id"
+            v-if="filters.api_key_ids?.length"
             type="button"
             @click="onClearApiKey"
             class="absolute right-2 top-9 text-gray-400"
@@ -69,6 +80,17 @@
           >
             ✕
           </button>
+          <div v-if="selectedApiKeys.length" class="mt-2 flex flex-wrap gap-1.5">
+            <button
+              v-for="key in selectedApiKeys"
+              :key="key.id"
+              type="button"
+              class="inline-flex max-w-full items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200"
+              @click="removeApiKey(key.id)"
+            >
+              <span class="truncate">{{ key.name || `#${key.id}` }}</span><span aria-hidden="true">×</span>
+            </button>
+          </div>
           <div
             v-if="showApiKeyDropdown && apiKeyResults.length > 0"
             class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
@@ -89,7 +111,7 @@
         <!-- Model Filter -->
         <div class="w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('usage.model') }}</label>
-          <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
+          <Select v-model="filters.models" :options="modelOptions" multiple clearable searchable @change="emitChange" />
         </div>
 
         <!-- Account Filter -->
@@ -108,7 +130,7 @@
             @focus="showAccountDropdown = true"
           />
           <button
-            v-if="filters.account_id"
+            v-if="filters.account_ids?.length"
             type="button"
             @click="clearAccount"
             class="absolute right-2 top-9 text-gray-400"
@@ -116,6 +138,17 @@
           >
             ✕
           </button>
+          <div v-if="selectedAccounts.length" class="mt-2 flex flex-wrap gap-1.5">
+            <button
+              v-for="account in selectedAccounts"
+              :key="account.id"
+              type="button"
+              class="inline-flex max-w-full items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200"
+              @click="removeAccount(account.id)"
+            >
+              <span class="truncate">{{ account.name }}</span><span aria-hidden="true">×</span>
+            </button>
+          </div>
           <div
             v-if="showAccountDropdown && (accountResults.length > 0 || accountKeyword)"
             class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
@@ -136,24 +169,24 @@
         <!-- Request Type Filter (usage only) -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="input-label">{{ t('usage.type') }}</label>
-          <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
+          <Select v-model="filters.request_types" :options="requestTypeOptions" multiple clearable @change="emitChange" />
         </div>
 
         <!-- Billing Type Filter (usage only) -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="input-label">{{ t('admin.usage.billingType') }}</label>
-          <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
+          <Select v-model="filters.billing_types" :options="billingTypeOptions" multiple clearable @change="emitChange" />
         </div>
 
         <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
         <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
-          <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
+          <Select v-model="filters.billing_modes" :options="billingModeOptions" multiple clearable @change="emitChange" />
         </div>
 
         <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
-          <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
+          <Select v-model="filters.upstream_model_mismatches" :options="upstreamModelMismatchOptions" multiple clearable @change="emitChange" />
         </div>
 
         <!-- Error Phase Filter (errors only) -->
@@ -177,7 +210,21 @@
         <!-- Group Filter -->
         <div class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="input-label">{{ t('admin.usage.group') }}</label>
-          <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
+          <Select v-model="filters.group_ids" :options="groupOptions" multiple clearable searchable @change="emitChange" />
+        </div>
+
+        <!-- 上游站点按站点绑定的账号集合过滤用量。 -->
+        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
+          <label class="input-label">{{ t('admin.usage.upstreamSite') }}</label>
+          <Select
+            :model-value="filters.upstream_site_hosts"
+            :options="upstreamSiteOptions"
+            multiple
+            clearable
+            searchable
+            @update:model-value="selectUpstreamSites"
+            @change="emitChange"
+          />
         </div>
 
       </div>
@@ -266,19 +313,24 @@ interface SimpleAccount {
   id: number
   name: string
 }
+const selectedUsers = ref<SimpleUser[]>([])
+const selectedApiKeys = ref<SimpleApiKey[]>([])
+const selectedAccounts = ref<SimpleAccount[]>([])
 const accountKeyword = ref('')
 const accountResults = ref<SimpleAccount[]>([])
 const showAccountDropdown = ref(false)
 let accountSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
-const modelOptions = computed<SelectOption[]>(() => [
-  { value: null, label: t('admin.usage.allModels') },
-  ...(props.modelOptions ?? []).map((m) => ({ value: m, label: m })),
-])
-const groupOptions = ref<SelectOption[]>([{ value: null, label: t('admin.usage.allGroups') }])
+const modelOptions = computed<SelectOption[]>(() =>
+  (props.modelOptions ?? []).map((m) => ({ value: m, label: m }))
+)
+const groupOptions = ref<SelectOption[]>([])
+const upstreamSites = ref<Array<{ host: string; account_ids: number[] }>>([])
+const upstreamSiteOptions = computed<SelectOption[]>(() =>
+  upstreamSites.value.map((site) => ({ value: site.host, label: site.host }))
+)
 
 const requestTypeOptions = ref<SelectOption[]>([
-  { value: null, label: t('admin.usage.allTypes') },
   { value: 'ws_v2', label: t('usage.ws') },
   { value: 'live', label: t('usage.live') },
   { value: 'stream', label: t('usage.stream') },
@@ -287,7 +339,6 @@ const requestTypeOptions = ref<SelectOption[]>([
 ])
 
 const billingTypeOptions = ref<SelectOption[]>([
-  { value: null, label: t('admin.usage.allBillingTypes') },
   { value: 0, label: t('admin.usage.billingTypeBalance') },
   { value: 1, label: t('admin.usage.billingTypeSubscription') }
 ])
@@ -317,7 +368,6 @@ const statusCodeOptions = computed<SelectOption[]>(() => [
 ])
 
 const billingModeOptions = ref<SelectOption[]>([
-  { value: null, label: t('admin.usage.allBillingModes') },
   { value: 'token', label: t('admin.usage.billingModeToken') },
   { value: 'per_request', label: t('admin.usage.billingModePerRequest') },
   { value: 'image', label: t('admin.usage.billingModeImage') },
@@ -325,7 +375,6 @@ const billingModeOptions = ref<SelectOption[]>([
 ])
 
 const upstreamModelMismatchOptions = ref<SelectOption[]>([
-  { value: null, label: t('admin.usage.allUpstreamModelAudit') },
   { value: true, label: t('admin.usage.upstreamModelMismatchOnly') },
   { value: false, label: t('admin.usage.upstreamModelMatchedOnly') }
 ])
@@ -369,7 +418,7 @@ const debounceApiKeySearch = () => {
   apiKeySearchTimeout = setTimeout(async () => {
     try {
       apiKeyResults.value = await adminAPI.usage.searchApiKeys(
-        filters.value.user_id,
+        filters.value.user_ids?.length === 1 ? filters.value.user_ids[0] : undefined,
         apiKeyKeyword.value || ''
       )
     } catch {
@@ -380,14 +429,20 @@ const debounceApiKeySearch = () => {
 
 const selectUser = async (u: SimpleUser) => {
   clearPendingUserSearch()
-  userKeyword.value = u.email
+  userKeyword.value = ''
   showUserDropdown.value = false
-  filters.value.user_id = u.id
-  clearApiKey()
+  const userIds = Array.isArray(filters.value.user_ids) ? filters.value.user_ids : []
+  if (!userIds.includes(u.id)) {
+    filters.value.user_ids = [...userIds, u.id]
+    selectedUsers.value = [...selectedUsers.value, u]
+  }
 
-  // Auto-load API keys for this user
+  // 单选一个用户时预载其 API Key；多用户时搜索全部 Key。
   try {
-    apiKeyResults.value = await adminAPI.usage.searchApiKeys(u.id, '')
+    apiKeyResults.value = await adminAPI.usage.searchApiKeys(
+      filters.value.user_ids.length === 1 ? u.id : undefined,
+      ''
+    )
   } catch {
     apiKeyResults.value = []
   }
@@ -400,15 +455,25 @@ const clearUser = () => {
   userKeyword.value = ''
   userResults.value = []
   showUserDropdown.value = false
-  filters.value.user_id = undefined
-  clearApiKey()
+  filters.value.user_ids = []
+  selectedUsers.value = []
+  emitChange()
+}
+
+const removeUser = (id: number) => {
+  filters.value.user_ids = (filters.value.user_ids ?? []).filter((value: number) => value !== id)
+  selectedUsers.value = selectedUsers.value.filter((user) => user.id !== id)
   emitChange()
 }
 
 const selectApiKey = (k: SimpleApiKey) => {
-  apiKeyKeyword.value = k.name || String(k.id)
+  apiKeyKeyword.value = ''
   showApiKeyDropdown.value = false
-  filters.value.api_key_id = k.id
+  const apiKeyIds = Array.isArray(filters.value.api_key_ids) ? filters.value.api_key_ids : []
+  if (!apiKeyIds.includes(k.id)) {
+    filters.value.api_key_ids = [...apiKeyIds, k.id]
+    selectedApiKeys.value = [...selectedApiKeys.value, k]
+  }
   emitChange()
 }
 
@@ -416,7 +481,14 @@ const clearApiKey = () => {
   apiKeyKeyword.value = ''
   apiKeyResults.value = []
   showApiKeyDropdown.value = false
-  filters.value.api_key_id = undefined
+  filters.value.api_key_ids = []
+  selectedApiKeys.value = []
+}
+
+const removeApiKey = (id: number) => {
+  filters.value.api_key_ids = (filters.value.api_key_ids ?? []).filter((value: number) => value !== id)
+  selectedApiKeys.value = selectedApiKeys.value.filter((key) => key.id !== id)
+  emitChange()
 }
 
 const onClearApiKey = () => {
@@ -441,9 +513,13 @@ const debounceAccountSearch = () => {
 }
 
 const selectAccount = (a: SimpleAccount) => {
-  accountKeyword.value = a.name
+  accountKeyword.value = ''
   showAccountDropdown.value = false
-  filters.value.account_id = a.id
+  const accountIds = Array.isArray(filters.value.account_ids) ? filters.value.account_ids : []
+  if (!accountIds.includes(a.id)) {
+    filters.value.account_ids = [...accountIds, a.id]
+    selectedAccounts.value = [...selectedAccounts.value, a]
+  }
   emitChange()
 }
 
@@ -451,7 +527,27 @@ const clearAccount = () => {
   accountKeyword.value = ''
   accountResults.value = []
   showAccountDropdown.value = false
-  filters.value.account_id = undefined
+  filters.value.account_ids = []
+  selectedAccounts.value = []
+  emitChange()
+}
+
+const removeAccount = (id: number) => {
+  filters.value.account_ids = (filters.value.account_ids ?? []).filter((value: number) => value !== id)
+  selectedAccounts.value = selectedAccounts.value.filter((account) => account.id !== id)
+  emitChange()
+}
+
+const selectUpstreamSites = (hosts: unknown) => {
+  const selectedHosts = Array.isArray(hosts) ? hosts.filter((host): host is string => typeof host === 'string') : []
+  const selectedHostSet = new Set(selectedHosts)
+  const accountIDs = new Set<number>()
+  for (const site of upstreamSites.value) {
+    if (!selectedHostSet.has(site.host)) continue
+    for (const accountID of site.account_ids) accountIDs.add(accountID)
+  }
+  filters.value.upstream_site_hosts = selectedHosts
+  filters.value.upstream_site_account_ids = Array.from(accountIDs)
   emitChange()
 }
 
@@ -493,41 +589,51 @@ watch(
 )
 
 watch(
-  () => filters.value.user_id,
-  (userId) => {
-    if (!userId) {
+  () => filters.value.user_ids,
+  (userIds) => {
+    if (!userIds?.length) {
       clearPendingUserSearch()
       userKeyword.value = ''
       userResults.value = []
+      selectedUsers.value = []
     }
-  }
+  },
+  { deep: true }
 )
 
 watch(
-  () => filters.value.api_key_id,
-  (apiKeyId) => {
-    if (!apiKeyId) {
+  () => filters.value.api_key_ids,
+  (apiKeyIds) => {
+    if (!apiKeyIds?.length) {
       apiKeyKeyword.value = ''
       apiKeyResults.value = []
+      selectedApiKeys.value = []
     }
-  }
+  },
+  { deep: true }
 )
 
 watch(
-  () => filters.value.account_id,
-  (accountId) => {
-    if (!accountId) {
+  () => filters.value.account_ids,
+  (accountIds) => {
+    if (!accountIds?.length) {
       accountKeyword.value = ''
       accountResults.value = []
+      selectedAccounts.value = []
     }
-  }
+  },
+  { deep: true }
 )
 
 onMounted(async () => {
   document.addEventListener('click', onDocumentClick)
   try {
-    const gs = await adminAPI.groups.list(1, 1000)
-    groupOptions.value.push(...gs.items.map((g: any) => ({ value: g.id, label: g.name })))
+    const [gs, sites] = await Promise.all([
+      adminAPI.groups.list(1, 1000),
+      adminAPI.accounts.listUpstreamSites(),
+    ])
+    groupOptions.value = gs.items.map((g: any) => ({ value: g.id, label: g.name }))
+    upstreamSites.value = sites.map((site) => ({ host: site.host, account_ids: site.account_ids }))
   } catch {
     // Ignore filter option loading errors (page still usable)
   }
@@ -546,7 +652,13 @@ const setUserKeyword = (email: string) => {
   showUserDropdown.value = false
 }
 
+const setSelectedUser = (id: number, email: string) => {
+  filters.value.user_ids = [id]
+  selectedUsers.value = [{ id, email, deleted: false }]
+  setUserKeyword('')
+}
+
 const getUserSearchRevision = () => userSearchSequence
 
-defineExpose({ getUserSearchRevision, setUserKeyword })
+defineExpose({ getUserSearchRevision, setUserKeyword, setSelectedUser, selectUpstreamSites })
 </script>

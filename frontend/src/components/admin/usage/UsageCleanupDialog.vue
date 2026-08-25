@@ -160,8 +160,9 @@ const noop = () => {}
 
 const resetFilters = () => {
   localFilters.value = { ...props.filters }
-  localStartDate.value = props.startDate
-  localEndDate.value = props.endDate
+  // 清理接口仍按自然日执行，避免查询页的秒级范围改变删除语义。
+  localStartDate.value = props.startDate.slice(0, 10)
+  localEndDate.value = props.endDate.slice(0, 10)
   localFilters.value.start_date = localStartDate.value
   localFilters.value.end_date = localEndDate.value
   tasksPage.value = 1

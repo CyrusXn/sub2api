@@ -37,6 +37,7 @@ import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
 import tablePreferencesAPI from './tablePreferences'
 import balanceCenterAPI from './balanceCenter'
+import pluginsAPI from './plugins'
 
 /**
  * Unified admin API object for convenient access
@@ -75,7 +76,8 @@ export const adminAPI = {
   compliance: adminComplianceAPI,
   audit: auditAPI,
   tablePreferences: tablePreferencesAPI,
-  balanceCenter: balanceCenterAPI
+  balanceCenter: balanceCenterAPI,
+  plugins: pluginsAPI
 }
 
 export {
@@ -112,7 +114,8 @@ export {
   adminComplianceAPI,
   auditAPI,
   tablePreferencesAPI,
-  balanceCenterAPI
+  balanceCenterAPI,
+  pluginsAPI
 }
 
 export default adminAPI
@@ -125,3 +128,9 @@ export type { BackupAgentHealth, DataManagementConfig } from './dataManagement'
 export type { TLSFingerprintProfile, CreateProfileRequest, UpdateProfileRequest } from './tlsFingerprintProfile'
 export type { ContentModerationConfig, ContentModerationLog, ModerationMode } from './riskControl'
 export type { AdminTableKey, TablePreference, SaveTablePreferenceRequest } from './tablePreferences'
+export type {
+  PluginInstallation,
+  PluginCompatibility,
+  PluginUISession,
+  PluginTestResult
+} from './plugins'

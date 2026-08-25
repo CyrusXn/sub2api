@@ -93,4 +93,22 @@ describe('DateRangePicker', () => {
       }
     ])
   })
+
+  it('showTime 模式使用秒级 datetime-local 输入并保留传入时间', async () => {
+    const wrapper = mount(DateRangePicker, {
+      props: {
+        startDate: '2026-08-20T10:20:30',
+        endDate: '2026-08-20T11:20:45',
+        showTime: true
+      },
+      global: { stubs: { Icon: true } }
+    })
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    const inputs = wrapper.findAll('.date-picker-input')
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0].attributes('type')).toBe('datetime-local')
+    expect(inputs[0].attributes('step')).toBe('1')
+    expect((inputs[0].element as HTMLInputElement).value).toMatch(/^2026-08-20T10:20:30(?:\.000)?$/)
+    expect(wrapper.find('.date-picker-value').text()).toContain('10:20:30')
+  })
 })

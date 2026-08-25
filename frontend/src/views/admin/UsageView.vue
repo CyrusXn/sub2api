@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <UsageStatsCards :stats="usageStats" />
+      <UsageStatsCards :stats="usageStats" :show-account-cost="false" show-upstream-metrics />
       <!-- Charts Section -->
       <div class="space-y-4">
         <div class="card p-4">
@@ -11,6 +11,7 @@
               <DateRangePicker
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
+                :show-time="true"
                 @change="onDateRangeChange"
               />
             </div>
@@ -189,7 +190,7 @@ import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admin'; import { adminUsageAPI } from '@/api/admin/usage'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
-import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
+import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
@@ -239,12 +240,17 @@ const balanceHistoryUser = ref<AdminUser | null>(null)
 
 const breakdownFilters = computed(() => {
   const f: Record<string, any> = {}
-  if (filters.value.user_id) f.user_id = filters.value.user_id
-  if (filters.value.api_key_id) f.api_key_id = filters.value.api_key_id
-  if (filters.value.account_id) f.account_id = filters.value.account_id
-  if (filters.value.group_id) f.group_id = filters.value.group_id
-  if (filters.value.request_type != null) f.request_type = filters.value.request_type
-  if (filters.value.billing_type != null) f.billing_type = filters.value.billing_type
+  const csv = (values?: unknown[]) => values?.length ? values.join(',') : undefined
+  f.user_ids = csv(filters.value.user_ids)
+  f.api_key_ids = csv(filters.value.api_key_ids)
+  f.account_ids = csv(filters.value.account_ids)
+  f.group_ids = csv(filters.value.group_ids)
+  f.models = csv(filters.value.models)
+  f.request_types = csv(filters.value.request_types)
+  f.billing_types = csv(filters.value.billing_types)
+  f.billing_modes = csv(filters.value.billing_modes)
+  f.upstream_model_mismatches = csv(filters.value.upstream_model_mismatches)
+  f.upstream_site_account_ids = csv(filters.value.upstream_site_account_ids)
   return f
 })
 
@@ -265,8 +271,8 @@ const handleUserClick = async (userId: number) => {
 // Drill down from the per-user token ranking: scope the whole usage view to
 // that user and jump to the usage-detail tab so the drill-down is visible.
 const handleRankingSelectUser = (userId: number, email: string) => {
-  filters.value = { ...filters.value, user_id: userId }
-  usageFiltersRef.value?.setUserKeyword?.(email || '')
+  filters.value = { ...filters.value, user_ids: [userId] }
+  usageFiltersRef.value?.setSelectedUser?.(userId, email || String(userId))
   activeTab.value = 'usage'
   applyFilters()
 }
@@ -279,23 +285,41 @@ const formatLD = (d: Date) => {
   const day = String(d.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+const formatLDT = (d: Date) => {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${formatLD(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 const getLast24HoursRangeDates = (): { start: string; end: string } => {
   const end = new Date()
   const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
   return {
-    start: formatLD(start),
-    end: formatLD(end)
+    start: formatLDT(start),
+    end: formatLDT(end)
   }
 }
 const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
-  const startTime = new Date(`${start}T00:00:00`).getTime()
-  const endTime = new Date(`${end}T00:00:00`).getTime()
+  const startTime = new Date(start.includes('T') ? start : `${start}T00:00:00`).getTime()
+  const endTime = new Date(end.includes('T') ? end : `${end}T00:00:00`).getTime()
   const daysDiff = Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24))
   return daysDiff <= 1 ? 'hour' : 'day'
 }
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
-const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, billing_type: null, start_date: startDate.value, end_date: endDate.value })
+// 页面控件使用数组表达多选，发请求时由 buildUsageListParams 统一转换为 CSV。
+const filters = ref<Record<string, any>>({
+  user_ids: undefined,
+  api_key_ids: undefined,
+  account_ids: undefined,
+  group_ids: undefined,
+  models: undefined,
+  request_types: undefined,
+  billing_types: undefined,
+  billing_modes: undefined,
+  upstream_model_mismatches: undefined,
+  upstream_site_account_ids: undefined,
+  start_date: startDate.value,
+  end_date: endDate.value,
+})
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 const sortState = reactive({
   sort_by: 'created_at',
@@ -328,7 +352,7 @@ const applyRouteQueryFilters = () => {
 
   filters.value = {
     ...filters.value,
-    user_id: queryUserId,
+    user_ids: queryUserId ? [queryUserId] : [],
     start_date: startDate.value,
     end_date: endDate.value
   }
@@ -336,22 +360,22 @@ const applyRouteQueryFilters = () => {
 }
 
 const loadRouteUserFilterLabel = async () => {
-  const requestedUserId = filters.value.user_id
+  const requestedUserId = filters.value.user_ids?.length === 1 ? filters.value.user_ids[0] : undefined
   if (!requestedUserId) return
   const userSearchRevision = usageFiltersRef.value?.getUserSearchRevision?.()
 
   const routeUserFilterIsCurrent = () => (
-    filters.value.user_id === requestedUserId
+    filters.value.user_ids?.length === 1 && filters.value.user_ids[0] === requestedUserId
     && usageFiltersRef.value?.getUserSearchRevision?.() === userSearchRevision
   )
 
   try {
     const user = await adminAPI.users.getById(requestedUserId, true)
     if (!routeUserFilterIsCurrent()) return
-    usageFiltersRef.value?.setUserKeyword?.(user.email || String(requestedUserId))
+    usageFiltersRef.value?.setSelectedUser?.(requestedUserId, user.email || String(requestedUserId))
   } catch {
     if (!routeUserFilterIsCurrent()) return
-    usageFiltersRef.value?.setUserKeyword?.(String(requestedUserId))
+    usageFiltersRef.value?.setSelectedUser?.(requestedUserId, String(requestedUserId))
   }
 }
 
@@ -372,14 +396,22 @@ const buildUsageListParams = (
   pageSize: number,
   exactTotal: boolean
 ): AdminUsageQueryParams => {
-  const requestType = filters.value.request_type
-  const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
+  const csv = (value?: string | string[] | number[] | boolean[]) => Array.isArray(value) ? (value.length ? value.join(',') : undefined) : value
   return {
     page,
     page_size: pageSize,
     exact_total: exactTotal,
     ...filters.value,
-    stream: legacyStream === null ? undefined : legacyStream,
+    user_ids: csv(filters.value.user_ids),
+    api_key_ids: csv(filters.value.api_key_ids),
+    account_ids: csv(filters.value.account_ids),
+    group_ids: csv(filters.value.group_ids),
+    models: csv(filters.value.models),
+    request_types: csv(filters.value.request_types),
+    billing_types: csv(filters.value.billing_types),
+    billing_modes: csv(filters.value.billing_modes),
+    upstream_model_mismatches: csv(filters.value.upstream_model_mismatches),
+    upstream_site_account_ids: csv(filters.value.upstream_site_account_ids),
     sort_by: sortState.sort_by,
     sort_order: sortState.sort_order
   }
@@ -399,11 +431,9 @@ const loadStats = async (force = false) => {
   const seq = ++statsReqSeq
   endpointStatsLoading.value = true
   try {
-    const requestType = filters.value.request_type
-    const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
+    const params = buildUsageListParams(1, pagination.page_size, false)
     const s = await adminAPI.usage.getStats({
-      ...filters.value,
-      stream: legacyStream === null ? undefined : legacyStream,
+      ...params,
       ...(force ? { nocache: 1 } : {}),
     })
     if (seq !== statsReqSeq) return
@@ -437,20 +467,20 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
   const seq = ++modelStatsReqSeq
   modelStatsLoading.value = true
   try {
-    const requestType = filters.value.request_type
-    const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
+    const csv = (value?: unknown[]) => value?.length ? value.join(',') : undefined
     const baseParams = {
       start_date: filters.value.start_date || startDate.value,
       end_date: filters.value.end_date || endDate.value,
-      user_id: filters.value.user_id,
-      model: filters.value.model,
-      api_key_id: filters.value.api_key_id,
-      account_id: filters.value.account_id,
-      group_id: filters.value.group_id,
-      request_type: requestType,
-      stream: legacyStream === null ? undefined : legacyStream,
-      billing_type: filters.value.billing_type,
-	  upstream_model_mismatch: filters.value.upstream_model_mismatch,
+      user_ids: csv(filters.value.user_ids),
+      api_key_ids: csv(filters.value.api_key_ids),
+      account_ids: csv(filters.value.account_ids),
+      group_ids: csv(filters.value.group_ids),
+      models: csv(filters.value.models),
+      request_types: csv(filters.value.request_types),
+      billing_types: csv(filters.value.billing_types),
+      billing_modes: csv(filters.value.billing_modes),
+      upstream_model_mismatches: csv(filters.value.upstream_model_mismatches),
+      upstream_site_account_ids: csv(filters.value.upstream_site_account_ids),
     }
 
     const response = await adminAPI.dashboard.getModelStats({ ...baseParams, model_source: source })
@@ -486,21 +516,21 @@ const loadChartData = async () => {
   const seq = ++chartReqSeq
   chartsLoading.value = true
   try {
-    const requestType = filters.value.request_type
-    const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
+    const csv = (value?: unknown[]) => value?.length ? value.join(',') : undefined
     const snapshot = await adminAPI.dashboard.getSnapshotV2({
       start_date: filters.value.start_date || startDate.value,
       end_date: filters.value.end_date || endDate.value,
       granularity: granularity.value,
-      user_id: filters.value.user_id,
-      model: filters.value.model,
-      api_key_id: filters.value.api_key_id,
-      account_id: filters.value.account_id,
-      group_id: filters.value.group_id,
-      request_type: requestType,
-      stream: legacyStream === null ? undefined : legacyStream,
-      billing_type: filters.value.billing_type,
-	  upstream_model_mismatch: filters.value.upstream_model_mismatch,
+      user_ids: csv(filters.value.user_ids),
+      api_key_ids: csv(filters.value.api_key_ids),
+      account_ids: csv(filters.value.account_ids),
+      group_ids: csv(filters.value.group_ids),
+      models: csv(filters.value.models),
+      request_types: csv(filters.value.request_types),
+      billing_types: csv(filters.value.billing_types),
+      billing_modes: csv(filters.value.billing_modes),
+      upstream_model_mismatches: csv(filters.value.upstream_model_mismatches),
+      upstream_site_account_ids: csv(filters.value.upstream_site_account_ids),
       include_stats: false,
       include_trend: true,
       include_model_stats: false,
@@ -539,7 +569,20 @@ const resetFilters = () => {
   const range = getLast24HoursRangeDates()
   startDate.value = range.start
   endDate.value = range.end
-  filters.value = { start_date: startDate.value, end_date: endDate.value, request_type: undefined, billing_type: null, billing_mode: undefined }
+  filters.value = {
+    start_date: startDate.value,
+    end_date: endDate.value,
+    user_ids: undefined,
+    api_key_ids: undefined,
+    account_ids: undefined,
+    group_ids: undefined,
+    models: undefined,
+    request_types: undefined,
+    billing_types: undefined,
+    billing_modes: undefined,
+    upstream_model_mismatches: undefined,
+    upstream_site_account_ids: undefined,
+  }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
   applyFilters()
 }
@@ -567,6 +610,13 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
   return t('usage.unknown')
 }
 
+// 使用请求结算时固化的账号成本快照计算上游费用，避免读取当前倍率重算历史记录。
+const getUpstreamCost = (log: AdminUsageLog): number => {
+  const base = log.account_stats_cost ?? log.total_cost ?? 0
+  const value = base * (log.account_rate_multiplier ?? 1)
+  return Number.isFinite(value) ? value : 0
+}
+
 const exportToExcel = async () => {
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
   const c = new AbortController(); exportAbortController = c
@@ -582,7 +632,7 @@ const exportToExcel = async () => {
       t('admin.usage.cacheReadTokens'), t('admin.usage.cacheCreationTokens'),
       t('admin.usage.inputCost'), t('admin.usage.outputCost'),
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
-      t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.accountBilled'),
+      t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.upstreamTotalTokens'), t('usage.upstreamCost'), t('usage.profit'), t('usage.accountBilled'),
       t('usage.firstToken'), t('usage.duration'),
       t('admin.usage.requestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
@@ -602,7 +652,10 @@ const exportToExcel = async () => {
         log.cache_read_cost?.toFixed(6) || '0.000000', log.cache_creation_cost?.toFixed(6) || '0.000000',
         log.rate_multiplier?.toPrecision(4) || '1.00', (log.account_rate_multiplier ?? 1).toPrecision(4),
         log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
-        ((log.account_stats_cost ?? log.total_cost) * (log.account_rate_multiplier ?? 1)).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
+        (log.input_tokens + log.output_tokens + log.cache_read_tokens + log.cache_creation_tokens),
+        getUpstreamCost(log).toFixed(6),
+        (log.actual_cost - getUpstreamCost(log)).toFixed(6),
+        getUpstreamCost(log).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
         log.request_id || '', log.user_agent || '', log.ip_address || ''
       ])
       if (rows.length) {
@@ -643,6 +696,7 @@ const allColumns = computed(() => [
   { key: 'billing_mode', label: t('admin.usage.billingMode'), sortable: false },
   { key: 'tokens', label: t('usage.tokens'), sortable: false },
   { key: 'cost', label: t('usage.cost'), sortable: false },
+  { key: 'upstream_cost', label: t('usage.upstreamCost'), sortable: false },
   { key: 'latency', label: t('usage.latency'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
@@ -802,7 +856,7 @@ const selectedErrorId = ref<number | null>(null)
 
 // 注意：'YYYY-MM-DDT00:00:00' 无时区后缀，按本地时区解析后再转 UTC——与页面其它日期处理语义一致，刻意如此，勿改成 'T00:00:00Z'
 const toRFC3339 = (d: string | undefined, endOfDay = false): string | undefined =>
-  d ? new Date(d + (endOfDay ? 'T23:59:59.999' : 'T00:00:00')).toISOString() : undefined
+  d ? new Date(d.includes('T') ? d : `${d}${endOfDay ? 'T23:59:59.999' : 'T00:00:00'}`).toISOString() : undefined
 
 const loadAdminErrors = async () => {
   errLoading.value = true

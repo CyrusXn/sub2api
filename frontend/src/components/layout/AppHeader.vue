@@ -21,8 +21,8 @@
         </div>
       </div>
 
-      <!-- 管理员全局实时性能，宽度不足时隐藏以免遮挡右侧操作。 -->
-      <div v-if="authStore.isAdmin" class="hidden min-w-0 flex-1 items-center justify-center 2xl:flex">
+      <!-- 管理员实时性能在 xl 及以上始终显示，指标区可自行换行避免被挤出。 -->
+      <div v-if="authStore.isAdmin" class="hidden min-w-0 flex-1 items-center justify-center xl:flex">
         <AdminRealtimeStatus @refresh-dashboard-metrics="handleAdminMetricsRefresh" />
       </div>
 

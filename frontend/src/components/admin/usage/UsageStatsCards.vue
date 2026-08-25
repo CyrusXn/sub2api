@@ -1,5 +1,10 @@
 <template>
-  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+  <div
+    :class="[
+      'grid grid-cols-2 gap-4',
+      showUpstreamMetrics ? 'md:grid-cols-3 xl:grid-cols-7' : 'lg:grid-cols-4',
+    ]"
+  >
     <div class="card p-4 flex items-center gap-3">
       <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
         <Icon name="document" size="md" />
@@ -58,6 +63,14 @@
         </p>
       </div>
     </div>
+    <div v-if="showUpstreamMetrics" class="card p-4 flex items-center gap-3">
+      <div class="rounded-lg bg-cyan-100 p-2 dark:bg-cyan-900/30 text-cyan-600"><Icon name="cube" size="md" /></div>
+      <div>
+        <p class="text-xs font-medium text-gray-500">{{ t('usage.upstreamTotalTokens') }}</p>
+        <p class="text-xl font-bold">{{ formatTokens(stats?.total_tokens || 0) }}</p>
+        <p class="text-xs text-gray-400">{{ t('usage.originalTokenCount') }}</p>
+      </div>
+    </div>
     <div class="card p-4 flex items-center gap-3">
       <div class="rounded-lg bg-green-100 p-2 dark:bg-green-900/30 text-green-600">
         <Icon name="dollar" size="md" />
@@ -77,6 +90,22 @@
             <span :class="{ 'line-through': strikeStandardCost }">${{ (stats?.total_cost || 0).toFixed(4) }}</span>
           </span>
         </p>
+      </div>
+    </div>
+    <div v-if="showUpstreamMetrics" class="card p-4 flex items-center gap-3">
+      <div class="rounded-lg bg-red-100 p-2 dark:bg-red-900/30 text-red-600"><Icon name="dollar" size="md" /></div>
+      <div class="min-w-0 flex-1">
+        <p class="text-xs font-medium text-gray-500">{{ t('usage.upstreamTotalCost') }}</p>
+        <p class="text-xl font-bold text-red-600 dark:text-red-400">${{ totalUpstreamCost.toFixed(4) }}</p>
+        <p class="text-xs text-gray-400">{{ t('usage.upstreamCostSnapshot') }}</p>
+      </div>
+    </div>
+    <div v-if="showUpstreamMetrics" class="card p-4 flex items-center gap-3">
+      <div class="rounded-lg bg-teal-100 p-2 dark:bg-teal-900/30 text-teal-600"><Icon name="dollar" size="md" /></div>
+      <div class="min-w-0 flex-1">
+        <p class="text-xs font-medium text-gray-500">{{ t('usage.profit') }}</p>
+        <p class="text-xl font-bold" :class="totalProfit >= 0 ? 'text-teal-600 dark:text-teal-400' : 'text-rose-600 dark:text-rose-400'">${{ totalProfit.toFixed(4) }}</p>
+        <p class="text-xs text-gray-400">{{ t('usage.profitFormula') }}</p>
       </div>
     </div>
     <div class="card p-4 flex items-center gap-3">
@@ -99,9 +128,11 @@ const props = withDefaults(defineProps<{
   stats: (AdminUsageStatsResponse | UsageStatsResponse) | null
   showAccountCost?: boolean
   strikeStandardCost?: boolean
+  showUpstreamMetrics?: boolean
 }>(), {
   showAccountCost: true,
   strikeStandardCost: false,
+  showUpstreamMetrics: false,
 })
 
 const { t } = useI18n()
@@ -110,8 +141,11 @@ const totalAccountCost = computed(() => {
   const stats = props.stats as (AdminUsageStatsResponse & { total_account_cost?: number }) | null
   return stats?.total_account_cost ?? null
 })
+const totalUpstreamCost = computed(() => totalAccountCost.value ?? 0)
+const totalProfit = computed(() => (props.stats?.total_actual_cost || 0) - totalUpstreamCost.value)
 const showAccountCost = computed(() => props.showAccountCost)
 const strikeStandardCost = computed(() => props.strikeStandardCost)
+const showUpstreamMetrics = computed(() => props.showUpstreamMetrics)
 
 const formatDuration = (ms: number) =>
   ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms / 1000).toFixed(2)}s`

@@ -45,6 +45,7 @@ const messages: Record<string, string> = {
   'usage.original': 'Original',
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
+  'usage.upstreamCost': 'Upstream Cost',
   'usage.imageUnit': ' images',
   'usage.imageCount': 'Image count',
   'usage.imageBillingSize': 'Billing size',
@@ -101,6 +102,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-upstream_cost" :row="row" />
         <slot name="cell-latency" :row="row" />
         <slot name="cell-request_id" :row="row" />
       </div>
@@ -175,6 +177,46 @@ describe('admin UsageTable tooltip', () => {
     await wrapper.get('[data-testid="usage-api-key-copy"]').trigger('click')
 
     expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith(apiKey, 'API Key copied')
+  })
+
+  it('uses the settled account cost snapshot and multiplier for upstream cost', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          account_stats_cost: 0.2,
+          account_rate_multiplier: 1.5,
+          total_cost: 9,
+        }],
+        loading: false,
+        columns: [{ key: 'upstream_cost', label: 'Upstream Cost', sortable: false }],
+      },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+
+    expect(wrapper.text()).toContain('$0.300000')
+    expect(wrapper.text()).not.toContain('$13.500000')
+  })
+
+  it('uses a multiplier of one when a historical upstream snapshot has no multiplier', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          account_stats_cost: 0.2,
+          account_rate_multiplier: null,
+        }],
+        loading: false,
+        columns: [{ key: 'upstream_cost', label: 'Upstream Cost', sortable: false }],
+      },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+
+    expect(wrapper.text()).toContain('$0.200000')
   })
 
   it('marks only usage rows that actually applied long-context billing', () => {

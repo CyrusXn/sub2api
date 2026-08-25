@@ -145,6 +145,16 @@ export interface TrendParams {
   stream?: boolean
   billing_type?: number | null
 	upstream_model_mismatch?: boolean
+  user_ids?: string
+  api_key_ids?: string
+  account_ids?: string
+  group_ids?: string
+  models?: string
+  request_types?: string
+  billing_types?: string
+  billing_modes?: string
+  upstream_model_mismatches?: string
+  upstream_site_account_ids?: string
 }
 
 export interface TrendResponse {
@@ -177,6 +187,16 @@ export interface ModelStatsParams {
   stream?: boolean
   billing_type?: number | null
 	upstream_model_mismatch?: boolean
+  user_ids?: string
+  api_key_ids?: string
+  account_ids?: string
+  group_ids?: string
+  models?: string
+  request_types?: string
+  billing_types?: string
+  billing_modes?: string
+  upstream_model_mismatches?: string
+  upstream_site_account_ids?: string
 }
 
 export interface ModelStatsResponse {

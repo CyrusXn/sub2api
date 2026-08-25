@@ -511,6 +511,7 @@ export default {
       searchUserPlaceholder: '按邮箱搜索用户...',
       searchApiKeyPlaceholder: '按名称搜索 API 密钥...',
       searchAccountPlaceholder: '按名称搜索账号...',
+      upstreamSite: '上游站点',
       selectedUser: '已选择',
       user: '用户',
       apiKeyValue: '请求 API Key',

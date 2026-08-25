@@ -57,6 +57,7 @@ const mockSearchApiKeys = vi.fn().mockResolvedValue([])
 const mockGroupsList = vi.fn().mockResolvedValue({ items: [] })
 const mockGetModelStats = vi.fn().mockResolvedValue({ models: [] })
 const mockAccountsList = vi.fn().mockResolvedValue({ items: [] })
+const mockListUpstreamSites = vi.fn().mockResolvedValue([])
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
@@ -66,21 +67,26 @@ vi.mock('@/api/admin', () => ({
     },
     groups: { list: (...args: any[]) => mockGroupsList(...args) },
     dashboard: { getModelStats: (...args: any[]) => mockGetModelStats(...args) },
-    accounts: { list: (...args: any[]) => mockAccountsList(...args) },
+    accounts: {
+      list: (...args: any[]) => mockAccountsList(...args),
+      listUpstreamSites: (...args: any[]) => mockListUpstreamSites(...args),
+    },
   },
 }))
 
 // Default props helper
 const defaultFilters = () => ({
-  user_id: undefined,
-  api_key_id: undefined,
-  account_id: undefined,
-  model: null,
-  request_type: null,
-  billing_type: null,
-  billing_mode: null,
-	upstream_model_mismatch: null,
-  group_id: null,
+  user_ids: [],
+  api_key_ids: [],
+  account_ids: [],
+  models: [],
+  request_types: [],
+  billing_types: [],
+  billing_modes: [],
+	upstream_model_mismatches: [],
+  group_ids: [],
+  upstream_site_hosts: [],
+  upstream_site_account_ids: [],
   start_date: '',
   end_date: '',
 })
@@ -191,7 +197,7 @@ describe('UsageFilters — user search dropdown', () => {
 
     // Also confirm user_id was set by checking the emitted change came through
     // (the component uses toRef so modelValue is mutated in place and 'change' is emitted)
-    expect(wrapper.props('modelValue').user_id).toBe(1)
+    expect(wrapper.props('modelValue').user_ids).toEqual([1])
   })
 
   it('keeps results from the latest user search when responses arrive out of order', async () => {
@@ -269,7 +275,21 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
 
     expect(mockGetModelStats).not.toHaveBeenCalled()
 
-    const opts = (wrapper.vm as any).modelOptions as Array<{ value: string | null; label: string }>
-    expect(opts.map((o) => o.value)).toEqual([null, 'claude-3', 'gpt-4o'])
+    const opts = (wrapper.vm as any).modelOptions as Array<{ value: string; label: string }>
+    expect(opts.map((o) => o.value)).toEqual(['claude-3', 'gpt-4o'])
+  })
+
+  it('maps selected upstream sites to a deduplicated account ID list', async () => {
+    mockListUpstreamSites.mockResolvedValueOnce([
+      { host: 'vovo.example', website_url: 'https://vovo.example', account_ids: [2, 3], account_names: [], login_username: '', has_password: false, protocol: 'newapi' },
+      { host: 'other.example', website_url: 'https://other.example', account_ids: [3, 5], account_names: [], login_username: '', has_password: false, protocol: 'newapi' },
+    ])
+    const wrapper = mountFilters()
+    await flushPromises()
+
+    ;(wrapper.vm as any).selectUpstreamSites(['vovo.example', 'other.example'])
+
+    expect(wrapper.props('modelValue').upstream_site_account_ids).toEqual([2, 3, 5])
+    expect(wrapper.emitted('change')).toBeTruthy()
   })
 })

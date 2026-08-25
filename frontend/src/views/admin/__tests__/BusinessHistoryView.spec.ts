@@ -77,11 +77,11 @@ describe('BusinessHistoryView', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('默认查询最近 30 天并展示范围内三项经营指标', async () => {
+  it('默认从 2026 年 7 月 9 日查询并展示范围内三项经营指标', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(getBusinessSummary).toHaveBeenCalledWith({ start_date: '2026-07-19', end_date: '2026-08-17' })
+    expect(getBusinessSummary).toHaveBeenCalledWith({ start_date: '2026-07-09', end_date: '2026-08-17' })
     expect(wrapper.get('[data-test="range-requests"]').text()).toContain('123')
     expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$20.00')

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	gocache "github.com/patrickmn/go-cache"
 )
@@ -187,6 +188,80 @@ func buildWhere(conditions []string) string {
 		return ""
 	}
 	return "WHERE " + strings.Join(conditions, " AND ")
+}
+
+func appendUsageLogListCondition[T any](conditions []string, args []any, column string, values []T) ([]string, []any) {
+	if len(values) == 0 {
+		return conditions, args
+	}
+	conditions = append(conditions, fmt.Sprintf("%s = ANY($%d)", column, len(args)+1))
+	args = append(args, values)
+	return conditions, args
+}
+
+func appendUsageLogRequestTypesWhereCondition(conditions []string, args []any, requestTypes []int16, alias string) ([]string, []any) {
+	if len(requestTypes) == 0 {
+		return conditions, args
+	}
+	alternatives := make([]string, 0, len(requestTypes))
+	for _, requestType := range requestTypes {
+		condition, conditionArgs := buildRequestTypeFilterConditionWithAlias(len(args)+1, requestType, alias)
+		alternatives = append(alternatives, condition)
+		args = append(args, conditionArgs...)
+	}
+	conditions = append(conditions, "("+strings.Join(alternatives, " OR ")+")")
+	return conditions, args
+}
+
+func appendUsageLogBillingModesWhereCondition(conditions []string, args []any, billingModes []string, alias string) ([]string, []any) {
+	if len(billingModes) == 0 {
+		return conditions, args
+	}
+	alternatives := make([]string, 0, len(billingModes))
+	for _, billingMode := range billingModes {
+		modeConditions, nextArgs := appendUsageLogBillingModeWhereConditionWithAlias(nil, args, billingMode, alias)
+		if len(modeConditions) == 0 {
+			continue
+		}
+		alternatives = append(alternatives, modeConditions[0])
+		args = nextArgs
+	}
+	if len(alternatives) > 0 {
+		conditions = append(conditions, "("+strings.Join(alternatives, " OR ")+")")
+	}
+	return conditions, args
+}
+
+func appendUsageLogSharedListConditions(conditions []string, args []any, filters usagestats.UsageLogFilters, alias string) ([]string, []any) {
+	column := func(name string) string { return usageLogColumn(alias, name) }
+	conditions, args = appendUsageLogListCondition(conditions, args, column("user_id"), filters.UserIDs)
+	conditions, args = appendUsageLogListCondition(conditions, args, column("api_key_id"), filters.APIKeyIDs)
+	conditions, args = appendUsageLogListCondition(conditions, args, column("account_id"), filters.AccountIDs)
+	conditions, args = appendUsageLogListCondition(conditions, args, column("group_id"), filters.GroupIDs)
+	conditions, args = appendUsageLogListCondition(conditions, args, column("account_id"), filters.UpstreamSiteAccountIDs)
+	if len(filters.Models) > 0 {
+		expression := resolveModelDimensionExpressionWithAlias(filters.ModelFilterSource, alias)
+		conditions, args = appendUsageLogListCondition(conditions, args, expression, filters.Models)
+	}
+	conditions, args = appendUsageLogRequestTypesWhereCondition(conditions, args, filters.RequestTypes, alias)
+	conditions, args = appendUsageLogListCondition(conditions, args, column("billing_type"), filters.BillingTypes)
+	conditions, args = appendUsageLogBillingModesWhereCondition(conditions, args, filters.BillingModes, alias)
+	if len(filters.UpstreamModelMismatches) > 0 {
+		alternatives := make([]string, 0, len(filters.UpstreamModelMismatches))
+		for _, mismatch := range filters.UpstreamModelMismatches {
+			alternatives = append(alternatives, upstreamModelMismatchCondition(column("upstream_model_mismatch"), mismatch))
+		}
+		conditions = append(conditions, "("+strings.Join(alternatives, " OR ")+")")
+	}
+	return conditions, args
+}
+
+func appendUsageLogSharedListQuery(query string, args []any, filters usagestats.UsageLogFilters, alias string) (string, []any) {
+	conditions, args := appendUsageLogSharedListConditions(nil, args, filters, alias)
+	if len(conditions) == 0 {
+		return query, args
+	}
+	return query + " AND " + strings.Join(conditions, " AND "), args
 }
 
 func appendRequestTypeOrStreamWhereCondition(conditions []string, args []any, requestType *int16, stream *bool) ([]string, []any) {

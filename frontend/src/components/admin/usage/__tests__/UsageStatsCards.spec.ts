@@ -7,6 +7,8 @@ const messages: Record<string, string> = {
   'usage.totalRequests': 'Total Requests',
   'usage.inSelectedRange': 'in selected range',
   'usage.totalTokens': 'Total Tokens',
+  'usage.upstreamTotalTokens': 'Upstream Total Tokens',
+  'usage.originalTokenCount': 'Original token count',
   'usage.in': 'In',
   'usage.out': 'Out',
   'usage.cacheTotal': 'Cache',
@@ -14,6 +16,10 @@ const messages: Record<string, string> = {
   'usage.cacheCreationTokensLabel': 'Cache Creation',
   'usage.cacheReadTokensLabel': 'Cache Read',
   'usage.totalCost': 'Total Cost',
+  'usage.upstreamTotalCost': 'Upstream Total Cost',
+  'usage.upstreamCostSnapshot': 'Settled upstream snapshot',
+  'usage.profit': 'Profit',
+  'usage.profitFormula': 'Total cost - upstream cost',
   'usage.accountCost': 'Cost',
   'usage.standardCost': 'Standard',
   'usage.avgDuration': 'Avg Duration',
@@ -63,5 +69,26 @@ describe('UsageStatsCards', () => {
     expect(text).toContain('12')
     expect(text).toContain('Cache Read')
     expect(text).toContain('22')
+    expect(text).toContain('Total Requests')
+    expect(text).toContain('Total Tokens')
+    expect(text).not.toContain('Upstream Total Tokens')
+    expect(text).not.toContain('Upstream Total Cost')
+    expect(text).not.toContain('Profit')
+  })
+
+  it('shows upstream cost and profit only for admin metrics', () => {
+    const wrapper = mount(UsageStatsCards, {
+      props: {
+        stats: { ...stats, total_actual_cost: 2, total_account_cost: 0.75 },
+        showUpstreamMetrics: true,
+      },
+      global: { stubs: { Icon: true } },
+    })
+
+    expect(wrapper.text()).toContain('Upstream Total Tokens')
+    expect(wrapper.text()).toContain('Original token count')
+    expect(wrapper.text()).toContain('184')
+    expect(wrapper.text()).toContain('$0.7500')
+    expect(wrapper.text()).toContain('$1.2500')
   })
 })

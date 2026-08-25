@@ -41,7 +41,8 @@
           <div class="date-picker-field">
             <label class="date-picker-label">{{ t('dates.startDate') }}</label>
             <input
-              type="date"
+              :type="showTime ? 'datetime-local' : 'date'"
+              :step="showTime ? 1 : undefined"
               v-model="localStartDate"
               :max="localEndDate || tomorrow"
               class="date-picker-input"
@@ -54,7 +55,8 @@
           <div class="date-picker-field">
             <label class="date-picker-label">{{ t('dates.endDate') }}</label>
             <input
-              type="date"
+              :type="showTime ? 'datetime-local' : 'date'"
+              :step="showTime ? 1 : undefined"
               v-model="localEndDate"
               :min="localStartDate"
               :max="tomorrow"
@@ -89,6 +91,7 @@ interface DatePreset {
 interface Props {
   startDate: string
   endDate: string
+  showTime?: boolean
 }
 
 interface Emits {
@@ -107,22 +110,15 @@ const containerRef = ref<HTMLElement | null>(null)
 const localStartDate = ref(props.startDate)
 const localEndDate = ref(props.endDate)
 const activePreset = ref<string | null>('last24Hours')
-
-const today = computed(() => {
-  // Use local timezone to avoid UTC timezone issues
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-})
+const showTime = computed(() => props.showTime === true)
 
 // Tomorrow's date - used for max date to handle timezone differences
 // When user is in a timezone behind the server, "today" on server might be "tomorrow" locally
 const tomorrow = computed(() => {
   const d = new Date()
   d.setDate(d.getDate() + 1)
-  return formatDateToString(d)
+  const date = formatDateToString(d)
+  return showTime.value ? `${date}T23:59:59` : date
 })
 
 // Helper function to format date to YYYY-MM-DD using local timezone
@@ -133,13 +129,31 @@ const formatDateToString = (date: Date): string => {
   return `${year}-${month}-${day}`
 }
 
+const formatDateTimeToString = (date: Date): string => {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${formatDateToString(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+const rangeValue = (date: Date): string => showTime.value ? formatDateTimeToString(date) : formatDateToString(date)
+const startOfDayValue = (date: Date): string => {
+  const value = new Date(date)
+  value.setHours(0, 0, 0, 0)
+  return rangeValue(value)
+}
+const endOfDayValue = (date: Date): string => {
+  const value = new Date(date)
+  value.setHours(23, 59, 59, 0)
+  return rangeValue(value)
+}
+const currentOrDateValue = (date: Date): string => showTime.value ? rangeValue(new Date()) : formatDateToString(date)
+
 const presets: DatePreset[] = [
   {
     labelKey: 'dates.today',
     value: 'today',
     getRange: () => {
-      const t = today.value
-      return { start: t, end: t }
+      const now = new Date()
+      return { start: startOfDayValue(now), end: rangeValue(now) }
     }
   },
   {
@@ -148,8 +162,7 @@ const presets: DatePreset[] = [
     getRange: () => {
       const d = new Date()
       d.setDate(d.getDate() - 1)
-      const yesterday = formatDateToString(d)
-      return { start: yesterday, end: yesterday }
+      return { start: startOfDayValue(d), end: endOfDayValue(d) }
     }
   },
   {
@@ -159,8 +172,8 @@ const presets: DatePreset[] = [
       const end = new Date()
       const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
       return {
-        start: formatDateToString(start),
-        end: formatDateToString(end)
+        start: rangeValue(start),
+        end: rangeValue(end)
       }
     }
   },
@@ -168,33 +181,27 @@ const presets: DatePreset[] = [
     labelKey: 'dates.last7Days',
     value: '7days',
     getRange: () => {
-      const end = today.value
       const d = new Date()
       d.setDate(d.getDate() - 6)
-      const start = formatDateToString(d)
-      return { start, end }
+      return { start: startOfDayValue(d), end: currentOrDateValue(new Date()) }
     }
   },
   {
     labelKey: 'dates.last14Days',
     value: '14days',
     getRange: () => {
-      const end = today.value
       const d = new Date()
       d.setDate(d.getDate() - 13)
-      const start = formatDateToString(d)
-      return { start, end }
+      return { start: startOfDayValue(d), end: currentOrDateValue(new Date()) }
     }
   },
   {
     labelKey: 'dates.last30Days',
     value: '30days',
     getRange: () => {
-      const end = today.value
       const d = new Date()
       d.setDate(d.getDate() - 29)
-      const start = formatDateToString(d)
-      return { start, end }
+      return { start: startOfDayValue(d), end: currentOrDateValue(new Date()) }
     }
   },
   {
@@ -202,8 +209,8 @@ const presets: DatePreset[] = [
     value: 'thisMonth',
     getRange: () => {
       const now = new Date()
-      const start = formatDateToString(new Date(now.getFullYear(), now.getMonth(), 1))
-      return { start, end: today.value }
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      return { start: startOfDayValue(start), end: currentOrDateValue(now) }
     }
   },
   {
@@ -211,9 +218,9 @@ const presets: DatePreset[] = [
     value: 'lastMonth',
     getRange: () => {
       const now = new Date()
-      const start = formatDateToString(new Date(now.getFullYear(), now.getMonth() - 1, 1))
-      const end = formatDateToString(new Date(now.getFullYear(), now.getMonth(), 0))
-      return { start, end }
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const end = new Date(now.getFullYear(), now.getMonth(), 0)
+      return { start: startOfDayValue(start), end: endOfDayValue(end) }
     }
   }
 ]
@@ -235,8 +242,13 @@ const displayValue = computed(() => {
 })
 
 const formatDate = (dateStr: string): string => {
-  const date = new Date(dateStr + 'T00:00:00')
+  const date = new Date(dateStr.includes('T') ? dateStr : `${dateStr}T00:00:00`)
   const dateLocale = locale.value === 'zh' ? 'zh-CN' : 'en-US'
+  if (showTime.value) {
+    return date.toLocaleString(dateLocale, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    })
+  }
   return date.toLocaleDateString(dateLocale, { month: 'short', day: 'numeric' })
 }
 

@@ -33,6 +33,7 @@ export interface BalanceCenterSite {
   base_url: string
   source: string
   probe_supported: boolean
+  historical_recharge_total: number
   updated_at: string
 }
 

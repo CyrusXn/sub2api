@@ -11,7 +11,6 @@ const {
   getUserUsageTrend,
   getUserSpendingRanking,
   getBusinessSummary,
-  getLowBalanceAccounts,
   getSystemMetricsTrend,
   getRealtimeMetrics
 } = vi.hoisted(() => ({
@@ -19,7 +18,6 @@ const {
   getUserUsageTrend: vi.fn(),
   getUserSpendingRanking: vi.fn(),
   getBusinessSummary: vi.fn(),
-  getLowBalanceAccounts: vi.fn(),
   getSystemMetricsTrend: vi.fn(),
   getRealtimeMetrics: vi.fn()
 }))
@@ -31,7 +29,6 @@ vi.mock('@/api/admin', () => ({
       getUserUsageTrend,
       getUserSpendingRanking,
       getBusinessSummary,
-      getLowBalanceAccounts,
       getSystemMetricsTrend,
       getRealtimeMetrics
     }
@@ -111,7 +108,6 @@ describe('admin DashboardView', () => {
     getUserUsageTrend.mockReset()
     getUserSpendingRanking.mockReset()
     getBusinessSummary.mockReset()
-    getLowBalanceAccounts.mockReset()
     getSystemMetricsTrend.mockReset()
     getRealtimeMetrics.mockReset()
 
@@ -139,7 +135,6 @@ describe('admin DashboardView', () => {
       range: {},
       daily: []
     })
-    getLowBalanceAccounts.mockResolvedValue({ accounts: [], threshold: 5 })
     getSystemMetricsTrend.mockResolvedValue({ points: [], source: 'host' })
     getRealtimeMetrics.mockResolvedValue({
       active_requests: 3,
@@ -211,7 +206,7 @@ describe('admin DashboardView', () => {
     expect(useAdminRealtimeMetricsStore().metrics?.tokens_per_minute).toBe(4567)
   })
 
-  it('loads business, low-balance and host trend blocks independently', async () => {
+  it('does not request retired host metric trends from the business dashboard', async () => {
     mount(DashboardView, {
       global: {
         stubs: {
@@ -231,13 +226,11 @@ describe('admin DashboardView', () => {
     await flushPromises()
 
     expect(getBusinessSummary).toHaveBeenCalledTimes(1)
-    expect(getLowBalanceAccounts).toHaveBeenCalledTimes(1)
-    expect(getSystemMetricsTrend).toHaveBeenCalledTimes(1)
+    expect(getSystemMetricsTrend).not.toHaveBeenCalled()
   })
 
-  it('shows independent error states instead of reporting failed metrics as zero', async () => {
+  it('shows the business summary error instead of reporting it as zero', async () => {
     getBusinessSummary.mockRejectedValueOnce(new Error('business failed'))
-    getLowBalanceAccounts.mockRejectedValueOnce(new Error('balance failed'))
 
     const wrapper = mount(DashboardView, {
       global: {
@@ -258,8 +251,6 @@ describe('admin DashboardView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('admin.dashboard.businessSummaryLoadFailed')
-    expect(wrapper.text()).toContain('admin.dashboard.lowBalanceLoadFailed')
-    expect(wrapper.text()).not.toContain('admin.dashboard.noLowBalanceAccounts')
   })
 
   it('shows all permanent business metrics for the selected range', async () => {
