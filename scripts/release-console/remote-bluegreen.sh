@@ -12,6 +12,7 @@ RUNTIME_ENV="$APP_DIR/.bluegreen-runtime.env"
 CANDIDATE_FILE="$APP_DIR/.bluegreen-candidate-image"
 BLUE_IMAGE_FILE="$APP_DIR/.bluegreen-blue-image"
 CANDIDATE_SLOT_FILE="$APP_DIR/.bluegreen-candidate-slot"
+PREVIOUS_ACTIVE_FILE="$APP_DIR/.bluegreen-previous-active"
 BLUE_PORT=8080
 GREEN_PORT=18081
 CANARY_PORT=18082
@@ -20,6 +21,23 @@ log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 health() { curl -fsS --max-time 10 "http://127.0.0.1:$1/health" >/dev/null; }
 nginx_reload() { docker exec nginx nginx -t >/dev/null && docker exec nginx nginx -s reload; }
 active_port() { sed -nE 's/^[[:space:]]*server[[:space:]]+127\.0\.0\.1:([0-9]+);.*/\1/p' "$ACTIVE_FILE" | head -n 1; }
+container_for_port() {
+  case "$1" in
+    "$BLUE_PORT") printf 'sub2api\n' ;;
+    "$GREEN_PORT") printf 'sub2api-green\n' ;;
+    "$CANARY_PORT") printf 'sub2api-canary\n' ;;
+    *) return 1 ;;
+  esac
+}
+record_previous_active() {
+  local port container image
+  port=$(active_port)
+  container=$(container_for_port "$port")
+  health "$port"
+  image=$(docker inspect "$container" --format '{{.Config.Image}}')
+  printf '%s|%s|%s\n' "$port" "$container" "$image" > "$PREVIOUS_ACTIVE_FILE"
+  chmod 600 "$PREVIOUS_ACTIVE_FILE"
+}
 ensure_runtime_env() {
   if [[ ! -f "$RUNTIME_ENV" ]]; then
     umask 077
@@ -117,9 +135,10 @@ case "$ACTION" in
 	IFS='|' read -r candidate_name candidate_port < "$CANDIDATE_SLOT_FILE"
 	[[ "$candidate_name" =~ ^sub2api-(green|canary)$ && "$candidate_port" =~ ^(18081|18082)$ ]] || { log '候选槽位无效'; exit 1; }
 	health "$candidate_port"
+	record_previous_active
 	write_active "$candidate_port"; nginx_reload
     curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null
-    log "新请求已平滑切至候选 api_only: $candidate_name:$candidate_port；蓝色 primary 保留作即时回退"
+    log "新请求已平滑切至候选 api_only: $candidate_name:$candidate_port；上一次健康实例保留作即时回退"
     ;;
   return-blue)
     health "$BLUE_PORT"
@@ -128,10 +147,17 @@ case "$ACTION" in
     log '新请求已平滑切回稳定蓝色；绿色 api_only 继续保温'
     ;;
   rollback)
-    health "$BLUE_PORT"
-    write_active "$BLUE_PORT"; nginx_reload
+    if [[ -f "$PREVIOUS_ACTIVE_FILE" ]]; then
+      IFS='|' read -r previous_port previous_name previous_image < "$PREVIOUS_ACTIVE_FILE"
+      [[ "$previous_port" =~ ^(8080|18081|18082)$ ]] || { log '历史活跃槽位无效'; exit 1; }
+      health "$previous_port"
+      write_active "$previous_port"; nginx_reload
+    else
+      health "$BLUE_PORT"
+      write_active "$BLUE_PORT"; nginx_reload
+    fi
     curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null
-    log '请求已平滑回切至稳定蓝色 primary；候选 api_only 保留供排查'
+    log '请求已平滑回切至上一次健康活跃实例；候选 api_only 保留供排查'
     ;;
   *) log '不允许的远程操作'; exit 1 ;;
 esac
