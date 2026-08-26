@@ -511,7 +511,7 @@ func TestUsageLogRepositoryGetStatsWithFiltersRequestedModelSource(t *testing.T)
 		ModelFilterSource: usagestats.ModelSourceRequested,
 	}
 
-	mock.ExpectQuery("(?s)FROM usage_logs\\s+WHERE COALESCE\\(NULLIF\\(TRIM\\(requested_model\\), ''\\), model\\) = \\$1.*GROUP BY GROUPING SETS").
+	mock.ExpectQuery("(?s)FROM usage_logs\\s+LEFT JOIN \\(SELECT id, rate_multiplier, extra FROM accounts\\) AS upstream_account.*WHERE COALESCE\\(NULLIF\\(TRIM\\(requested_model\\), ''\\), model\\) = \\$1.*GROUP BY GROUPING SETS").
 		WithArgs("gpt-5").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"inbound_grouped",
@@ -553,7 +553,7 @@ func TestUsageLogRepositoryGetStatsWithFiltersRequestTypePriority(t *testing.T) 
 		Stream:      &stream,
 	}
 
-	mock.ExpectQuery("(?s)FROM usage_logs\\s+WHERE \\(request_type = \\$1 OR \\(request_type = 0 AND stream = FALSE AND openai_ws_mode = FALSE\\)\\).*GROUP BY GROUPING SETS").
+	mock.ExpectQuery("(?s)FROM usage_logs\\s+LEFT JOIN \\(SELECT id, rate_multiplier, extra FROM accounts\\) AS upstream_account.*WHERE \\(request_type = \\$1 OR \\(request_type = 0 AND stream = FALSE AND openai_ws_mode = FALSE\\)\\).*GROUP BY GROUPING SETS").
 		WithArgs(requestType).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"inbound_grouped",

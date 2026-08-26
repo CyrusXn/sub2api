@@ -317,6 +317,7 @@ const filters = ref<Record<string, any>>({
   billing_types: undefined,
   billing_modes: undefined,
   upstream_model_mismatches: undefined,
+  upstream_site_hosts: undefined,
   upstream_site_account_ids: undefined,
   start_date: startDate.value,
   end_date: endDate.value,
@@ -593,6 +594,7 @@ const resetFilters = () => {
     billing_types: undefined,
     billing_modes: undefined,
     upstream_model_mismatches: undefined,
+    upstream_site_hosts: undefined,
     upstream_site_account_ids: undefined,
   }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)

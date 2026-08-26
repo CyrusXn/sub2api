@@ -395,10 +395,11 @@ func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_UsesUpstreamProbeRateForCostSnapshot(t *testing.T) {
 	groupID := int64(11)
 	groupRate := 1.4
 	userRate := 1.8
+	upstreamRate := 0.07
 	usage := OpenAIUsage{InputTokens: 15, OutputTokens: 4, CacheReadInputTokens: 3}
 
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
@@ -422,8 +423,21 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 				RateMultiplier: groupRate,
 			},
 		},
-		User:    &User{ID: 2001},
-		Account: &Account{ID: 3001},
+		User: &User{ID: 2001},
+		Account: &Account{
+			ID: 3001,
+			Extra: map[string]any{
+				UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{
+					Status: UpstreamBillingProbeStatusOK,
+					Data: map[string]any{
+						"billing_scope":             "token",
+						"resolved_rate_multiplier":  upstreamRate,
+						"peak_rate_enabled":         false,
+						"effective_rate_multiplier": upstreamRate,
+					},
+				},
+			},
+		},
 	})
 
 	require.NoError(t, err)
@@ -433,7 +447,7 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 	require.NotNil(t, usageRepo.lastLog.UpstreamCostBase)
 	require.NotNil(t, usageRepo.lastLog.UpstreamGroupRateMultiplier)
 	require.InDelta(t, usageRepo.lastLog.TotalCost, *usageRepo.lastLog.UpstreamCostBase, 1e-12)
-	require.InDelta(t, groupRate, *usageRepo.lastLog.UpstreamGroupRateMultiplier, 1e-12, "上游倍率必须取分组配置，不跟随用户专属倍率")
+	require.InDelta(t, upstreamRate, *usageRepo.lastLog.UpstreamGroupRateMultiplier, 1e-12, "上游倍率必须取账号探测快照，不跟随本站用户分组倍率")
 	require.Equal(t, 12, usageRepo.lastLog.InputTokens)
 	require.Equal(t, 3, usageRepo.lastLog.CacheReadTokens)
 

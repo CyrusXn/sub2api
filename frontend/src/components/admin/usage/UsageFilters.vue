@@ -223,7 +223,6 @@
             clearable
             searchable
             @update:model-value="selectUpstreamSites"
-            @change="emitChange"
           />
         </div>
 
@@ -252,7 +251,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, toRef, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
@@ -292,7 +291,34 @@ const emit = defineEmits([
 ])
 
 const { t } = useI18n()
-const filters = toRef(props, 'modelValue')
+
+// 筛选控件只能更新本地副本，再通过 v-model 显式同步给父页面；直接改 props
+// 会导致父页面组装请求参数时仍使用旧值，所有多选筛选都会失效。
+const copyFilters = (value: ModelValue): ModelValue => Object.fromEntries(
+  Object.entries(value).map(([key, item]) => [key, Array.isArray(item) ? [...item] : item])
+)
+const filters = ref<ModelValue>(copyFilters(props.modelValue))
+let syncingModelValue = false
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    syncingModelValue = true
+    filters.value = copyFilters(value)
+    syncingModelValue = false
+  },
+  { deep: true }
+)
+
+watch(
+  filters,
+  (value) => {
+    if (!syncingModelValue) {
+      emit('update:modelValue', copyFilters(value))
+    }
+  },
+  { deep: true, flush: 'sync' }
+)
 
 const userSearchRef = ref<HTMLElement | null>(null)
 const apiKeySearchRef = ref<HTMLElement | null>(null)

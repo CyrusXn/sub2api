@@ -1,6 +1,9 @@
 package service
 
-import "math"
+import (
+	"math"
+	"time"
+)
 
 // resolveAdminUsageSettlementMultiplier 解析仅由管理端配置的结算附加倍率。
 // 用户配置优先；用户未配置时继承分组；缺少分组时回退为 1。
@@ -29,6 +32,36 @@ func ResolveAdminUsageSettlementMultiplierForAccount(user *User, group *Group, a
 
 func resolveAdminUsageSettlementMultiplierForAccount(user *User, group *Group, account *Account) float64 {
 	return ResolveAdminUsageSettlementMultiplierForAccount(user, group, account)
+}
+
+// resolveUpstreamCostRateMultiplier 返回上游站点在请求发生时实际声明的结算倍率。
+// 该倍率与本站用户分组的收费倍率无关，探测不可用时才回退账号已配置倍率。
+func resolveUpstreamCostRateMultiplier(account *Account, requestedAt time.Time) float64 {
+	if account == nil {
+		return 1
+	}
+
+	fallback := account.BaseRateMultiplier()
+	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	if snapshot == nil {
+		return fallback
+	}
+	if snapshot.Status == UpstreamBillingProbeStatusFailed && snapshot.ManualRateMultiplier != nil {
+		value := *snapshot.ManualRateMultiplier
+		if value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+			return value
+		}
+	}
+	if snapshot.Status != UpstreamBillingProbeStatusOK {
+		return fallback
+	}
+	if requestedAt.IsZero() {
+		requestedAt = time.Now()
+	}
+	if value, ok := upstreamBillingRateAt(snapshot.Data, requestedAt); ok {
+		return value
+	}
+	return fallback
 }
 
 func scaleSettlementToken(value int, multiplier float64) int {

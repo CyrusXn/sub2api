@@ -178,3 +178,29 @@ func TestAdminUsageStatsInvalidStream(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestAdminUsageMultiFiltersPropagateToListAndStats(t *testing.T) {
+	repo := &adminUsageRepoCapture{}
+	router := newAdminUsageRequestTypeTestRouter(repo)
+	query := "user_ids=1,2&api_key_ids=3,4&account_ids=5,6&group_ids=7,8&models=claude,gpt&request_types=sync,stream&billing_types=0,1&billing_modes=token,image&upstream_model_mismatches=true,false&upstream_site_account_ids=9,10"
+
+	for _, path := range []string{"/admin/usage?" + query, "/admin/usage/stats?" + query} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
+	for _, filters := range []usagestats.UsageLogFilters{repo.listFilters, repo.statsFilters} {
+		require.Equal(t, []int64{1, 2}, filters.UserIDs)
+		require.Equal(t, []int64{3, 4}, filters.APIKeyIDs)
+		require.Equal(t, []int64{5, 6}, filters.AccountIDs)
+		require.Equal(t, []int64{7, 8}, filters.GroupIDs)
+		require.Equal(t, []string{"claude", "gpt"}, filters.Models)
+		require.Equal(t, []int16{int16(service.RequestTypeSync), int16(service.RequestTypeStream)}, filters.RequestTypes)
+		require.Equal(t, []int8{0, 1}, filters.BillingTypes)
+		require.Equal(t, []string{"token", "image"}, filters.BillingModes)
+		require.Equal(t, []bool{true, false}, filters.UpstreamModelMismatches)
+		require.Equal(t, []int64{9, 10}, filters.UpstreamSiteAccountIDs)
+	}
+}

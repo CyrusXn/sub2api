@@ -189,15 +189,14 @@ describe('UsageFilters — user search dropdown', () => {
     await activeButton.trigger('click')
     await flushPromises()
 
-    // The component emits 'update:modelValue' or modifies filters.user_id via toRef
-    // selectUser sets filters.value.user_id = u.id and emits 'change'
+    // 选择必须通过 v-model 显式回传，不能直接修改子组件收到的 props。
     const changeEmits = wrapper.emitted('change')
     expect(changeEmits).toBeTruthy()
     expect(changeEmits!.length).toBeGreaterThan(0)
-
-    // Also confirm user_id was set by checking the emitted change came through
-    // (the component uses toRef so modelValue is mutated in place and 'change' is emitted)
-    expect(wrapper.props('modelValue').user_ids).toEqual([1])
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toMatchObject({
+      user_ids: [1],
+    })
+    expect(wrapper.props('modelValue').user_ids).toEqual([])
   })
 
   it('keeps results from the latest user search when responses arrive out of order', async () => {
@@ -289,7 +288,42 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
 
     ;(wrapper.vm as any).selectUpstreamSites(['vovo.example', 'other.example'])
 
-    expect(wrapper.props('modelValue').upstream_site_account_ids).toEqual([2, 3, 5])
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toMatchObject({
+      upstream_site_hosts: ['vovo.example', 'other.example'],
+      upstream_site_account_ids: [2, 3, 5],
+    })
+    expect(wrapper.props('modelValue').upstream_site_account_ids).toEqual([])
     expect(wrapper.emitted('change')).toBeTruthy()
+  })
+
+  it('同步所有多选条件给父页面，而不是直接改写 props', async () => {
+    const wrapper = mountFilters()
+    const localFilters = (wrapper.vm as any).filters
+
+    localFilters.models = ['gpt-5.6']
+    localFilters.request_types = ['stream', 'sync']
+    localFilters.billing_types = [0, 1]
+    localFilters.billing_modes = ['token', 'image']
+    localFilters.upstream_model_mismatches = [true]
+    localFilters.group_ids = [7, 8]
+
+    await flushPromises()
+
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toMatchObject({
+      models: ['gpt-5.6'],
+      request_types: ['stream', 'sync'],
+      billing_types: [0, 1],
+      billing_modes: ['token', 'image'],
+      upstream_model_mismatches: [true],
+      group_ids: [7, 8],
+    })
+    expect(wrapper.props('modelValue')).toMatchObject({
+      models: [],
+      request_types: [],
+      billing_types: [],
+      billing_modes: [],
+      upstream_model_mismatches: [],
+      group_ids: [],
+    })
   })
 })

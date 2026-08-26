@@ -17,6 +17,51 @@ func usageLogColumn(alias, name string) string {
 	return alias + "." + name
 }
 
+// upstreamCostRateMultiplierSQLExpr 从账号保存的上游探测快照按请求发生时刻计算倍率。
+// 本站用户分组倍率、专属倍率和管理附加倍率均不属于上游实际消耗，不能参与该计算。
+// 探测异常时，才以账号静态倍率作为保守回退。
+func upstreamCostRateMultiplierSQLExpr(logAlias, accountAlias string) string {
+	logCreatedAt := usageLogColumn(logAlias, "created_at")
+	snapshot := accountAlias + ".extra -> 'upstream_billing_probe'"
+	data := "(" + snapshot + " -> 'data')"
+
+	return fmt.Sprintf(`
+		COALESCE(
+			CASE
+				WHEN %[1]s ->> 'status' = 'ok'
+					AND %[2]s ->> 'billing_scope' = 'token'
+					AND jsonb_typeof(%[2]s -> 'resolved_rate_multiplier') = 'number'
+				THEN (%[2]s ->> 'resolved_rate_multiplier')::numeric * CASE
+					WHEN %[2]s ->> 'peak_rate_enabled' = 'false' THEN 1
+					WHEN %[2]s ->> 'peak_rate_enabled' = 'true'
+						AND jsonb_typeof(%[2]s -> 'peak_rate_multiplier') = 'number'
+						AND NULLIF(%[2]s ->> 'peak_start', '') IS NOT NULL
+						AND NULLIF(%[2]s ->> 'peak_end', '') IS NOT NULL
+						AND NULLIF(%[2]s ->> 'timezone', '') IS NOT NULL
+						AND (%[3]s AT TIME ZONE (%[2]s ->> 'timezone'))::time >= (%[2]s ->> 'peak_start')::time
+						AND (%[3]s AT TIME ZONE (%[2]s ->> 'timezone'))::time < (%[2]s ->> 'peak_end')::time
+						THEN (%[2]s ->> 'peak_rate_multiplier')::numeric
+					WHEN %[2]s ->> 'peak_rate_enabled' = 'true' THEN 1
+					ELSE NULL
+				END
+				WHEN %[1]s ->> 'status' = 'failed'
+					AND jsonb_typeof(%[1]s -> 'manual_rate_multiplier') = 'number'
+				THEN (%[1]s ->> 'manual_rate_multiplier')::numeric
+			END,
+			COALESCE(%[4]s.rate_multiplier, 1)
+		)`, snapshot, data, logCreatedAt, accountAlias)
+}
+
+func upstreamCostSQLExpr(logAlias, accountAlias string) string {
+	return fmt.Sprintf(
+		"COALESCE(%[1]s, %[2]s) * COALESCE(%[3]s, %[4]s)",
+		usageLogColumn(logAlias, "upstream_cost_base"),
+		usageLogColumn(logAlias, "total_cost"),
+		usageLogColumn(logAlias, "upstream_group_rate_multiplier"),
+		upstreamCostRateMultiplierSQLExpr(logAlias, accountAlias),
+	)
+}
+
 func adminScaledTokenSum(column string) string {
 	return fmt.Sprintf("COALESCE(SUM(ROUND(%s * %s)::bigint), 0)", column, adminUsageMultiplierSQLExpr)
 }

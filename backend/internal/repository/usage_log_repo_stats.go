@@ -766,9 +766,11 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 				total_cost,
 				actual_cost,
 				COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1) AS account_cost,
-				COALESCE(upstream_cost_base, total_cost) * COALESCE(upstream_group_rate_multiplier, rate_multiplier) AS upstream_cost,
+				`+upstreamCostSQLExpr("", "upstream_account")+` AS upstream_cost,
 				duration_ms
 			FROM usage_logs
+			LEFT JOIN (SELECT id, rate_multiplier, extra FROM accounts) AS upstream_account
+				ON upstream_account.id = usage_logs.account_id
 			%s
 		)
 		SELECT

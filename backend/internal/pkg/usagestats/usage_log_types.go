@@ -314,7 +314,7 @@ type UsageStats struct {
 	TotalCost                float64  `json:"total_cost"`
 	TotalActualCost          float64  `json:"total_actual_cost"`
 	TotalAccountCost         *float64 `json:"total_account_cost,omitempty"`
-	// TotalUpstreamCost 是按请求结算时固化的原始费用和上游分组倍率计算的上游站点成本，仅管理端返回。
+	// TotalUpstreamCost 是按请求结算时固化的原始费用和账号上游站点实际倍率计算的成本，仅管理端返回。
 	TotalUpstreamCost *float64       `json:"total_upstream_cost,omitempty"`
 	AverageDurationMs float64        `json:"average_duration_ms"`
 	Endpoints         []EndpointStat `json:"endpoints,omitempty"`

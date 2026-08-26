@@ -630,8 +630,10 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 				(created_at AT TIME ZONE $3)::date AS bucket_date,
 				COALESCE(SUM(actual_cost), 0) AS admin_actual_cost,
 				COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS admin_account_cost,
-				COALESCE(SUM(COALESCE(upstream_cost_base, total_cost) * COALESCE(upstream_group_rate_multiplier, rate_multiplier)), 0) AS admin_upstream_cost
+				COALESCE(SUM(` + upstreamCostSQLExpr("", "upstream_account") + `), 0) AS admin_upstream_cost
 			FROM usage_logs
+			LEFT JOIN (SELECT id, rate_multiplier, extra FROM accounts) AS upstream_account
+				ON upstream_account.id = usage_logs.account_id
 			WHERE created_at >= $1 AND created_at < $2
 			  AND user_id = (
 				SELECT id FROM users
@@ -643,8 +645,10 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 		), upstream_usage AS (
 			SELECT
 				(created_at AT TIME ZONE $3)::date AS bucket_date,
-				COALESCE(SUM(COALESCE(upstream_cost_base, total_cost) * COALESCE(upstream_group_rate_multiplier, rate_multiplier)), 0) AS upstream_cost
+				COALESCE(SUM(` + upstreamCostSQLExpr("", "upstream_account") + `), 0) AS upstream_cost
 			FROM usage_logs
+			LEFT JOIN (SELECT id, rate_multiplier, extra FROM accounts) AS upstream_account
+				ON upstream_account.id = usage_logs.account_id
 			WHERE created_at >= $1 AND created_at < $2
 			GROUP BY 1
 		), recharge AS (
