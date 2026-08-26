@@ -144,6 +144,8 @@ func registerBalanceCenterRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		balanceCenter.GET("/overview", h.Admin.BalanceCenter.Overview)
 		balanceCenter.GET("/sites", h.Admin.BalanceCenter.Sites)
+		balanceCenter.POST("/sites", h.Admin.BalanceCenter.CreateSite)
+		balanceCenter.PATCH("/sites/:id", h.Admin.BalanceCenter.RenameSite)
 		balanceCenter.GET("/snapshots", h.Admin.BalanceCenter.Snapshots)
 		balanceCenter.GET("/settings", h.Admin.BalanceCenter.GetSettings)
 		balanceCenter.PUT("/settings", h.Admin.BalanceCenter.UpdateSettings)

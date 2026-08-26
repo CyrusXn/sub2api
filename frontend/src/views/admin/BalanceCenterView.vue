@@ -40,6 +40,11 @@
           <div>
             <h2 id="recharge-entry-title" class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.balanceCenter.addRecharge') }}</h2>
           </div>
+          <form class="flex items-end gap-2" @submit.prevent="createSite">
+            <input v-model="newSiteName" class="input h-10 w-32" :placeholder="t('admin.balanceCenter.siteName')" />
+            <input v-model="newSiteURL" class="input h-10 w-56" placeholder="https://example.com" />
+            <button type="submit" class="btn btn-secondary h-10" :title="t('admin.balanceCenter.addSite')"><Icon name="plus" size="sm" /></button>
+          </form>
           <div class="flex w-full items-end gap-2 sm:w-auto">
             <label class="min-w-0 flex-1 sm:w-64 sm:flex-none">
               <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.rechargeAt') }}</span>
@@ -62,10 +67,11 @@
               v-for="site in sortedSites"
               :key="site.id"
               data-test="site-recharge-row"
-              class="grid gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 dark:border-dark-700 sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.4fr)_minmax(170px,0.8fr)] sm:items-center sm:gap-4"
+              class="grid gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 odd:bg-gray-50/70 dark:border-dark-700 dark:odd:bg-dark-800/40 sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.4fr)_minmax(170px,0.8fr)] sm:items-center sm:gap-4"
             >
               <div class="min-w-0">
                 <span class="font-medium text-gray-900 dark:text-gray-100">{{ site.display_name || site.name }}</span>
+                <button type="button" class="btn btn-ghost ml-1 h-7 w-7 p-0" :title="t('admin.balanceCenter.renameSite')" @click="renameSite(site)"><Icon name="edit" size="sm" /></button>
                 <span class="ml-2 text-xs text-gray-400 sm:hidden">{{ site.normalized_domain }}</span>
               </div>
               <span class="hidden truncate text-sm text-gray-500 dark:text-gray-400 sm:block">{{ site.normalized_domain }}</span>
@@ -131,7 +137,7 @@
               <tr><th class="px-3 py-2">{{ t('admin.balanceCenter.rechargeAt') }}</th><th class="px-3 py-2">{{ t('admin.balanceCenter.siteName') }}</th><th class="px-3 py-2 text-right">{{ t('admin.balanceCenter.amount') }}</th><th class="w-14 px-3 py-2"></th></tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-              <tr v-for="item in summary.items" :key="item.id" class="text-gray-700 dark:text-gray-200">
+              <tr v-for="item in summary.items" :key="item.id" class="text-gray-700 odd:bg-gray-50/70 dark:text-gray-200 dark:odd:bg-dark-800/40">
                 <td class="whitespace-nowrap px-3 py-3">{{ rechargeDate(item) }}</td>
                 <td class="px-3 py-3">{{ rechargeSiteName(item) }}</td>
                 <td class="px-3 py-3 text-right font-medium">¥{{ money(item.amount) }}</td>
@@ -191,6 +197,8 @@ const dimension = ref<Dimension>('time')
 const rangePreset = ref<RangePreset | 'custom'>('24h')
 const customDate = ref('')
 const rechargeTime = ref(toLocalSecond(new Date()))
+const newSiteName = ref('')
+const newSiteURL = ref('')
 const expandedSites = ref(new Set<string>())
 const rangePresets: RangePreset[] = ['24h', 'today', 'yesterday', 'all']
 const selectedButtonClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900'
@@ -261,6 +269,36 @@ async function initial() {
     notifyError(error)
   } finally {
     sitesLoading.value = false
+  }
+}
+
+async function createSite() {
+  const name = newSiteName.value.trim()
+  const baseURL = newSiteURL.value.trim()
+  if (!name || !baseURL) return
+  try {
+    const site = await adminAPI.balanceCenter.createSite({ name, base_url: baseURL })
+    sites.value.push(site)
+    newSiteName.value = ''
+    newSiteURL.value = ''
+    app.showSuccess(t('admin.balanceCenter.siteAdded'))
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function renameSite(site: BalanceCenterSite) {
+  const currentName = site.display_name || site.name
+  const name = window.prompt(t('admin.balanceCenter.renameSite'), currentName)?.trim()
+  if (!name || name === currentName) return
+  try {
+    await adminAPI.balanceCenter.renameSite(site.id, name)
+    site.name = name
+    site.display_name = name
+    await loadSummary()
+    app.showSuccess(t('admin.balanceCenter.renameSite'))
+  } catch (error) {
+    notifyError(error)
   }
 }
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -46,6 +47,11 @@ type BalanceCenterSite struct {
 	ProbeSupported          bool      `json:"probe_supported"`
 	HistoricalRechargeTotal float64   `json:"historical_recharge_total"`
 	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+type BalanceCenterSiteInput struct {
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
 }
 
 type BalanceCenterManualRow struct {
@@ -130,6 +136,8 @@ type BalanceCenterPage[T any] struct {
 type BalanceCenterAdminRepository interface {
 	ListBalanceCenterOverview(context.Context) ([]BalanceCenterOverviewItem, error)
 	ListBalanceCenterSites(context.Context) ([]BalanceCenterSite, error)
+	CreateBalanceCenterSite(context.Context, *BalanceCenterSiteInput) (*BalanceCenterSite, error)
+	RenameBalanceCenterSite(context.Context, int64, string) error
 	ListBalanceCenterSnapshots(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterSnapshot], error)
 	ListBalanceCenterManualRows(context.Context) ([]BalanceCenterManualRow, error)
 	ReplaceBalanceCenterManualRows(context.Context, []BalanceCenterManualRow) error
@@ -164,6 +172,34 @@ func (s *BalanceCenterService) ListSites(ctx context.Context) ([]BalanceCenterSi
 		return nil, err
 	}
 	return repository.ListBalanceCenterSites(ctx)
+}
+
+func (s *BalanceCenterService) CreateSite(ctx context.Context, input *BalanceCenterSiteInput) (*BalanceCenterSite, error) {
+	if input == nil || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.BaseURL) == "" {
+		return nil, errors.New("站点名称和地址不能为空")
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	input.BaseURL = strings.TrimSpace(input.BaseURL)
+	parsed, err := url.Parse(input.BaseURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return nil, errors.New("站点地址无效")
+	}
+	repository, err := s.adminRepository()
+	if err != nil {
+		return nil, err
+	}
+	return repository.CreateBalanceCenterSite(ctx, input)
+}
+
+func (s *BalanceCenterService) RenameSite(ctx context.Context, id int64, name string) error {
+	if id <= 0 || strings.TrimSpace(name) == "" {
+		return errors.New("站点名称无效")
+	}
+	repository, err := s.adminRepository()
+	if err != nil {
+		return err
+	}
+	return repository.RenameBalanceCenterSite(ctx, id, strings.TrimSpace(name))
 }
 
 func (s *BalanceCenterService) ListSnapshots(ctx context.Context, filter BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterSnapshot], error) {

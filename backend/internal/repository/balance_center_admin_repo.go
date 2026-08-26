@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -70,6 +71,41 @@ ORDER BY COALESCE(SUM(e.amount), 0) DESC, s.normalized_domain ASC, s.id ASC`)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (r *balanceCenterRepository) CreateBalanceCenterSite(ctx context.Context, input *service.BalanceCenterSiteInput) (*service.BalanceCenterSite, error) {
+	var item service.BalanceCenterSite
+	baseURL := strings.TrimRight(input.BaseURL, "/")
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Hostname() == "" {
+		return nil, errors.New("站点地址无效")
+	}
+	err = r.db.QueryRowContext(ctx, `
+INSERT INTO balance_center_sites (name, display_name, normalized_domain, base_url, source, probe_supported)
+VALUES ($1,$1,$2,$3, 'manual', false)
+RETURNING id, name, display_name, normalized_domain, base_url, source, probe_supported, 0, updated_at`, input.Name, strings.ToLower(parsed.Hostname()), baseURL).Scan(
+		&item.ID, &item.Name, &item.DisplayName, &item.NormalizedDomain, &item.BaseURL, &item.Source, &item.ProbeSupported, &item.HistoricalRechargeTotal, &item.UpdatedAt)
+	return &item, err
+}
+
+func (r *balanceCenterRepository) RenameBalanceCenterSite(ctx context.Context, id int64, name string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE balance_center_sites SET name=$1, display_name=$1, updated_at=NOW() WHERE id=$2`, name, id)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return errors.New("站点不存在")
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE balance_center_recharge_events SET site_label=$1, updated_at=NOW() WHERE site_id=$2`, name, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *balanceCenterRepository) ListBalanceCenterSnapshots(ctx context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterSnapshot], error) {
@@ -166,7 +202,7 @@ func (r *balanceCenterRepository) GetBalanceCenterRechargeSummary(ctx context.Co
 SELECT s.id, s.source, s.source_key, s.site_id, s.account_id, s.amount, s.currency,
        s.occurred_at, s.note, s.site_label,
        CASE WHEN s.site_id IS NULL THEN COALESCE(NULLIF(BTRIM(s.site_label), ''), '未归属站点')
-            ELSE COALESCE(NULLIF(BTRIM(bs.name), ''), '未归属站点') END AS site_name
+            ELSE COALESCE(NULLIF(BTRIM(COALESCE(bs.display_name, bs.name)), ''), '未归属站点') END AS site_name
 FROM balance_center_recharge_events s
 LEFT JOIN balance_center_sites bs ON bs.id = s.site_id`+where+`
 ORDER BY s.occurred_at DESC, s.id DESC`, args...)

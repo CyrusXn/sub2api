@@ -15,6 +15,8 @@ import (
 type balanceCenterAdminService interface {
 	ListOverview(context.Context) ([]service.BalanceCenterOverviewItem, error)
 	ListSites(context.Context) ([]service.BalanceCenterSite, error)
+	CreateSite(context.Context, *service.BalanceCenterSiteInput) (*service.BalanceCenterSite, error)
+	RenameSite(context.Context, int64, string) error
 	ListSnapshots(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterSnapshot], error)
 	GetSettings(context.Context) (*service.BalanceCenterSettings, error)
 	UpdateSettings(context.Context, *service.BalanceCenterSettings) error
@@ -54,6 +56,32 @@ func (h *BalanceCenterHandler) Overview(c *gin.Context) {
 func (h *BalanceCenterHandler) Sites(c *gin.Context) {
 	items, err := h.service.ListSites(c.Request.Context())
 	h.respond(c, items, err)
+}
+
+func (h *BalanceCenterHandler) CreateSite(c *gin.Context) {
+	var input service.BalanceCenterSiteInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BadRequest(c, "站点格式无效")
+		return
+	}
+	item, err := h.service.CreateSite(c.Request.Context(), &input)
+	h.respond(c, item, err)
+}
+
+func (h *BalanceCenterHandler) RenameSite(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "站点 ID 无效")
+		return
+	}
+	var input struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BadRequest(c, "站点格式无效")
+		return
+	}
+	h.respond(c, nil, h.service.RenameSite(c.Request.Context(), id, input.Name))
 }
 
 func (h *BalanceCenterHandler) Snapshots(c *gin.Context) {

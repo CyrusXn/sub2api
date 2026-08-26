@@ -136,6 +136,12 @@ export const balanceCenterAPI = {
   async sites() {
     return (await apiClient.get<BalanceCenterSite[]>(`${base}/sites`)).data
   },
+  async createSite(item: { name: string; base_url: string }) {
+    return (await apiClient.post<BalanceCenterSite>(`${base}/sites`, item)).data
+  },
+  async renameSite(id: number, name: string) {
+    await apiClient.patch(`${base}/sites/${id}`, { name })
+  },
   async snapshots(params: BalanceCenterListParams) {
     return (await apiClient.get<BalanceCenterPage<BalanceCenterSnapshot>>(`${base}/snapshots`, { params })).data
   },

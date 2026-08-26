@@ -20,6 +20,12 @@ func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterOverview(context.Con
 func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterSites(context.Context) ([]BalanceCenterSite, error) {
 	return nil, nil
 }
+func (r *balanceCenterAdminRepositoryStub) CreateBalanceCenterSite(context.Context, *BalanceCenterSiteInput) (*BalanceCenterSite, error) {
+	return &BalanceCenterSite{}, nil
+}
+func (r *balanceCenterAdminRepositoryStub) RenameBalanceCenterSite(context.Context, int64, string) error {
+	return nil
+}
 func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterSnapshots(_ context.Context, filter BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterSnapshot], error) {
 	r.lastFilter = filter
 	return &BalanceCenterPage[BalanceCenterSnapshot]{}, nil
