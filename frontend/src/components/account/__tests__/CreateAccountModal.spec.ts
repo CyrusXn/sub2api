@@ -276,6 +276,8 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(input?.step).toBe('0.000001')
     input!.value = '0.1'
     expect(input?.checkValidity()).toBe(true)
+  })
+
   it('persists upstream model metadata after creating an account from preview', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
