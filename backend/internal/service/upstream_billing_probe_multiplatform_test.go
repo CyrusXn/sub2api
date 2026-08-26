@@ -25,8 +25,14 @@ func TestUpstreamBillingProbeIdentityCoversAllAPIKeyPlatforms(t *testing.T) {
 	require.False(t, IsUpstreamBillingProbeIdentity(PlatformGrok, AccountTypeOAuth))
 	require.False(t, IsUpstreamBillingProbeIdentity(PlatformAnthropic, AccountTypeBedrock))
 	require.False(t, IsUpstreamBillingProbeIdentity("", AccountTypeAPIKey))
-	require.False(t, IsUpstreamBillingProbeIdentity("future-platform", AccountTypeAPIKey))
+	// 未内置的平台标签也可能对应自定义中转站，应复用域名协议探测。
+	require.True(t, IsUpstreamBillingProbeIdentity("future-platform", AccountTypeAPIKey))
 	require.False(t, isUpstreamBillingProbeAccount(nil))
+}
+
+func TestUpstreamBillingSupportsWebAccountAllowsUnknownCustomRelay(t *testing.T) {
+	require.True(t, upstreamBillingSupportsWebAccount("https://relay.example/v1"))
+	require.False(t, upstreamBillingSupportsWebAccount("https://api.openai.com/v1"))
 }
 
 func upstreamBillingProbeValidBody() io.ReadCloser {
@@ -71,6 +77,39 @@ func TestUpstreamBillingProbeGrokAccountPersistsSnapshot(t *testing.T) {
 	require.Equal(t, "https://relay.example/v1/sub2api/billing", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-grok-relay", upstream.lastReq.Header.Get("Authorization"))
 	// 非 OpenAI 平台探测使用默认传输画像。
+	require.Equal(t, HTTPUpstreamProfileDefault, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+
+	persisted := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	require.NotNil(t, persisted)
+	require.Equal(t, UpstreamBillingProbeStatusOK, persisted.Status)
+}
+
+// 未内置平台只要是 API-key 且配置了自定义中转地址，也应执行同一账单端点探测。
+func TestUpstreamBillingProbeUnknownPlatformCustomRelayPersistsSnapshot(t *testing.T) {
+	account := &Account{
+		ID:          153,
+		Platform:    "future-platform",
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 2,
+		Credentials: map[string]any{
+			"api_key":  "sk-future-relay",
+			"base_url": "https://relay.future.example/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       upstreamBillingProbeValidBody(),
+	}}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, "https://relay.future.example/v1/sub2api/billing", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer sk-future-relay", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, HTTPUpstreamProfileDefault, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 
 	persisted := decodeUpstreamBillingProbeSnapshot(account.Extra)

@@ -793,29 +793,12 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 
 func upstreamBillingSupportsWebAccount(baseURL string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
+	if err != nil || parsed.Hostname() == "" {
 		return false
 	}
-	switch strings.ToLower(parsed.Hostname()) {
-	case "vovoapi.com",
-		"ai.pite.chat",
-		"tsyjzzz.com",
-		"hubway.cc",
-		"mxamaxai.com",
-		"ai.maok.shop",
-		"pool.chaozhiyuanai.com",
-		"onebool.com",
-		"sub.anzhiyu.com",
-		"api.yigpt.cc",
-		"aigw.store",
-		"ai-tokens.vip",
-		"mzeapi.top",
-		"api.enter9.de",
-		"api.aigclink.xyz":
-		return true
-	default:
-		return false
-	}
+	// 自定义中转站的协议族由域名凭据配置决定；未知站点同样应进入
+	// 现有 NewAPI/Innom 网页查询链路，不能因未维护白名单而直接丢失余额。
+	return !upstreamBillingProbeTargetIsOfficialAPI(baseURL)
 }
 
 func (s *UpstreamBillingProbeService) persistProbeSuccess(
@@ -2260,29 +2243,16 @@ func decodeUpstreamBillingProbeSnapshot(extra map[string]any) *UpstreamBillingPr
 	return &snapshot
 }
 
-// IsUpstreamBillingProbeIdentity reports whether an account identity may opt
-// in to the upstream billing probe. `/v1/sub2api/billing` is a key-scoped
-// sub2api convention shared by the supported API-key platforms (including the
-// CN providers, whose official-domain accounts are short-circuited to
-// "unsupported" by upstreamBillingProbeTargetIsOfficialAPI).
-// Non-sub2api upstreams return 404 and the snapshot records "unsupported".
-// Only AccountTypeAPIKey is in scope. OAuth/Bedrock hold no static API key to
-// present at all; AccountTypeUpstream (antigravity relay accounts) does carry
-// a base_url plus a static api_key, but it is deliberately left out of the
-// current supported set. New antigravity relay accounts are created with
-// type=apikey by the admin form, so only pre-existing type=upstream rows
-// cannot turn the probe on.
+// IsUpstreamBillingProbeIdentity 判断账号是否可以开启上游账单探测。
+// 只要是带静态 API Key 的账号即可尝试；官方域名仍会在探测前短路，
+// 自定义站点则按域名协议配置进入统一的 NewAPI/Innom 查询链路。
 func IsUpstreamBillingProbeIdentity(platform, accountType string) bool {
-	if accountType != AccountTypeAPIKey {
+	if accountType != AccountTypeAPIKey || strings.TrimSpace(platform) == "" {
 		return false
 	}
-	switch platform {
-	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok,
-		PlatformKimi, PlatformZhipu, PlatformDeepseek:
-		return true
-	default:
-		return false
-	}
+	// API Key 账号都具备静态密钥和自定义 base_url；平台标签可能来自
+	// 未内置的“不知名”站点，但探测协议仍可按域名配置解析。
+	return true
 }
 
 func isUpstreamBillingProbeAccount(account *Account) bool {
