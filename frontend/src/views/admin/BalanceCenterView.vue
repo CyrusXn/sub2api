@@ -65,7 +65,7 @@
               class="grid gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 dark:border-dark-700 sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.4fr)_minmax(170px,0.8fr)] sm:items-center sm:gap-4"
             >
               <div class="min-w-0">
-                <span class="font-medium text-gray-900 dark:text-gray-100">{{ site.name }}</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{ site.display_name || site.name }}</span>
                 <span class="ml-2 text-xs text-gray-400 sm:hidden">{{ site.normalized_domain }}</span>
               </div>
               <span class="hidden truncate text-sm text-gray-500 dark:text-gray-400 sm:block">{{ site.normalized_domain }}</span>
@@ -285,7 +285,8 @@ async function addRecharge(site: BalanceCenterSite) {
       amount,
       currency: 'CNY',
       occurred_at: occurredAt.toISOString(),
-      note: ''
+      note: '',
+      record_type: 'recharge'
     })
     amounts[site.id] = ''
     site.historical_recharge_total = (site.historical_recharge_total ?? 0) + amount
@@ -344,7 +345,10 @@ function toggleSite(siteID?: number) {
 }
 
 function rechargeSiteName(item: BalanceCenterRechargeEvent) {
-  if (item.site_id != null) return sites.value.find(site => site.id === item.site_id)?.name ?? t('admin.balanceCenter.unassignedSite')
+  if (item.site_id != null) {
+    const site = sites.value.find(candidate => candidate.id === item.site_id)
+    return site?.display_name || site?.name || t('admin.balanceCenter.unassignedSite')
+  }
   return item.site_label || t('admin.balanceCenter.unassignedSite')
 }
 

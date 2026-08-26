@@ -291,6 +291,13 @@ export interface UserBreakdownParams {
   request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
+  user_ids?: string
+  api_key_ids?: string
+  account_ids?: string
+  group_ids?: string
+  models?: string
+  request_types?: string
+  billing_types?: string
 }
 
 export interface UserBreakdownResponse {

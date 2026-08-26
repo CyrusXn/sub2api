@@ -23,8 +23,8 @@ func TestUpstreamSiteCredentialRepositoryListSitesGroupsAccountsByHost(t *testin
 			AddRow(4, "AIGC", "https://api.aigclink.xyz/v1"),
 	)
 	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteCredentialsQuery)).WillReturnRows(
-		sqlmock.NewRows([]string{"host", "login_username", "password_encrypted"}).
-			AddRow("vovoapi.com", "admin@example.com", "ciphertext"),
+		sqlmock.NewRows([]string{"host", "display_name", "login_username", "password_encrypted"}).
+			AddRow("vovoapi.com", "VoVo", "admin@example.com", "ciphertext"),
 	)
 
 	sites, err := repo.ListSites(context.Background())
@@ -38,6 +38,7 @@ func TestUpstreamSiteCredentialRepositoryListSitesGroupsAccountsByHost(t *testin
 	require.Equal(t, []int64{12, 14}, sites[1].AccountIDs)
 	require.Equal(t, []string{"VoVo Plus", "VoVo Image"}, sites[1].AccountNames)
 	require.Equal(t, "admin@example.com", sites[1].LoginUsername)
+	require.Equal(t, "VoVo", sites[1].DisplayName)
 	require.True(t, sites[1].HasPassword)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -48,12 +49,18 @@ func TestUpstreamSiteCredentialRepositoryUpsertPersistsCiphertext(t *testing.T) 
 	t.Cleanup(func() { _ = db.Close() })
 	repo := NewUpstreamSiteCredentialRepository(db)
 
+	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(upstreamSiteCredentialUpsertQuery)).
-		WithArgs("vovoapi.com", "admin@example.com", "ciphertext").
+		WithArgs("vovoapi.com", "VoVo", "admin@example.com", "ciphertext").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE balance_center_sites SET display_name=$1, updated_at=NOW() WHERE normalized_domain=$2")).
+		WithArgs("VoVo", "vovoapi.com").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	err = repo.Upsert(context.Background(), &service.UpstreamSiteCredential{
 		Host:               "vovoapi.com",
+		DisplayName:        "VoVo",
 		LoginUsername:      "admin@example.com",
 		PasswordCiphertext: "ciphertext",
 	})

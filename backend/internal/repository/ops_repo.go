@@ -938,9 +938,17 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, *filter.GroupID)
 		clauses = append(clauses, "e.group_id = $"+itoa(len(args)))
 	}
+	if len(filter.GroupIDs) > 0 {
+		args = append(args, pq.Array(filter.GroupIDs))
+		clauses = append(clauses, "e.group_id = ANY($"+itoa(len(args))+")")
+	}
 	if filter.AccountID != nil && *filter.AccountID > 0 {
 		args = append(args, *filter.AccountID)
 		clauses = append(clauses, "e.account_id = $"+itoa(len(args)))
+	}
+	if len(filter.AccountIDs) > 0 {
+		args = append(args, pq.Array(filter.AccountIDs))
+		clauses = append(clauses, "e.account_id = ANY($"+itoa(len(args))+")")
 	}
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
@@ -1017,9 +1025,17 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		n := itoa(len(args))
 		clauses = append(clauses, "e.user_id = $"+n)
 	}
+	if len(filter.UserIDs) > 0 {
+		args = append(args, pq.Array(filter.UserIDs))
+		clauses = append(clauses, "e.user_id = ANY($"+itoa(len(args))+")")
+	}
 	if filter.APIKeyID != nil && *filter.APIKeyID > 0 {
 		args = append(args, *filter.APIKeyID)
 		clauses = append(clauses, "e.api_key_id = $"+itoa(len(args)))
+	}
+	if len(filter.APIKeyIDs) > 0 {
+		args = append(args, pq.Array(filter.APIKeyIDs))
+		clauses = append(clauses, "e.api_key_id = ANY($"+itoa(len(args))+")")
 	}
 	if m := strings.TrimSpace(filter.Model); m != "" {
 		if filter.ModelFuzzy {
@@ -1029,6 +1045,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 			args = append(args, m)
 			clauses = append(clauses, "COALESCE(e.requested_model, e.model, '') = $"+itoa(len(args)))
 		}
+	}
+	if len(filter.Models) > 0 {
+		args = append(args, pq.Array(filter.Models))
+		clauses = append(clauses, "COALESCE(e.requested_model, e.model, '') = ANY($"+itoa(len(args))+")")
 	}
 	if filter.ExcludeCountTokens {
 		clauses = append(clauses, "COALESCE(e.is_count_tokens, false) = false")

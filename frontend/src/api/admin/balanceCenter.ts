@@ -29,6 +29,7 @@ export interface BalanceCenterOverviewItem {
 export interface BalanceCenterSite {
   id: number
   name: string
+  display_name: string
   normalized_domain: string
   base_url: string
   source: string
@@ -64,6 +65,7 @@ export interface BalanceCenterRechargeEvent {
   currency: string
   occurred_at: string
   note: string
+  record_type: 'recharge' | 'subscription'
 }
 
 export interface BalanceCenterRechargeSiteSummary {

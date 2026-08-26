@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/lib/pq"
 )
 
 // TrendDataPoint represents a single point in trend data
@@ -716,9 +717,17 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 		query += fmt.Sprintf(" AND ul.group_id = $%d", len(args)+1)
 		args = append(args, dim.GroupID)
 	}
+	if len(dim.GroupIDs) > 0 {
+		query += fmt.Sprintf(" AND ul.group_id = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(dim.GroupIDs))
+	}
 	if dim.Model != "" {
 		query += fmt.Sprintf(" AND %s = $%d", resolveModelDimensionExpressionWithAlias(dim.ModelType, "ul"), len(args)+1)
 		args = append(args, dim.Model)
+	}
+	if len(dim.Models) > 0 {
+		query += fmt.Sprintf(" AND %s = ANY($%d)", resolveModelDimensionExpressionWithAlias(dim.ModelType, "ul"), len(args)+1)
+		args = append(args, pq.Array(dim.Models))
 	}
 	if dim.Endpoint != "" {
 		col := resolveEndpointColumn(dim.EndpointType)
@@ -729,18 +738,39 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 		query += fmt.Sprintf(" AND ul.user_id = $%d", len(args)+1)
 		args = append(args, dim.UserID)
 	}
+	if len(dim.UserIDs) > 0 {
+		query += fmt.Sprintf(" AND ul.user_id = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(dim.UserIDs))
+	}
 	if dim.APIKeyID > 0 {
 		query += fmt.Sprintf(" AND ul.api_key_id = $%d", len(args)+1)
 		args = append(args, dim.APIKeyID)
+	}
+	if len(dim.APIKeyIDs) > 0 {
+		query += fmt.Sprintf(" AND ul.api_key_id = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(dim.APIKeyIDs))
 	}
 	if dim.AccountID > 0 {
 		query += fmt.Sprintf(" AND ul.account_id = $%d", len(args)+1)
 		args = append(args, dim.AccountID)
 	}
+	if len(dim.AccountIDs) > 0 {
+		query += fmt.Sprintf(" AND ul.account_id = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(dim.AccountIDs))
+	}
 	if dim.RequestType != nil {
 		condition, conditionArgs := buildRequestTypeFilterConditionWithAlias(len(args)+1, *dim.RequestType, "ul")
 		query += " AND " + condition
 		args = append(args, conditionArgs...)
+	}
+	if len(dim.RequestTypes) > 0 {
+		conditions := make([]string, 0, len(dim.RequestTypes))
+		for _, requestType := range dim.RequestTypes {
+			condition, conditionArgs := buildRequestTypeFilterConditionWithAlias(len(args)+1, requestType, "ul")
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
+		query += " AND (" + strings.Join(conditions, " OR ") + ")"
 	}
 	if dim.Stream != nil {
 		query += fmt.Sprintf(" AND ul.stream = $%d", len(args)+1)
@@ -749,6 +779,10 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 	if dim.BillingType != nil {
 		query += fmt.Sprintf(" AND ul.billing_type = $%d", len(args)+1)
 		args = append(args, *dim.BillingType)
+	}
+	if len(dim.BillingTypes) > 0 {
+		query += fmt.Sprintf(" AND ul.billing_type = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(dim.BillingTypes))
 	}
 
 	// ORDER BY 列来自固定 allowlist(非用户原样字符串),避免 SQL 注入。

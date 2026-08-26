@@ -1054,6 +1054,7 @@ export interface UpstreamAccountBalanceSnapshot {
 
 export interface UpstreamSiteCredentialSummary {
   host: string
+  display_name: string
   website_url: string
   account_ids: number[]
   account_names: string[]
@@ -1064,6 +1065,7 @@ export interface UpstreamSiteCredentialSummary {
 
 export interface UpstreamSiteCredentialInput {
   base_url: string
+  display_name: string
   login_username: string
   login_password: string
 }

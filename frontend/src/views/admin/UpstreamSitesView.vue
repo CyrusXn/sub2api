@@ -44,6 +44,10 @@
             </a>
           </template>
 
+          <template #cell-display_name="{ row }">
+            <span class="font-medium text-gray-900 dark:text-white">{{ row.display_name || row.host }}</span>
+          </template>
+
           <template #cell-account_names="{ row }">
             <div class="flex flex-wrap gap-1.5">
               <span
@@ -99,6 +103,10 @@
       @close="closeEdit"
     >
       <form class="space-y-5" @submit.prevent="saveCredential">
+        <div>
+          <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-200">站点名称</label>
+          <input v-model.trim="form.display_name" type="text" class="input" maxlength="255" data-test="display-name" />
+        </div>
         <div>
           <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-200">
             {{ t('admin.accounts.upstreamSites.website') }}
@@ -177,10 +185,11 @@ const sites = ref<UpstreamSiteCredentialSummary[]>([])
 const searchQuery = ref('')
 const showEditDialog = ref(false)
 const editingSite = ref<UpstreamSiteCredentialSummary | null>(null)
-const form = reactive({ login_username: '', login_password: '' })
+const form = reactive({ display_name: '', login_username: '', login_password: '' })
 const isReadOnlyPreview = () => import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
 
 const columns = computed<Column[]>(() => [
+  { key: 'display_name', label: '站点名称', width: 160 },
   { key: 'website_url', label: t('admin.accounts.upstreamSites.columns.website'), width: 240 },
   { key: 'account_names', label: t('admin.accounts.upstreamSites.columns.accounts'), width: 320 },
   { key: 'protocol', label: t('admin.accounts.upstreamSites.columns.protocol'), width: 110 },
@@ -193,6 +202,7 @@ const filteredSites = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
   if (!query) return sites.value
   return sites.value.filter(site =>
+    site.display_name.toLowerCase().includes(query) ||
     site.website_url.toLowerCase().includes(query) ||
     site.login_username.toLowerCase().includes(query) ||
     site.account_names.some(name => name.toLowerCase().includes(query))
@@ -213,6 +223,7 @@ const loadSites = async () => {
 
 const openEdit = (site: UpstreamSiteCredentialSummary) => {
   editingSite.value = site
+  form.display_name = site.display_name || site.host
   form.login_username = site.login_username
   form.login_password = ''
   showEditDialog.value = true
@@ -223,6 +234,7 @@ const closeEdit = () => {
   showEditDialog.value = false
   editingSite.value = null
   form.login_username = ''
+  form.display_name = ''
   form.login_password = ''
 }
 
@@ -237,6 +249,7 @@ const saveCredential = async () => {
   try {
     await adminAPI.accounts.upsertUpstreamSiteCredential({
       base_url: editingSite.value.website_url,
+      display_name: form.display_name,
       login_username: form.login_username,
       login_password: form.login_password
     })

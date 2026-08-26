@@ -39,6 +39,7 @@ type BalanceCenterOverviewItem struct {
 type BalanceCenterSite struct {
 	ID                      int64     `json:"id"`
 	Name                    string    `json:"name"`
+	DisplayName             string    `json:"display_name"`
 	NormalizedDomain        string    `json:"normalized_domain"`
 	BaseURL                 string    `json:"base_url"`
 	Source                  string    `json:"source"`
@@ -69,6 +70,7 @@ type BalanceCenterRechargeEvent struct {
 	Currency   string    `json:"currency"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Note       string    `json:"note"`
+	RecordType string    `json:"record_type"`
 }
 
 type BalanceCenterRechargeSiteSummary struct {
@@ -228,6 +230,13 @@ func (s *BalanceCenterService) CreateRechargeEvent(ctx context.Context, event *B
 		return nil, errors.New("充值记录幂等键不能为空")
 	}
 	event.SiteLabel = strings.TrimSpace(event.SiteLabel)
+	event.RecordType = strings.TrimSpace(event.RecordType)
+	if event.RecordType == "" {
+		event.RecordType = "recharge"
+	}
+	if event.RecordType != "recharge" && event.RecordType != "subscription" {
+		return nil, errors.New("充值记录类型无效")
+	}
 	event.Currency = strings.TrimSpace(event.Currency)
 	if event.Currency == "" {
 		event.Currency = "CNY"

@@ -125,3 +125,8 @@ func TestUpstreamSiteProtocolForHostClassifiesPiteAsNewAPI(t *testing.T) {
 	require.Equal(t, "newapi", upstreamSiteProtocolForHost(" API.AIGCLINK.XYZ "))
 	require.Equal(t, "innom", upstreamSiteProtocolForHost("vovoapi.com"))
 }
+
+func TestDefaultUpstreamSiteDisplayNameExtractsBracketedAccountName(t *testing.T) {
+	require.Equal(t, "鱼鱼", defaultUpstreamSiteDisplayName([]string{"【鱼鱼】008 bugteam", "其他账号"}, "sub.anzhiyu.com"))
+	require.Equal(t, "vovoapi.com", defaultUpstreamSiteDisplayName([]string{"没有括号"}, "vovoapi.com"))
+}

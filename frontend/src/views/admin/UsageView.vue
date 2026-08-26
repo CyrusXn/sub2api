@@ -9,6 +9,7 @@
             <div class="flex items-center gap-2">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
+                ref="dateRangePickerRef"
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
                 :show-time="true"
@@ -191,6 +192,7 @@ import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admi
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
@@ -306,6 +308,7 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
 }
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
+const dateRangePickerRef = ref<{ refreshRange: () => boolean } | null>(null)
 // 页面控件使用数组表达多选，发请求时由 buildUsageListParams 统一转换为 CSV。
 const filters = ref<Record<string, any>>({
   user_ids: undefined,
@@ -319,6 +322,9 @@ const filters = ref<Record<string, any>>({
   upstream_model_mismatches: undefined,
   upstream_site_hosts: undefined,
   upstream_site_account_ids: undefined,
+  error_phases: undefined,
+  error_categories: undefined,
+  status_codes: undefined,
   start_date: startDate.value,
   end_date: endDate.value,
 })
@@ -427,7 +433,12 @@ const loadLogs = async () => {
       { signal: c.signal }
     )
     if(!c.signal.aborted) { usageLogs.value = res.items; pagination.total = res.total }
-  } catch (error: any) { if(error?.name !== 'AbortError') console.error('Failed to load usage logs:', error) } finally { if(abortController === c) loading.value = false }
+  } catch (error: any) {
+    if (error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
+      console.error('Failed to load usage logs:', error)
+      appStore.showError(extractApiErrorMessage(error, t('usage.failedToLoad')))
+    }
+  } finally { if(abortController === c) loading.value = false }
 }
 const loadStats = async (force = false) => {
   const seq = ++statsReqSeq
@@ -446,6 +457,7 @@ const loadStats = async (force = false) => {
   } catch (error) {
     if (seq !== statsReqSeq) return
     console.error('Failed to load usage stats:', error)
+    appStore.showError(extractApiErrorMessage(error, t('usage.failedToLoad')))
     inboundEndpointStats.value = []
     upstreamEndpointStats.value = []
     endpointPathStats.value = []
@@ -501,6 +513,7 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
   } catch (error) {
     if (seq !== modelStatsReqSeq) return
     console.error('Failed to load model stats:', error)
+    appStore.showError(extractApiErrorMessage(error, t('usage.failedToLoad')))
     if (source === 'requested') {
       requestedModelStats.value = []
     } else if (source === 'upstream') {
@@ -542,7 +555,11 @@ const loadChartData = async () => {
     if (seq !== chartReqSeq) return
     trendData.value = snapshot.trend || []
     groupStats.value = snapshot.groups || []
-  } catch (error) { console.error('Failed to load chart data:', error) } finally { if (seq === chartReqSeq) chartsLoading.value = false }
+  } catch (error) {
+    if (seq !== chartReqSeq) return
+    console.error('Failed to load chart data:', error)
+    appStore.showError(extractApiErrorMessage(error, t('usage.failedToLoad')))
+  } finally { if (seq === chartReqSeq) chartsLoading.value = false }
 }
 const applyFilters = () => {
   pagination.page = 1
@@ -558,20 +575,16 @@ const applyFilters = () => {
     errRows.value = []
   }
 }
-// 刷新和重新进入记录页时仅刷新时间窗口，保留用户当前的其它筛选条件。
-const resetTimeRangeToLast24Hours = () => {
-  const range = getLast24HoursRangeDates()
-  startDate.value = range.start
-  endDate.value = range.end
-  filters.value = {
-    ...filters.value,
-    start_date: range.start,
-    end_date: range.end,
-  }
-  granularity.value = getGranularityForRange(range.start, range.end)
-}
 const refreshData = () => {
-  resetTimeRangeToLast24Hours()
+  // 仅动态预设随刷新推进到当前时刻，自定义范围和静态预设保持不变。
+  if (dateRangePickerRef.value?.refreshRange()) {
+    filters.value = {
+      ...filters.value,
+      start_date: startDate.value,
+      end_date: endDate.value,
+    }
+    granularity.value = getGranularityForRange(startDate.value, endDate.value)
+  }
   invalidateModelStatsCache()
   loadLogs()
   loadStats(true)
@@ -581,7 +594,9 @@ const refreshData = () => {
   if (rankingMounted.value) rankingRef.value?.reload()
 }
 const resetFilters = () => {
-  resetTimeRangeToLast24Hours()
+  const range = getLast24HoursRangeDates()
+  startDate.value = range.start
+  endDate.value = range.end
   filters.value = {
     start_date: startDate.value,
     end_date: endDate.value,
@@ -596,6 +611,9 @@ const resetFilters = () => {
     upstream_model_mismatches: undefined,
     upstream_site_hosts: undefined,
     upstream_site_account_ids: undefined,
+    error_phases: undefined,
+    error_categories: undefined,
+    status_codes: undefined,
   }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
   applyFilters()
@@ -876,6 +894,10 @@ const selectedErrorId = ref<number | null>(null)
 // 注意：'YYYY-MM-DDT00:00:00' 无时区后缀，按本地时区解析后再转 UTC——与页面其它日期处理语义一致，刻意如此，勿改成 'T00:00:00Z'
 const toRFC3339 = (d: string | undefined, endOfDay = false): string | undefined =>
   d ? new Date(d.includes('T') ? d : `${d}${endOfDay ? 'T23:59:59.999' : 'T00:00:00'}`).toISOString() : undefined
+const csvQuery = (value: unknown): string | undefined => {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  return value.join(',')
+}
 
 const loadAdminErrors = async () => {
   errLoading.value = true
@@ -886,14 +908,14 @@ const loadAdminErrors = async () => {
       view: 'all',
       start_time: toRFC3339(filters.value.start_date),
       end_time: toRFC3339(filters.value.end_date, true),
-      user_id: filters.value.user_id ?? undefined,
-      api_key_id: filters.value.api_key_id ?? undefined,
-      account_id: filters.value.account_id ?? undefined,
-      group_id: filters.value.group_id ?? undefined,
-      model: filters.value.model || undefined,
-      phase: filters.value.error_phase || undefined,
-      category: filters.value.error_category || undefined,
-      status_codes: filters.value.status_code != null ? String(filters.value.status_code) : undefined,
+      user_ids: csvQuery(filters.value.user_ids),
+      api_key_ids: csvQuery(filters.value.api_key_ids),
+      account_ids: csvQuery(filters.value.account_ids),
+      group_ids: csvQuery(filters.value.group_ids),
+      models: csvQuery(filters.value.models),
+      phases: csvQuery(filters.value.error_phases),
+      categories: csvQuery(filters.value.error_categories),
+      status_codes: csvQuery(filters.value.status_codes),
       sort_by: errSortBy.value,
       sort_order: errSortOrder.value,
     })

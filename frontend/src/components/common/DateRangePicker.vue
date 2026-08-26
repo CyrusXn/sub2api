@@ -86,6 +86,7 @@ interface DatePreset {
   labelKey: string
   value: string
   getRange: () => { start: string; end: string }
+  refreshOnReload?: boolean
 }
 
 interface Props {
@@ -110,6 +111,7 @@ const containerRef = ref<HTMLElement | null>(null)
 const localStartDate = ref(props.startDate)
 const localEndDate = ref(props.endDate)
 const activePreset = ref<string | null>('last24Hours')
+let suppressPresetDetection = 0
 const showTime = computed(() => props.showTime === true)
 
 // Tomorrow's date - used for max date to handle timezone differences
@@ -134,6 +136,12 @@ const formatDateTimeToString = (date: Date): string => {
   return `${formatDateToString(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
+// datetime-local 在部分浏览器会省略 :ss；管理端接口要求秒级本地时间。
+const normalizeDateTimeValue = (value: string): string => {
+  if (!showTime.value || !value || value.split(':').length >= 3) return value
+  return `${value}:00`
+}
+
 const rangeValue = (date: Date): string => showTime.value ? formatDateTimeToString(date) : formatDateToString(date)
 const startOfDayValue = (date: Date): string => {
   const value = new Date(date)
@@ -151,6 +159,7 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.today',
     value: 'today',
+    refreshOnReload: true,
     getRange: () => {
       const now = new Date()
       return { start: startOfDayValue(now), end: rangeValue(now) }
@@ -168,6 +177,7 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.last24Hours',
     value: 'last24Hours',
+    refreshOnReload: true,
     getRange: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
@@ -180,6 +190,7 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.last7Days',
     value: '7days',
+    refreshOnReload: true,
     getRange: () => {
       const d = new Date()
       d.setDate(d.getDate() - 6)
@@ -189,6 +200,7 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.last14Days',
     value: '14days',
+    refreshOnReload: true,
     getRange: () => {
       const d = new Date()
       d.setDate(d.getDate() - 13)
@@ -198,6 +210,7 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.last30Days',
     value: '30days',
+    refreshOnReload: true,
     getRange: () => {
       const d = new Date()
       d.setDate(d.getDate() - 29)
@@ -207,6 +220,7 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.thisMonth',
     value: 'thisMonth',
+    refreshOnReload: true,
     getRange: () => {
       const now = new Date()
       const start = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -280,15 +294,35 @@ const toggle = () => {
 }
 
 const apply = () => {
-  emit('update:startDate', localStartDate.value)
-  emit('update:endDate', localEndDate.value)
+  const startDate = normalizeDateTimeValue(localStartDate.value)
+  const endDate = normalizeDateTimeValue(localEndDate.value)
+  localStartDate.value = startDate
+  localEndDate.value = endDate
+  emit('update:startDate', startDate)
+  emit('update:endDate', endDate)
   emit('change', {
-    startDate: localStartDate.value,
-    endDate: localEndDate.value,
+    startDate,
+    endDate,
     preset: activePreset.value
   })
   isOpen.value = false
 }
+
+/** 按当前动态预设重新计算范围；自定义范围和静态预设保持原值。 */
+const refreshRange = (): boolean => {
+  const preset = presets.find((item) => item.value === activePreset.value)
+  if (!preset?.refreshOnReload) return false
+  const range = preset.getRange()
+  localStartDate.value = range.start
+  localEndDate.value = range.end
+  // 父组件会通过 v-model 分两次回传起止值，期间不要用瞬时值覆盖当前预设。
+  suppressPresetDetection = 2
+  emit('update:startDate', range.start)
+  emit('update:endDate', range.end)
+  return true
+}
+
+defineExpose({ refreshRange })
 
 const handleClickOutside = (event: MouseEvent) => {
   if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
@@ -307,7 +341,8 @@ watch(
   () => props.startDate,
   (val) => {
     localStartDate.value = val
-    onDateChange()
+    if (suppressPresetDetection > 0) suppressPresetDetection -= 1
+    else onDateChange()
   }
 )
 
@@ -315,7 +350,8 @@ watch(
   () => props.endDate,
   (val) => {
     localEndDate.value = val
-    onDateChange()
+    if (suppressPresetDetection > 0) suppressPresetDetection -= 1
+    else onDateChange()
   }
 )
 

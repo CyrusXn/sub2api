@@ -714,6 +714,18 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 
 	dim := usagestats.UserBreakdownDimension{}
+	multiFilters, err := parseUsageMultiFilters(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	dim.GroupIDs = multiFilters.GroupIDs
+	dim.Models = multiFilters.Models
+	dim.UserIDs = multiFilters.UserIDs
+	dim.APIKeyIDs = multiFilters.APIKeyIDs
+	dim.AccountIDs = multiFilters.AccountIDs
+	dim.RequestTypes = multiFilters.RequestTypes
+	dim.BillingTypes = multiFilters.BillingTypes
 	if v := c.Query("group_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
 			dim.GroupID = id

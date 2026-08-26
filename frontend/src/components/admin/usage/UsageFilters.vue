@@ -192,19 +192,19 @@
         <!-- Error Phase Filter (errors only) -->
         <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
-          <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitChange" />
+          <Select v-model="filters.error_phases" :options="errorPhaseOptions" multiple clearable @change="emitChange" />
         </div>
 
         <!-- Error Category Filter (errors only) -->
         <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="input-label">{{ t('usage.errors.category') }}</label>
-          <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitChange" />
+          <Select v-model="filters.error_categories" :options="errorCategoryOptions" multiple clearable @change="emitChange" />
         </div>
 
         <!-- Status Code Filter (errors only) -->
         <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
-          <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
+          <Select v-model="filters.status_codes" :options="statusCodeOptions" multiple clearable @change="emitChange" />
         </div>
 
         <!-- Group Filter -->

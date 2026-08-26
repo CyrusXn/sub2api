@@ -11,6 +11,7 @@ import (
 
 type upstreamSiteCredentialRequest struct {
 	BaseURL       string `json:"base_url" binding:"required,max=1000"`
+	DisplayName   string `json:"display_name" binding:"max=255"`
 	LoginUsername string `json:"login_username" binding:"required,max=320"`
 	LoginPassword string `json:"login_password" binding:"max=2000"`
 }
@@ -39,9 +40,10 @@ func (h *AccountHandler) UpsertUpstreamSiteCredential(c *gin.Context) {
 		return
 	}
 	site, err := h.upstreamSiteCredentials.Upsert(c.Request.Context(), service.UpstreamSiteCredentialInput{
-		BaseURL:  req.BaseURL,
-		Username: req.LoginUsername,
-		Password: req.LoginPassword,
+		BaseURL:     req.BaseURL,
+		DisplayName: req.DisplayName,
+		Username:    req.LoginUsername,
+		Password:    req.LoginPassword,
 	})
 	if errors.Is(err, service.ErrUpstreamSiteCredentialInvalid) {
 		response.BadRequest(c, err.Error())

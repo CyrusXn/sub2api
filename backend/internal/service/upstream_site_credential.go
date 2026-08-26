@@ -16,6 +16,7 @@ var (
 
 type UpstreamSiteCredential struct {
 	Host               string
+	DisplayName        string
 	LoginUsername      string
 	PasswordCiphertext string
 	CreatedAt          time.Time
@@ -30,12 +31,31 @@ type UpstreamSiteCredentialSummary struct {
 	LoginUsername string   `json:"login_username"`
 	HasPassword   bool     `json:"has_password"`
 	Protocol      string   `json:"protocol"`
+	DisplayName   string   `json:"display_name"`
+}
+
+func defaultUpstreamSiteDisplayName(accountNames []string, host string) string {
+	for _, name := range accountNames {
+		start := strings.Index(name, "【")
+		if start < 0 {
+			continue
+		}
+		end := strings.Index(name[start+len("【"):], "】")
+		if end >= 0 {
+			label := strings.TrimSpace(name[start+len("【") : start+len("【")+end])
+			if label != "" {
+				return label
+			}
+		}
+	}
+	return strings.TrimSpace(host)
 }
 
 type UpstreamSiteCredentialInput struct {
-	BaseURL  string
-	Username string
-	Password string
+	BaseURL     string
+	DisplayName string
+	Username    string
+	Password    string
 }
 
 type ResolvedUpstreamSiteCredential struct {
@@ -67,7 +87,16 @@ func (s *UpstreamSiteCredentialService) List(ctx context.Context) ([]UpstreamSit
 	if s == nil || s.repo == nil {
 		return nil, ErrUpstreamSiteCredentialUnavailable
 	}
-	return s.repo.ListSites(ctx)
+	sites, err := s.repo.ListSites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sites {
+		if strings.TrimSpace(sites[i].DisplayName) == "" {
+			sites[i].DisplayName = defaultUpstreamSiteDisplayName(sites[i].AccountNames, sites[i].Host)
+		}
+	}
+	return sites, nil
 }
 
 func (s *UpstreamSiteCredentialService) Upsert(
@@ -106,6 +135,7 @@ func (s *UpstreamSiteCredentialService) Upsert(
 
 	credential := &UpstreamSiteCredential{
 		Host:               host,
+		DisplayName:        strings.TrimSpace(input.DisplayName),
 		LoginUsername:      username,
 		PasswordCiphertext: passwordCiphertext,
 	}
@@ -118,6 +148,7 @@ func (s *UpstreamSiteCredentialService) Upsert(
 		LoginUsername: username,
 		HasPassword:   true,
 		Protocol:      upstreamSiteProtocolForHost(host),
+		DisplayName:   credential.DisplayName,
 	}, nil
 }
 

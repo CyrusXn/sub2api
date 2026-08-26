@@ -21,19 +21,20 @@ WHERE platform = 'openai'
 ORDER BY id`
 
 const upstreamSiteCredentialsQuery = `
-SELECT host, login_username, password_encrypted
+SELECT host, display_name, login_username, password_encrypted
 FROM upstream_site_credentials
 ORDER BY host`
 
 const upstreamSiteCredentialGetQuery = `
-SELECT host, login_username, password_encrypted, created_at, updated_at
+SELECT host, display_name, login_username, password_encrypted, created_at, updated_at
 FROM upstream_site_credentials
 WHERE host = $1`
 
 const upstreamSiteCredentialUpsertQuery = `
-INSERT INTO upstream_site_credentials (host, login_username, password_encrypted)
-VALUES ($1, $2, $3)
+INSERT INTO upstream_site_credentials (host, display_name, login_username, password_encrypted)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (host) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
     login_username = EXCLUDED.login_username,
     password_encrypted = EXCLUDED.password_encrypted,
     updated_at = NOW()`
@@ -92,11 +93,12 @@ func (r *upstreamSiteCredentialRepository) ListSites(ctx context.Context) ([]ser
 	}
 	defer func() { _ = credentialRows.Close() }()
 	for credentialRows.Next() {
-		var host, username, ciphertext string
-		if err := credentialRows.Scan(&host, &username, &ciphertext); err != nil {
+		var host, displayName, username, ciphertext string
+		if err := credentialRows.Scan(&host, &displayName, &username, &ciphertext); err != nil {
 			return nil, fmt.Errorf("scan upstream site credential: %w", err)
 		}
 		if site := sitesByHost[strings.ToLower(strings.TrimSpace(host))]; site != nil {
+			site.DisplayName = displayName
 			site.LoginUsername = username
 			site.HasPassword = strings.TrimSpace(ciphertext) != ""
 		}
@@ -117,6 +119,7 @@ func (r *upstreamSiteCredentialRepository) GetByHost(ctx context.Context, host s
 	credential := &service.UpstreamSiteCredential{}
 	err := r.db.QueryRowContext(ctx, upstreamSiteCredentialGetQuery, host).Scan(
 		&credential.Host,
+		&credential.DisplayName,
 		&credential.LoginUsername,
 		&credential.PasswordCiphertext,
 		&credential.CreatedAt,
@@ -135,15 +138,31 @@ func (r *upstreamSiteCredentialRepository) Upsert(ctx context.Context, credentia
 	if credential == nil {
 		return service.ErrUpstreamSiteCredentialInvalid
 	}
-	_, err := r.db.ExecContext(
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin upstream site credential upsert: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	_, err = tx.ExecContext(
 		ctx,
 		upstreamSiteCredentialUpsertQuery,
 		credential.Host,
+		credential.DisplayName,
 		credential.LoginUsername,
 		credential.PasswordCiphertext,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert upstream site credential: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE balance_center_sites SET display_name=$1, updated_at=NOW() WHERE normalized_domain=$2`, credential.DisplayName, credential.Host); err != nil {
+		return fmt.Errorf("sync balance center site display name: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit upstream site credential upsert: %w", err)
 	}
 	return nil
 }

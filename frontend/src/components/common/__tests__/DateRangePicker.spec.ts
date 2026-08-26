@@ -111,4 +111,24 @@ describe('DateRangePicker', () => {
     expect((inputs[0].element as HTMLInputElement).value).toMatch(/^2026-08-20T10:20:30(?:\.000)?$/)
     expect(wrapper.find('.date-picker-value').text()).toContain('10:20:30')
   })
+
+  it('showTime 模式补全手动输入缺失的秒数', async () => {
+    const wrapper = mount(DateRangePicker, {
+      props: {
+        startDate: '2026-08-20T00:00:00',
+        endDate: '2026-08-21T00:00:00',
+        showTime: true
+      },
+      global: { stubs: { Icon: true } }
+    })
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    const inputs = wrapper.findAll('.date-picker-input')
+    await inputs[0].setValue('2026-08-20T00:00')
+    await inputs[1].setValue('2026-08-21T00:00')
+    await wrapper.find('.date-picker-apply').trigger('click')
+
+    expect(wrapper.emitted('change')?.[0]).toEqual([
+      { startDate: '2026-08-20T00:00:00', endDate: '2026-08-21T00:00:00', preset: null }
+    ])
+  })
 })

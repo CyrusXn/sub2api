@@ -75,6 +75,7 @@ describe('UpstreamSitesView', () => {
     listUpstreamSites.mockResolvedValue([
       {
         host: 'vovoapi.com',
+        display_name: 'VoVo',
         website_url: 'https://vovoapi.com',
         account_ids: [12, 13],
         account_names: ['VoVo Plus', 'VoVo Backup'],
@@ -93,6 +94,7 @@ describe('UpstreamSitesView', () => {
     expect(wrapper.text()).toContain('https://vovoapi.com')
     expect(wrapper.text()).toContain('VoVo Plus')
     expect(JSON.parse(wrapper.get('[data-test="columns"]').text())).toEqual([
+      { key: 'display_name', width: 160 },
       { key: 'website_url', width: 240 },
       { key: 'account_names', width: 320 },
       { key: 'protocol', width: 110 },
@@ -106,6 +108,7 @@ describe('UpstreamSitesView', () => {
     const wrapper = await mountView()
 
     await wrapper.get('[data-test="edit-site"]').trigger('click')
+    expect(wrapper.get('[data-test="display-name"]').element).toHaveProperty('value', 'VoVo')
     expect(wrapper.get('[data-test="login-username"]').element).toHaveProperty('value', 'admin@example.com')
     expect(wrapper.get('[data-test="login-password"]').element).toHaveProperty('value', '')
 
@@ -116,6 +119,7 @@ describe('UpstreamSitesView', () => {
 
     expect(upsertUpstreamSiteCredential).toHaveBeenCalledWith({
       base_url: 'https://vovoapi.com',
+      display_name: 'VoVo',
       login_username: 'updated@example.com',
       login_password: 'replacement-value'
     })

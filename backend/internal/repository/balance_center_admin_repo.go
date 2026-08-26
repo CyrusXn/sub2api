@@ -51,11 +51,11 @@ ORDER BY s.normalized_domain ASC, cs.account_id NULLS LAST`)
 
 func (r *balanceCenterRepository) ListBalanceCenterSites(ctx context.Context) ([]service.BalanceCenterSite, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT s.id, s.name, s.normalized_domain, s.base_url, s.source, s.probe_supported,
+SELECT s.id, s.name, s.display_name, s.normalized_domain, s.base_url, s.source, s.probe_supported,
        COALESCE(SUM(e.amount), 0) AS historical_recharge_total, s.updated_at
 FROM balance_center_sites s
 LEFT JOIN balance_center_recharge_events e ON e.site_id = s.id
-GROUP BY s.id, s.name, s.normalized_domain, s.base_url, s.source, s.probe_supported, s.updated_at
+GROUP BY s.id, s.name, s.display_name, s.normalized_domain, s.base_url, s.source, s.probe_supported, s.updated_at
 ORDER BY COALESCE(SUM(e.amount), 0) DESC, s.normalized_domain ASC, s.id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("查询余额站点失败: %w", err)
@@ -64,7 +64,7 @@ ORDER BY COALESCE(SUM(e.amount), 0) DESC, s.normalized_domain ASC, s.id ASC`)
 	items := make([]service.BalanceCenterSite, 0)
 	for rows.Next() {
 		var item service.BalanceCenterSite
-		if err := rows.Scan(&item.ID, &item.Name, &item.NormalizedDomain, &item.BaseURL, &item.Source, &item.ProbeSupported, &item.HistoricalRechargeTotal, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.DisplayName, &item.NormalizedDomain, &item.BaseURL, &item.Source, &item.ProbeSupported, &item.HistoricalRechargeTotal, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -272,11 +272,11 @@ FROM balance_center_recharge_events s`+where+` ORDER BY occurred_at DESC, id DES
 func (r *balanceCenterRepository) CreateBalanceCenterRechargeEvent(ctx context.Context, item *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, error) {
 	result := *item
 	err := r.db.QueryRowContext(ctx, `
-INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, account_id, amount, currency, occurred_at, note)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, account_id, amount, currency, occurred_at, note, record_type)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (source, source_key) DO UPDATE SET site_id=EXCLUDED.site_id, site_label=EXCLUDED.site_label, account_id=EXCLUDED.account_id,
-amount=EXCLUDED.amount, currency=EXCLUDED.currency, occurred_at=EXCLUDED.occurred_at, note=EXCLUDED.note, updated_at=NOW()
-RETURNING id`, item.Source, item.SourceKey, item.SiteID, item.SiteLabel, item.AccountID, item.Amount, item.Currency, item.OccurredAt, item.Note).Scan(&result.ID)
+amount=EXCLUDED.amount, currency=EXCLUDED.currency, occurred_at=EXCLUDED.occurred_at, note=EXCLUDED.note, record_type=EXCLUDED.record_type, updated_at=NOW()
+RETURNING id`, item.Source, item.SourceKey, item.SiteID, item.SiteLabel, item.AccountID, item.Amount, item.Currency, item.OccurredAt, item.Note, item.RecordType).Scan(&result.ID)
 	return &result, err
 }
 

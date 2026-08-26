@@ -120,6 +120,41 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
 	// buildOpsErrorLogsWhere 以 COALESCE(requested_model, model) 比对。
 	filter.Model = strings.TrimSpace(c.Query("model"))
+	filter.Models = parseCSVValues(c, "models")
+	if len(filter.Models) == 0 && filter.Model != "" {
+		filter.Models = []string{filter.Model}
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "user_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.UserIDs = ids
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "api_key_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.APIKeyIDs = ids
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "account_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.AccountIDs = ids
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "group_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.GroupIDs = ids
+	}
+	filter.Phase = strings.TrimSpace(c.Query("phase"))
+	filter.ErrorPhasesAny = append(filter.ErrorPhasesAny, parseCSVValues(c, "phases")...)
+	for _, cat := range parseCSVValues(c, "categories") {
+		phases, types := service.CategoryToFilter(cat)
+		filter.ErrorPhasesAny = append(filter.ErrorPhasesAny, phases...)
+		filter.ErrorTypesAny = append(filter.ErrorTypesAny, types...)
+	}
 
 	// 请求错误语义:client-visible status>=400 守卫恒生效（未设
 	// IncludeRecoveredUpstream 时 phase=upstream 不再绕过守卫），故
@@ -130,8 +165,8 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	// 未知分类返回空切片 = 不过滤。与 phase 参数可同时设置(AND 语义)。
 	if cat := strings.TrimSpace(c.Query("category")); cat != "" {
 		phases, types := service.CategoryToFilter(cat)
-		filter.ErrorPhasesAny = phases
-		filter.ErrorTypesAny = types
+		filter.ErrorPhasesAny = append(filter.ErrorPhasesAny, phases...)
+		filter.ErrorTypesAny = append(filter.ErrorTypesAny, types...)
 	}
 
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {
@@ -249,6 +284,40 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
 	// buildOpsErrorLogsWhere 以 COALESCE(requested_model, model) 比对。
 	filter.Model = strings.TrimSpace(c.Query("model"))
+	filter.Models = parseCSVValues(c, "models")
+	if len(filter.Models) == 0 && filter.Model != "" {
+		filter.Models = []string{filter.Model}
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "user_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.UserIDs = ids
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "api_key_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.APIKeyIDs = ids
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "account_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.AccountIDs = ids
+	}
+	if ids, parseErr := parseCSVInt64Values(c, "group_ids"); parseErr != nil {
+		response.BadRequest(c, parseErr.Error())
+		return
+	} else {
+		filter.GroupIDs = ids
+	}
+	filter.ErrorPhasesAny = append(filter.ErrorPhasesAny, parseCSVValues(c, "phases")...)
+	for _, cat := range parseCSVValues(c, "categories") {
+		phases, types := service.CategoryToFilter(cat)
+		filter.ErrorPhasesAny = append(filter.ErrorPhasesAny, phases...)
+		filter.ErrorTypesAny = append(filter.ErrorTypesAny, types...)
+	}
 
 	// 请求错误语义:client-visible status>=400 守卫恒生效（未设
 	// IncludeRecoveredUpstream 时 phase=upstream 不再绕过守卫），故
@@ -259,8 +328,8 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	// 未知分类返回空切片 = 不过滤。与 phase 参数可同时设置(AND 语义)。
 	if cat := strings.TrimSpace(c.Query("category")); cat != "" {
 		phases, types := service.CategoryToFilter(cat)
-		filter.ErrorPhasesAny = phases
-		filter.ErrorTypesAny = types
+		filter.ErrorPhasesAny = append(filter.ErrorPhasesAny, phases...)
+		filter.ErrorTypesAny = append(filter.ErrorTypesAny, types...)
 	}
 
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {

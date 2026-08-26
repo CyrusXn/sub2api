@@ -40,15 +40,16 @@ func TestBalanceCenterSitesOrderByHistoricalRechargeTotal(t *testing.T) {
 	now := time.Now().UTC()
 	mock.ExpectQuery("LEFT JOIN balance_center_recharge_events[\\s\\S]+ORDER BY COALESCE\\(SUM\\(e.amount\\), 0\\) DESC").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "name", "normalized_domain", "base_url", "source", "probe_supported", "historical_recharge_total", "updated_at",
+			"id", "name", "display_name", "normalized_domain", "base_url", "source", "probe_supported", "historical_recharge_total", "updated_at",
 		}).
-			AddRow(2, "VoVo", "vovo.example", "https://vovo.example", "sub2api", true, 80.0, now).
-			AddRow(1, "HBY", "hby.example", "https://hby.example", "sub2api", true, 20.0, now))
+			AddRow(2, "VoVo", "VoVo", "vovo.example", "https://vovo.example", "sub2api", true, 80.0, now).
+			AddRow(1, "HBY", "HBY", "hby.example", "https://hby.example", "sub2api", true, 20.0, now))
 
 	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
 	items, err := repo.ListBalanceCenterSites(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "VoVo", items[0].Name)
+	require.Equal(t, "VoVo", items[0].DisplayName)
 	require.Equal(t, 80.0, items[0].HistoricalRechargeTotal)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -104,12 +105,12 @@ func TestBalanceCenterAdminRechargeUpsertIsIdempotent(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectQuery(regexp.QuoteMeta("ON CONFLICT (source, source_key) DO UPDATE")).
-		WithArgs("manual", "tx-1", nil, "", nil, 10.0, "CNY", now, "备注").
+		WithArgs("manual", "tx-1", nil, "", nil, 10.0, "CNY", now, "备注", "subscription").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9))
 
 	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
 	item, err := repo.CreateBalanceCenterRechargeEvent(context.Background(), &service.BalanceCenterRechargeEvent{
-		Source: "manual", SourceKey: "tx-1", Amount: 10, Currency: "CNY", OccurredAt: now, Note: "备注",
+		Source: "manual", SourceKey: "tx-1", Amount: 10, Currency: "CNY", OccurredAt: now, Note: "备注", RecordType: "subscription",
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(9), item.ID)

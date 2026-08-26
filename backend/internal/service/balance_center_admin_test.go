@@ -99,6 +99,31 @@ func TestBalanceCenterCreateRechargeEventDefaultsToCNY(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "CNY", repo.createdEvent.Currency)
+	require.Equal(t, "recharge", repo.createdEvent.RecordType)
+}
+
+func TestBalanceCenterCreateRechargeEventAcceptsSubscription(t *testing.T) {
+	repo := &balanceCenterAdminRepositoryStub{}
+	svc := NewBalanceCenterService(repo, nil)
+
+	_, err := svc.CreateRechargeEvent(context.Background(), &BalanceCenterRechargeEvent{
+		SourceKey: "subscription-408", Amount: 408, RecordType: "subscription", OccurredAt: time.Now().UTC(),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "subscription", repo.createdEvent.RecordType)
+}
+
+func TestBalanceCenterCreateRechargeEventRejectsUnknownRecordType(t *testing.T) {
+	repo := &balanceCenterAdminRepositoryStub{}
+	svc := NewBalanceCenterService(repo, nil)
+
+	_, err := svc.CreateRechargeEvent(context.Background(), &BalanceCenterRechargeEvent{
+		SourceKey: "tx-unknown", Amount: 10, RecordType: "other", OccurredAt: time.Now().UTC(),
+	})
+
+	require.EqualError(t, err, "充值记录类型无效")
+	require.Nil(t, repo.createdEvent)
 }
 
 func TestBalanceCenterCreateRechargeEventRejectsNonCNY(t *testing.T) {

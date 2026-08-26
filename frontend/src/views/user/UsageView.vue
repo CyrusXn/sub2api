@@ -9,6 +9,7 @@
             <div class="flex items-center gap-2">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
+                ref="dateRangePickerRef"
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
                 @change="onDateRangeChange"
@@ -343,6 +344,7 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
+const dateRangePickerRef = ref<{ refreshRange: () => boolean } | null>(null)
 const granularity = ref<'day' | 'hour'>(getGranularityForRange(startDate.value, endDate.value))
 
 const modelDistributionMetric = ref<DistributionMetric>('tokens')
@@ -537,6 +539,8 @@ const applyFilters = () => {
 }
 
 const refreshData = () => {
+  // 仅动态预设随刷新推进到当前时刻，自定义范围和静态预设保持不变。
+  dateRangePickerRef.value?.refreshRange()
   void loadLogs()
   void loadStats()
   void loadModelStats()

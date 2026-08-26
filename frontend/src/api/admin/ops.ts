@@ -1152,12 +1152,19 @@ export type OpsErrorListQueryParams = {
   account_id?: number | null
   user_id?: number
   api_key_id?: number
+  user_ids?: string
+  api_key_ids?: string
+  account_ids?: string
+  group_ids?: string
   // 模型过滤：后端以 COALESCE(requested_model, model) 精确匹配（admin 路径）。
   model?: string
+  models?: string
 
   phase?: string
+  phases?: string
   // 分类(用户侧粗分类码,如 auth/rate_limit/upstream),后端反查为 phase/type ANY 条件
   category?: string
+  categories?: string
   error_owner?: string
   error_source?: string
   resolved?: string
