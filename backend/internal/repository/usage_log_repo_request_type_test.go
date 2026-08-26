@@ -1018,6 +1018,29 @@ func TestAppendUsageLogSharedListConditionsPreservesLegacySemantics(t *testing.T
 	require.Len(t, args, 6)
 }
 
+func TestAppendUsageLogSharedListConditionsBindsPostgresArrays(t *testing.T) {
+	filters := usagestats.UsageLogFilters{
+		UserIDs:                 []int64{2, 3},
+		APIKeyIDs:               []int64{4, 5},
+		AccountIDs:              []int64{6, 7},
+		GroupIDs:                []int64{8, 9},
+		UpstreamSiteAccountIDs:  []int64{10, 11},
+		Models:                  []string{"claude", "gpt"},
+		RequestTypes:            []int16{1, 2},
+		BillingTypes:            []int8{0, 1},
+		BillingModes:            []string{"token", "image"},
+		UpstreamModelMismatches: []bool{true, false},
+	}
+
+	_, args := appendUsageLogSharedListConditions(nil, nil, filters, "")
+	// ID、模型和计费类型是数组参数；请求类型/计费模式展开为标量 OR 条件。
+	require.Len(t, args, 11)
+	for i, arg := range args {
+		_, err := driver.DefaultParameterConverter.ConvertValue(arg)
+		require.NoError(t, err, "array argument %d must be database/sql driver compatible", i)
+	}
+}
+
 type usageLogScannerStub struct {
 	values []any
 }

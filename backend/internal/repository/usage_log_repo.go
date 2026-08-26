@@ -10,6 +10,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 	gocache "github.com/patrickmn/go-cache"
 )
 
@@ -195,7 +196,8 @@ func appendUsageLogListCondition[T any](conditions []string, args []any, column 
 		return conditions, args
 	}
 	conditions = append(conditions, fmt.Sprintf("%s = ANY($%d)", column, len(args)+1))
-	args = append(args, values)
+	// PostgreSQL 的 ANY 参数必须是 driver.Valuer；裸 Go 切片会被 lib/pq 拒绝。
+	args = append(args, pq.Array(values))
 	return conditions, args
 }
 
