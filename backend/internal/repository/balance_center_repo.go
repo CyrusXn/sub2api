@@ -40,10 +40,11 @@ func (r *balanceCenterRepository) PersistSnapshot(ctx context.Context, snapshot 
 
 	var siteID int64
 	err = tx.QueryRowContext(ctx, `
-INSERT INTO balance_center_sites (name, normalized_domain, base_url, source, probe_supported)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO balance_center_sites (name, display_name, normalized_domain, base_url, source, probe_supported)
+VALUES ($1, $1, $2, $3, $4, $5)
 ON CONFLICT (normalized_domain) DO UPDATE SET
     name = EXCLUDED.name,
+	display_name = CASE WHEN balance_center_sites.display_name = '' THEN EXCLUDED.display_name ELSE balance_center_sites.display_name END,
     base_url = CASE WHEN EXCLUDED.base_url <> '' THEN EXCLUDED.base_url ELSE balance_center_sites.base_url END,
     updated_at = NOW()
 RETURNING id`, snapshot.SiteName, snapshot.NormalizedDomain, snapshot.BaseURL, snapshot.Source, snapshot.Status != "unsupported").Scan(&siteID)

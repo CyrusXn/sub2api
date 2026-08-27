@@ -193,37 +193,17 @@ func (r *dashboardAggregationRepository) ListDashboardLowBalanceAccounts(ctx con
 func (r *dashboardAggregationRepository) GetDashboardLast24HourUsage(ctx context.Context, start, end time.Time) (int64, float64, error) {
 	var tokens int64
 	var actualCost float64
-	err := scanSingleRow(ctx, r.sql, `
-		WITH bounds AS (
-			SELECT
-				$1::timestamptz AS start_time,
-				$2::timestamptz AS end_time,
-				CASE
-					WHEN $1::timestamptz = date_trunc('hour', $1::timestamptz) THEN $1::timestamptz
-					ELSE date_trunc('hour', $1::timestamptz) + INTERVAL '1 hour'
-				END AS full_hour_start,
-				date_trunc('hour', $2::timestamptz) AS full_hour_end
-		),
-		hourly AS (
-			SELECT
-				COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS tokens,
-				COALESCE(SUM(actual_cost), 0) AS actual_cost
-			FROM usage_dashboard_hourly, bounds
-			WHERE bucket_start >= full_hour_start AND bucket_start < full_hour_end
-		),
-		boundary AS (
-			SELECT
-				COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS tokens,
-				COALESCE(SUM(actual_cost), 0) AS actual_cost
-			FROM usage_logs, bounds
-			WHERE created_at >= start_time AND created_at < end_time
-			  AND (created_at < full_hour_start OR created_at >= full_hour_end)
-		)
+	// 滚动窗口必须直接读取明细；小时聚合可能尚未回填，混用会漏掉完整小时。
+	query := `
 		SELECT
-			hourly.tokens + boundary.tokens,
-			hourly.actual_cost + boundary.actual_cost
-		FROM hourly, boundary
-	`, []any{start, end}, &tokens, &actualCost)
+			` + adminScaledTotalTokensSum("ul") + ` AS tokens,
+			` + adminScaledCostSum("ul.actual_cost") + ` AS actual_cost
+		FROM usage_logs ul
+		LEFT JOIN users u ON u.id = ul.user_id
+		LEFT JOIN groups g ON g.id = ul.group_id
+		WHERE ul.created_at >= $1 AND ul.created_at < $2
+	`
+	err := scanSingleRow(ctx, r.sql, query, []any{start, end}, &tokens, &actualCost)
 	return tokens, actualCost, err
 }
 

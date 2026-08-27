@@ -566,6 +566,16 @@ func TestUpstreamBillingProbeBalanceCenterSourceKeyIsStable(t *testing.T) {
 	require.Equal(t, "sub2api_probe:63:1786521720000000456", first.SourceKey)
 }
 
+func TestBuildBalanceCenterProbeSnapshotUsesBracketedSiteName(t *testing.T) {
+	account := &Account{ID: 65, Name: "【鱼鱼】008 bugteam", Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://sub.anzhiyu.com/v1"}}
+	snapshot := &UpstreamBillingProbeSnapshot{Status: UpstreamBillingProbeStatusOK, LastAttemptAt: time.Now()}
+
+	result, err := buildBalanceCenterProbeSnapshot(account, snapshot)
+
+	require.NoError(t, err)
+	require.Equal(t, "鱼鱼", result.SiteName)
+}
+
 func TestUpstreamBillingProbeIgnoresBalanceCenterPersistenceFailure(t *testing.T) {
 	account := &Account{
 		ID:          64,

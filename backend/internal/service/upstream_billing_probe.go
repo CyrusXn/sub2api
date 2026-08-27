@@ -1991,9 +1991,13 @@ func buildBalanceCenterProbeSnapshot(account *Account, snapshot *UpstreamBilling
 	normalizedDomain := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
 	baseURL := strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host)
 	accountID := account.ID
+	siteName := strings.TrimSpace(account.Name)
+	if bracketed := defaultUpstreamSiteDisplayName([]string{account.Name}, ""); bracketed != "" {
+		siteName = bracketed
+	}
 	result := &BalanceCenterSnapshot{
 		AccountID:        &accountID,
-		SiteName:         strings.TrimSpace(account.Name),
+		SiteName:         siteName,
 		NormalizedDomain: normalizedDomain,
 		BaseURL:          baseURL,
 		Source:           "sub2api_probe",

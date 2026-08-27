@@ -53,14 +53,14 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestDashboardLast24HourUsageUsesHourlyBucketsAndExactBoundaryDetails(t *testing.T) {
+func TestDashboardLast24HourUsageReadsExactRangeFromUsageLogs(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
 	start := time.Date(2026, 8, 13, 15, 37, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	mock.ExpectQuery(`(?s)WITH bounds AS .*FROM usage_dashboard_hourly.*actual_cost.*FROM usage_logs`).
+	mock.ExpectQuery(`(?s)FROM usage_logs ul.*LEFT JOIN users u.*LEFT JOIN groups g.*ul.created_at >= \$1.*ul.created_at < \$2`).
 		WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{"tokens", "actual_cost"}).AddRow(int64(12345), 67.89))
 
