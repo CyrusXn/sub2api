@@ -30,12 +30,14 @@ const (
 type BackgroundTask string
 
 const (
-	BackgroundTaskBackup             BackgroundTask = "backup"
-	BackgroundTaskScheduledTests     BackgroundTask = "scheduled_tests"
-	BackgroundTaskChannelMonitor     BackgroundTask = "channel_monitor"
-	BackgroundTaskSchedulerSnapshot  BackgroundTask = "scheduler_snapshot"
-	BackgroundTaskRuntimeSettings    BackgroundTask = "runtime_settings"
-	BackgroundTaskPeriodicSideEffect BackgroundTask = "periodic_side_effect"
+	BackgroundTaskBackup            BackgroundTask = "backup"
+	BackgroundTaskScheduledTests    BackgroundTask = "scheduled_tests"
+	BackgroundTaskChannelMonitor    BackgroundTask = "channel_monitor"
+	BackgroundTaskSchedulerSnapshot BackgroundTask = "scheduler_snapshot"
+	BackgroundTaskRuntimeSettings   BackgroundTask = "runtime_settings"
+	// 经营历史聚合使用跨实例单例锁，API-only 节点也可安全参与调度。
+	BackgroundTaskDashboardAggregation BackgroundTask = "dashboard_aggregation"
+	BackgroundTaskPeriodicSideEffect   BackgroundTask = "periodic_side_effect"
 )
 
 // 使用量记录队列溢出策略
@@ -1813,7 +1815,9 @@ func (c *Config) ShouldStartBackgroundTask(task BackgroundTask) bool {
 	if role != DeploymentRoleAPIOnly {
 		return false
 	}
-	return task == BackgroundTaskSchedulerSnapshot || task == BackgroundTaskRuntimeSettings
+	return task == BackgroundTaskSchedulerSnapshot ||
+		task == BackgroundTaskRuntimeSettings ||
+		task == BackgroundTaskDashboardAggregation
 }
 
 // Load 读取并校验完整配置（要求 jwt.secret 已显式提供）。

@@ -404,7 +404,7 @@ func ProvideGrokTokenProvider(
 func ProvideDashboardAggregationService(repo DashboardAggregationRepository, timingWheel *TimingWheelService, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config) *DashboardAggregationService {
 	svc := NewDashboardAggregationService(repo, timingWheel, cfg)
 	svc.SetLeaderLock(lockCache, db)
-	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskDashboardAggregation) {
 		svc.Start()
 	}
 	return svc

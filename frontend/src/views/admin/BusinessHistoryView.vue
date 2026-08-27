@@ -1,10 +1,6 @@
 <template>
   <AppLayout>
-    <main class="mx-auto w-full max-w-[1480px] space-y-6 px-4 py-5 sm:px-6">
-      <header class="border-b border-gray-200 pb-4 dark:border-dark-700">
-        <h1 class="text-xl font-semibold text-gray-900 dark:text-white">{{ t('admin.businessHistory.title') }}</h1>
-      </header>
-
+    <div data-test="business-history-content" class="space-y-6">
       <section class="flex flex-col gap-3 border-b border-gray-200 pb-5 dark:border-dark-700 sm:flex-row sm:items-end" aria-label="经营历史查询">
         <label class="w-full sm:w-48">
           <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.startDate') }}</span>
@@ -131,7 +127,7 @@
           </table>
         </div>
       </section>
-    </main>
+    </div>
   </AppLayout>
 </template>
 

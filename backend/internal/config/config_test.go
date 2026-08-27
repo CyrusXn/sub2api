@@ -152,6 +152,8 @@ func TestDeploymentRoleBackgroundTaskPolicy(t *testing.T) {
 	}
 	require.True(t, apiOnly.ShouldStartBackgroundTask(BackgroundTaskSchedulerSnapshot))
 	require.True(t, apiOnly.ShouldStartBackgroundTask(BackgroundTaskRuntimeSettings))
+	require.True(t, apiOnly.ShouldStartBackgroundTask(BackgroundTaskDashboardAggregation))
+	require.False(t, apiOnly.ShouldStartBackgroundTask(BackgroundTaskPeriodicSideEffect))
 }
 
 func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {

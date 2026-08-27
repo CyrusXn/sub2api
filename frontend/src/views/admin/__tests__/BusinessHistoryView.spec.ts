@@ -106,6 +106,16 @@ describe('BusinessHistoryView', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('按日期查询永久保存的请求数、Token 和消费汇总')
+    expect(wrapper.find('h1').exists()).toBe(false)
+  })
+
+  it('复用 AppLayout 的页面内边距', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const content = wrapper.get('[data-test="business-history-content"]')
+    expect(content.classes()).toContain('space-y-6')
+    expect(content.classes().some((className) => /^(?:sm:)?p[xy]-/.test(className))).toBe(false)
   })
 
   it('按管理员选择的日期范围重新查询', async () => {
