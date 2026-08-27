@@ -67,7 +67,7 @@
               v-for="site in sortedSites"
               :key="site.id"
               data-test="site-recharge-row"
-              class="grid gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 odd:bg-gray-50/70 dark:border-dark-700 dark:odd:bg-dark-800/40 sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.4fr)_minmax(170px,0.8fr)] sm:items-center sm:gap-4"
+              class="grid gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 odd:bg-gray-50 even:bg-white dark:border-dark-700 dark:odd:bg-dark-800 dark:even:bg-dark-900 sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.4fr)_minmax(170px,0.8fr)] sm:items-center sm:gap-4"
             >
               <div class="min-w-0">
                 <span class="font-medium text-gray-900 dark:text-gray-100">{{ site.display_name || site.name }}</span>
@@ -137,7 +137,7 @@
               <tr><th class="px-3 py-2">{{ t('admin.balanceCenter.rechargeAt') }}</th><th class="px-3 py-2">{{ t('admin.balanceCenter.siteName') }}</th><th class="px-3 py-2 text-right">{{ t('admin.balanceCenter.amount') }}</th><th class="w-14 px-3 py-2"></th></tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-              <tr v-for="item in summary.items" :key="item.id" class="text-gray-700 odd:bg-gray-50/70 dark:text-gray-200 dark:odd:bg-dark-800/40">
+              <tr v-for="item in summary.items" :key="item.id" class="text-gray-700 odd:bg-gray-50 even:bg-white dark:text-gray-200 dark:odd:bg-dark-800 dark:even:bg-dark-900">
                 <td class="whitespace-nowrap px-3 py-3">{{ rechargeDate(item) }}</td>
                 <td class="px-3 py-3">{{ rechargeSiteName(item) }}</td>
                 <td class="px-3 py-3 text-right font-medium">¥{{ money(item.amount) }}</td>
@@ -150,14 +150,14 @@
         </div>
 
         <div v-else class="divide-y divide-gray-200 border-y border-gray-200 dark:divide-dark-700 dark:border-dark-700">
-          <div v-for="site in sortedSummarySites" :key="siteKey(site.site_id)" data-test="site-summary-row">
+          <div v-for="site in sortedSummarySites" :key="siteKey(site.site_id)" data-test="site-summary-row" class="odd:bg-white even:bg-gray-50 dark:odd:bg-dark-900 dark:even:bg-dark-800">
             <button type="button" class="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-3 py-3 text-left hover:bg-gray-50 dark:hover:bg-dark-800" :data-test="`expand-site-${siteKey(site.site_id)}`" @click="toggleSite(site.site_id)">
               <span class="truncate font-medium text-gray-900 dark:text-gray-100"><Icon :name="expandedSites.has(siteKey(site.site_id)) ? 'chevronDown' : 'chevronRight'" size="sm" class="mr-2 inline-block" />{{ site.site_name }}</span>
               <span class="text-sm text-gray-500 dark:text-gray-400">{{ site.record_count }} {{ t('admin.balanceCenter.records') }}</span>
               <span class="min-w-24 text-right font-semibold text-gray-900 dark:text-white">¥{{ money(site.total_amount) }}</span>
             </button>
-            <div v-if="expandedSites.has(siteKey(site.site_id))" class="border-t border-gray-100 bg-gray-50/60 px-3 py-2 dark:border-dark-700 dark:bg-dark-800/50">
-              <div v-for="item in site.items" :key="item.id" data-test="site-history-item" class="flex items-center justify-between gap-4 py-2 pl-7 text-sm">
+            <div v-if="expandedSites.has(siteKey(site.site_id))" class="border-t border-gray-100 dark:border-dark-700">
+              <div v-for="item in site.items" :key="item.id" data-test="site-history-item" class="flex items-center justify-between gap-4 px-3 py-2 pl-10 text-sm odd:bg-gray-50 even:bg-white dark:odd:bg-dark-800 dark:even:bg-dark-900">
                 <span class="text-gray-500 dark:text-gray-400">{{ rechargeDate(item) }}</span>
                 <span class="font-medium text-gray-800 dark:text-gray-100">¥{{ money(item.amount) }}</span>
               </div>

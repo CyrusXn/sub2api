@@ -67,6 +67,24 @@ describe('BalanceCenterView', () => {
     expect(wrapper.findAll('[data-test="site-recharge-row"]')[0].text()).toContain('VoVo')
   })
 
+  it('新增充值和充值记录都使用不透明斑马纹', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const rechargeRows = wrapper.findAll('[data-test="site-recharge-row"]')
+    expect(rechargeRows[0].classes()).toEqual(expect.arrayContaining(['odd:bg-gray-50', 'even:bg-white']))
+
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="dimension-site"]').trigger('click')
+    await wrapper.get('[data-test="expand-site-1"]').trigger('click')
+
+    const historyRows = wrapper.findAll('[data-test="site-history-item"]')
+    expect(historyRows).toHaveLength(2)
+    expect(historyRows[0].classes()).toEqual(expect.arrayContaining(['odd:bg-gray-50', 'even:bg-white']))
+    expect(historyRows[0].classes().some(className => className.includes('/'))).toBe(false)
+  })
+
   it('回到此刻按钮将充值时间重置为当前秒', async () => {
     const wrapper = mountView()
     await flushPromises()
