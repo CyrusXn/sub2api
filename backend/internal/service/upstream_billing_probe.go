@@ -765,7 +765,7 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		if !upstreamBillingSupportsWebAccount(normalizedBaseURL) {
 			return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "unsupported", retryAfter(resp.Header, now))
 		}
-		data, balance, statusCode, reason, retryDelay := s.fetchWebAccountBillingData(ctx, account, normalizedBaseURL, apiKey, proxyURL, tlsProfile, now)
+		data, balance, statusCode, reason, retryDelay := s.fetchPreferredWebAccountBillingData(ctx, account, normalizedBaseURL, apiKey, proxyURL, tlsProfile, now)
 		if reason != "" {
 			// 网页倍率查询必须体现实时状态，失败时不保留上一轮倍率，避免误导管理员。
 			return s.persistProbeFailureCleared(ctx, account, intervalMinutes, now, statusCode, reason, retryDelay, balance)
@@ -779,7 +779,7 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	if err != nil {
 		if upstreamBillingSupportsWebAccount(normalizedBaseURL) {
 			// 部分 NewAPI 站点会以 200 返回“不支持该接口”的普通 JSON，仍需回退到账户查询链路。
-			data, balance, statusCode, reason, retryDelay := s.fetchWebAccountBillingData(ctx, account, normalizedBaseURL, apiKey, proxyURL, tlsProfile, now)
+			data, balance, statusCode, reason, retryDelay := s.fetchPreferredWebAccountBillingData(ctx, account, normalizedBaseURL, apiKey, proxyURL, tlsProfile, now)
 			if reason != "" {
 				return s.persistProbeFailureCleared(ctx, account, intervalMinutes, now, statusCode, reason, retryDelay, balance)
 			}
@@ -787,7 +787,12 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		}
 		return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "invalid_response", retryAfter(resp.Header, now))
 	}
-	balance := s.fetchConfiguredWebAccountBalance(ctx, account, normalizedBaseURL, proxyURL, tlsProfile, now)
+	var balance *UpstreamAccountBalanceSnapshot
+	// 站点管理中的自定义中转优先使用 API Key 查询余额，失败后再回退到网页登录。
+	balance = s.fetchConfiguredAPIKeyUsageBalance(ctx, account, normalizedBaseURL, apiKey, proxyURL, tlsProfile, now)
+	if balance == nil {
+		balance = s.fetchConfiguredWebAccountBalance(ctx, account, normalizedBaseURL, proxyURL, tlsProfile, now)
+	}
 	return s.persistProbeSuccess(ctx, account, intervalMinutes, now, resp.StatusCode, data, balance)
 }
 
@@ -800,7 +805,6 @@ func upstreamBillingSupportsWebAccount(baseURL string) bool {
 	// 现有 NewAPI/Innom 网页查询链路，不能因未维护白名单而直接丢失余额。
 	return !upstreamBillingProbeTargetIsOfficialAPI(baseURL)
 }
-
 func (s *UpstreamBillingProbeService) persistProbeSuccess(
 	ctx context.Context,
 	account *Account,
@@ -966,6 +970,25 @@ func (s *UpstreamBillingProbeService) persistProbeFailureCleared(
 	return snapshot, nil
 }
 
+func (s *UpstreamBillingProbeService) fetchPreferredWebAccountBillingData(
+	ctx context.Context,
+	account *Account,
+	baseURL string,
+	apiKey string,
+	proxyURL string,
+	tlsProfile *tlsfingerprint.Profile,
+	now time.Time,
+) (map[string]any, *UpstreamAccountBalanceSnapshot, int, string, time.Duration) {
+	preferredBalance := s.fetchConfiguredAPIKeyUsageBalance(ctx, account, baseURL, apiKey, proxyURL, tlsProfile, now)
+	data, fallbackBalance, statusCode, reason, retryDelay := s.fetchWebAccountBillingData(
+		ctx, account, baseURL, apiKey, proxyURL, tlsProfile, now,
+	)
+	if preferredBalance == nil {
+		preferredBalance = fallbackBalance
+	}
+	return data, preferredBalance, statusCode, reason, retryDelay
+}
+
 func (s *UpstreamBillingProbeService) fetchWebAccountBillingData(
 	ctx context.Context,
 	account *Account,
@@ -1049,6 +1072,21 @@ func (s *UpstreamBillingProbeService) resolveWebAccountCredential(
 	return credential
 }
 
+func (s *UpstreamBillingProbeService) fetchConfiguredAPIKeyUsageBalance(
+	ctx context.Context,
+	account *Account,
+	baseURL string,
+	apiKey string,
+	proxyURL string,
+	tlsProfile *tlsfingerprint.Profile,
+	now time.Time,
+) *UpstreamAccountBalanceSnapshot {
+	if s.resolveWebAccountCredential(ctx, baseURL) == nil {
+		return nil
+	}
+	return s.fetchAPIKeyUsageBalance(ctx, account, baseURL, apiKey, proxyURL, tlsProfile, now)
+}
+
 func (s *UpstreamBillingProbeService) fetchConfiguredWebAccountBalance(
 	ctx context.Context,
 	account *Account,
@@ -1086,6 +1124,59 @@ func (s *UpstreamBillingProbeService) fetchConfiguredWebAccountBalance(
 		return failedUpstreamAccountBalance(now, statusCode, reason)
 	}
 	return s.fetchInnomAccountBalance(ctx, account, baseURL, token, proxyURL, tlsProfile, now)
+}
+
+func (s *UpstreamBillingProbeService) fetchAPIKeyUsageBalance(
+	ctx context.Context,
+	account *Account,
+	baseURL string,
+	apiKey string,
+	proxyURL string,
+	tlsProfile *tlsfingerprint.Profile,
+	now time.Time,
+) *UpstreamAccountBalanceSnapshot {
+	usageURL := buildOpenAIEndpointURL(baseURL, "/v1/usage")
+	probeCtx, cancel := context.WithTimeout(ctx, upstreamBillingProbeRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, usageURL, nil)
+	if err != nil {
+		return nil
+	}
+	profile := HTTPUpstreamProfileDefault
+	if account.Platform == PlatformOpenAI {
+		profile = HTTPUpstreamProfileOpenAI
+	}
+	req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(req.Context(), profile)))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	account.ApplyHeaderOverrides(req.Header)
+
+	resp, err := s.accountTestService.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
+	if err != nil || resp == nil || resp.Body == nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, upstreamBillingProbeMaxBodyBytes+1))
+	if err != nil || len(body) > upstreamBillingProbeMaxBodyBytes || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil
+	}
+	amount, ok := numberFromAny(root["balance"])
+	unit := strings.TrimSpace(upstreamBillingStringFromAny(root["unit"]))
+	if !ok || amount < 0 || unit == "" {
+		return nil
+	}
+	return &UpstreamAccountBalanceSnapshot{
+		Status:        UpstreamBillingProbeStatusOK,
+		Amount:        &amount,
+		Unit:          unit,
+		ReceivedAt:    probeTimePtr(now),
+		LastAttemptAt: now,
+		HTTPStatus:    resp.StatusCode,
+	}
 }
 
 func (s *UpstreamBillingProbeService) fetchNewAPIAccountData(

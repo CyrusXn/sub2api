@@ -228,9 +228,13 @@ type webAccountRateHTTPStub struct {
 	requests         []string
 	standardStatus   int
 	standardResponse string
+	usageStatus      int
+	usageResponse    string
 	keysResponse     string
 	balanceStatus    int
 	balanceResponse  string
+	loginStatus      int
+	loginResponse    string
 	loginPassword    string
 }
 
@@ -366,7 +370,28 @@ func (u *webAccountRateHTTPStub) Do(req *http.Request, _ string, _ int64, _ int)
 			loginPayload["password"] != expectedPassword {
 			return jsonResponse(http.StatusUnauthorized, "{\"code\":401,\"message\":\"invalid login\"}"), nil
 		}
+		if u.loginStatus != 0 {
+			responseBody := u.loginResponse
+			if responseBody == "" {
+				responseBody = "{\"code\":400,\"reason\":\"TURNSTILE_VERIFICATION_FAILED\"}"
+			}
+			return jsonResponse(u.loginStatus, responseBody), nil
+		}
 		return jsonResponse(http.StatusOK, "{\"code\":0,\"data\":{\"access_token\":\"web-token\",\"expires_in\":3600}}"), nil
+	case "/v1/usage":
+		// API Key 余额接口与网页登录独立，用于覆盖启用验证码的站点。
+		if req.Header.Get("Authorization") != "Bearer sk-standard" {
+			return jsonResponse(http.StatusUnauthorized, "{\"message\":\"invalid API key\"}"), nil
+		}
+		status := u.usageStatus
+		if status == 0 {
+			status = http.StatusNotFound
+		}
+		responseBody := u.usageResponse
+		if responseBody == "" {
+			responseBody = "{\"message\":\"not supported\"}"
+		}
+		return jsonResponse(status, responseBody), nil
 	case "/api/v1/keys":
 		if req.Header.Get("Authorization") != "Bearer web-token" || req.URL.Query().Get("page_size") != "100" {
 			return jsonResponse(http.StatusUnauthorized, "{\"code\":401}"), nil
@@ -696,6 +721,7 @@ func TestUpstreamBillingProbeUsesWebAccountRateForKnownHosts(t *testing.T) {
 	require.Equal(t, "USD", snapshot.Balance.Unit)
 	require.Equal(t, []string{
 		"GET /v1/sub2api/billing",
+		"GET /v1/usage",
 		"POST /api/v1/auth/login",
 		"GET /api/v1/keys",
 		"GET /api/v1/groups/rates",
@@ -907,8 +933,107 @@ func TestUpstreamBillingProbeUsesStandardRateAndWebAccountBalanceTogether(t *tes
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
 	require.Equal(t, []string{
 		"GET /v1/sub2api/billing",
+		"GET /v1/usage",
 		"POST /api/v1/auth/login",
 		"GET /api/v1/auth/me",
+	}, upstream.requestPaths())
+}
+
+func TestUpstreamBillingProbeUsesAPIKeyUsageBalanceWhenWebLoginRequiresTurnstile(t *testing.T) {
+	testCases := []struct {
+		name    string
+		host    string
+		baseURL string
+		balance float64
+	}{
+		{name: "派大星", host: "api.aigo0.com", baseURL: "https://api.aigo0.com/v1", balance: 83.56923737},
+		{name: "无畏", host: "mxamaxai.com", baseURL: "https://mxamaxai.com", balance: 9.3340916},
+		{name: "未来新增站点", host: "future-upstream.example", baseURL: "https://future-upstream.example/v1", balance: 25.5},
+	}
+	for index, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			account := &Account{
+				ID:          int64(54 + index),
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-standard",
+					"base_url": testCase.baseURL,
+				},
+			}
+			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+			upstream := &webAccountRateHTTPStub{
+				standardStatus: http.StatusOK,
+				standardResponse: `{
+					"object":"sub2api.key_billing",
+					"schema_version":1,
+					"billing_scope":"token",
+					"group_rate_multiplier":0.07,
+					"resolved_rate_multiplier":0.07,
+					"peak_rate_enabled":false,
+					"effective_rate_multiplier":0.07,
+					"observed_at":"2026-08-27T01:00:00Z"
+				}`,
+				usageStatus:   http.StatusOK,
+				usageResponse: fmt.Sprintf(`{"mode":"unrestricted","balance":%v,"remaining":%v,"unit":"USD"}`, testCase.balance, testCase.balance),
+				loginStatus:   http.StatusBadRequest,
+				loginResponse: `{"code":400,"reason":"TURNSTILE_VERIFICATION_FAILED"}`,
+			}
+			svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+			attachUpstreamSiteCredential(svc, testCase.host)
+
+			snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+			require.NoError(t, err)
+			require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+			require.NotNil(t, snapshot.Balance)
+			require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+			require.InDelta(t, testCase.balance, *snapshot.Balance.Amount, 1e-12)
+			require.Equal(t, "USD", snapshot.Balance.Unit)
+			require.Equal(t, []string{
+				"GET /v1/sub2api/billing",
+				"GET /v1/usage",
+			}, upstream.requestPaths())
+		})
+	}
+}
+
+func TestUpstreamBillingProbeKeepsAPIKeyBalanceWhenRateFallsBackToTurnstileLogin(t *testing.T) {
+	account := &Account{
+		ID:          60,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-standard",
+			"base_url": "https://future-newapi.example/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{
+		standardStatus: http.StatusNotFound,
+		usageStatus:    http.StatusOK,
+		usageResponse:  `{"balance":18.75,"unit":"USD"}`,
+		loginStatus:    http.StatusBadRequest,
+		loginResponse:  `{"code":400,"reason":"TURNSTILE_VERIFICATION_FAILED"}`,
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	attachUpstreamSiteCredential(svc, "future-newapi.example")
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.InDelta(t, 18.75, *snapshot.Balance.Amount, 1e-12)
+	require.Equal(t, []string{
+		"GET /v1/sub2api/billing",
+		"GET /v1/usage",
+		"POST /api/v1/auth/login",
 	}, upstream.requestPaths())
 }
 
@@ -973,6 +1098,7 @@ func TestUpstreamBillingProbeUsesNewAPIWebLoginForAIGC(t *testing.T) {
 	require.Equal(t, "USD", snapshot.Balance.Unit)
 	require.Equal(t, []string{
 		"GET /v1/sub2api/billing",
+		"GET /v1/usage",
 		"POST /api/user/login",
 		"GET /api/user/token",
 		"GET /api/user/self",
@@ -1023,6 +1149,7 @@ func TestUpstreamBillingProbeUsesPiteStoredSystemTokenAndUserID(t *testing.T) {
 	require.Equal(t, "USD", snapshot.Balance.Unit)
 	require.Equal(t, []string{
 		"GET /v1/sub2api/billing",
+		"GET /v1/usage",
 		"GET /api/user/self",
 		"GET /api/status",
 		"GET /api/token/",
@@ -1144,11 +1271,13 @@ func TestUpstreamBillingProbeReusesWebLoginTokenButRefreshesKeyRate(t *testing.T
 
 	require.Equal(t, []string{
 		"GET /v1/sub2api/billing",
+		"GET /v1/usage",
 		"POST /api/v1/auth/login",
 		"GET /api/v1/keys",
 		"GET /api/v1/groups/rates",
 		"GET /api/v1/auth/me",
 		"GET /v1/sub2api/billing",
+		"GET /v1/usage",
 		"GET /api/v1/keys",
 		"GET /api/v1/groups/rates",
 		"GET /api/v1/auth/me",
@@ -1791,7 +1920,7 @@ func TestUpstreamBillingProbeUnsupportedAndAccountToggle(t *testing.T) {
 		Type:        AccountTypeAPIKey,
 		Status:      StatusActive,
 		Concurrency: 1,
-		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://upstream.example"},
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.com"},
 	}
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
