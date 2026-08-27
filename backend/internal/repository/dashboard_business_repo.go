@@ -39,6 +39,7 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	}
 	query := `
 		SELECT
+			COALESCE((SELECT SUM(amount) FROM balance_center_recharge_events), 0),
 			COALESCE(SUM(recharge_amount), 0),
 			COALESCE(SUM(total_requests), 0),
 			COALESCE(SUM(input_tokens), 0),
@@ -72,6 +73,7 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	var rangeAdminActual, rangeAdminAccount float64
 	var lifetimeAdminUpstream, rangeAdminUpstream float64
 	values := []any{
+		&result.UpstreamRechargeTotal,
 		&result.Lifetime.RechargeAmount,
 		&result.Lifetime.TotalRequests,
 		&result.Lifetime.InputTokens,

@@ -73,13 +73,11 @@
           <div class="flex items-start gap-3">
             <div class="rounded-lg bg-red-100 p-2 dark:bg-red-900/30"><Icon name="dollar" size="md" class="text-red-600 dark:text-red-400" /></div>
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamConsumption') }}</p>
-              <p data-test="range-upstream-cost" class="mt-1 flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
-                <span>{{ formatMoney(summary?.range.upstream_cost) }}</span>
-                <span class="text-gray-300 dark:text-dark-500">/</span>
-                <span class="text-red-600 dark:text-red-400">{{ formatMoney(summary?.range.upstream_cost_excluding_admin) }}</span>
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeTotal') }}</p>
+              <p data-test="upstream-recharge-total" class="mt-1 text-2xl font-bold text-red-600 dark:text-red-400">
+                {{ formatMoney(summary?.upstream_recharge_total) }}
               </p>
-              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.allAccounts') }} / {{ t('admin.businessHistory.upstreamExcludingAdmin') }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeDescription') }}</p>
             </div>
           </div>
         </article>

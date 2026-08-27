@@ -255,6 +255,7 @@ describe('admin DashboardView', () => {
 
   it('shows all permanent business metrics for the selected range', async () => {
     getBusinessSummary.mockResolvedValueOnce({
+      upstream_recharge_total: 8932.97,
       lifetime: {
         recharge_amount: 100,
         actual_cost: 80,
@@ -299,6 +300,7 @@ describe('admin DashboardView', () => {
     expect(text).toContain('$33.33')
     expect(text).toContain('$22.22')
     expect(text).toContain('$9.99')
+    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('$8,932.97')
   })
 
   it('shows today and last 24 hour consumption and refreshes the whole top metric block', async () => {

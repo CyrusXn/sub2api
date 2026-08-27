@@ -252,18 +252,16 @@
                   <div class="rounded-lg bg-sky-100 p-2 dark:bg-sky-900/30">
                     <Icon name="dollar" size="md" class="text-sky-600 dark:text-sky-400" :stroke-width="2" />
                   </div>
-                  <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">{{ t('admin.dashboard.historicalConsumption') }}</span>
+                  <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">{{ t('admin.dashboard.upstreamRechargeTotal') }}</span>
                 </div>
                 <button type="button" :title="t('common.refresh')" class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-700 dark:hover:text-white" @click="loadBusinessSummary">
                   <Icon name="refresh" size="sm" :class="{ 'animate-spin': businessLoading }" />
                 </button>
               </div>
-              <p class="flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
-                <span>{{ formatBusinessMoney(businessSummary?.lifetime.actual_cost) }}</span>
-                <span class="text-gray-300 dark:text-dark-500">/</span>
-                <span class="text-sky-600 dark:text-sky-400">{{ formatBusinessMoney(businessSummary?.lifetime.actual_cost_excluding_admin) }}</span>
+              <p data-test="upstream-recharge-total" class="text-2xl font-bold text-sky-600 dark:text-sky-400">
+                {{ formatBusinessMoney(businessSummary?.upstream_recharge_total) }}
               </p>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.allAndExcludeAdmin') }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.upstreamRechargeDescription') }}</p>
             </div>
           </div>
           <div class="card px-4 py-3">

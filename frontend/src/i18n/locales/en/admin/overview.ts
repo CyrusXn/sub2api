@@ -84,6 +84,8 @@ export default {
       last24HourTokens: '24-hour Tokens',
       historicalRecharge: 'Lifetime Recharge',
       historicalConsumption: 'Lifetime Consumption',
+      upstreamRechargeTotal: '上游充值总额',
+      upstreamRechargeDescription: '充值记录中的全部上游站点',
       historicalAccountCost: '历史账号成本',
       historicalTokens: '历史 Token 总量',
       selectedRange: '所选时间范围',

@@ -73,6 +73,8 @@ export interface DashboardBusinessDailyPoint {
 }
 
 export interface DashboardBusinessSummary {
+  // 直接来自全部上游充值记录，不随查询日期范围变化。
+  upstream_recharge_total: number
   lifetime: DashboardBusinessTotals
   range: DashboardBusinessTotals
   daily: DashboardBusinessDailyPoint[]

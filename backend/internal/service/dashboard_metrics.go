@@ -38,9 +38,11 @@ type DashboardBusinessDailyPoint struct {
 }
 
 type DashboardBusinessSummary struct {
-	Lifetime DashboardBusinessTotals       `json:"lifetime"`
-	Range    DashboardBusinessTotals       `json:"range"`
-	Daily    []DashboardBusinessDailyPoint `json:"daily"`
+	// UpstreamRechargeTotal 直接汇总充值记录，不受经营历史日期范围影响。
+	UpstreamRechargeTotal float64                       `json:"upstream_recharge_total"`
+	Lifetime              DashboardBusinessTotals       `json:"lifetime"`
+	Range                 DashboardBusinessTotals       `json:"range"`
+	Daily                 []DashboardBusinessDailyPoint `json:"daily"`
 }
 
 type DashboardLowBalanceAccount struct {

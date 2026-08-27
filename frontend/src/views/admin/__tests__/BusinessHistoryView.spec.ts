@@ -22,6 +22,7 @@ vi.mock('vue-chartjs', () => ({
 }))
 
 const response = {
+  upstream_recharge_total: 8932.97,
   lifetime: {
     recharge_amount: 500,
     total_requests: 999,
@@ -81,7 +82,7 @@ describe('BusinessHistoryView', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('默认从 2026 年 7 月 9 日查询并展示范围内经营指标与上游消费', async () => {
+  it('默认从 2026 年 7 月 9 日查询并展示范围内经营指标与全部上游充值总额', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -90,8 +91,7 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$20.00')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$18.00')
-    expect(wrapper.get('[data-test="range-upstream-cost"]').text()).toContain('$8.00')
-    expect(wrapper.get('[data-test="range-upstream-cost"]').text()).toContain('$7.00')
+    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('$8,932.97')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
   })

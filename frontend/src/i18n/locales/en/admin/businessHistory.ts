@@ -11,6 +11,8 @@ export default {
     totalTokens: '总 Token',
     totalConsumption: '总消费',
     upstreamConsumption: '上游站点总消费',
+    upstreamRechargeTotal: '上游充值总额',
+    upstreamRechargeDescription: '充值记录中的全部上游站点',
     allAccounts: '全部账号',
     excludingAdmin: "消费总额（已排除 admin{'@'}example.com）",
     upstreamExcludingAdmin: "上游站点总消费（已排除 admin{'@'}example.com）",

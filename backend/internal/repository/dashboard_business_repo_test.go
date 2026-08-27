@@ -22,9 +22,10 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 		"cache_creation_tokens", "cache_read_tokens", "total_cost", "actual_cost",
 		"account_cost", "admin_actual_cost", "admin_account_cost", "upstream_cost", "admin_upstream_cost",
 	}
-	mock.ExpectQuery(`(?s)FROM dashboard_business_daily`).
+	mock.ExpectQuery(`(?s)SELECT.*balance_center_recharge_events.*FROM dashboard_business_daily`).
 		WithArgs(start, end).
-		WillReturnRows(sqlmock.NewRows(append(totalColumns, totalColumns...)).AddRow(
+		WillReturnRows(sqlmock.NewRows(append([]string{"upstream_recharge_total"}, append(totalColumns, totalColumns...)...)).AddRow(
+			8932.97,
 			100.0, int64(20), int64(100), int64(50), int64(10), int64(5), 8.0, 12.0, 3.0, 2.0, 0.5, 4.0, 0.7,
 			40.0, int64(8), int64(40), int64(20), int64(4), int64(2), 3.0, 5.0, 1.0, 1.0, 0.2, 2.0, 0.3,
 		))
@@ -38,6 +39,7 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 
 	summary, err := repo.GetDashboardBusinessSummary(context.Background(), start, end)
 	require.NoError(t, err)
+	require.InDelta(t, 8932.97, summary.UpstreamRechargeTotal, 0.0001)
 	require.Equal(t, float64(100), summary.Lifetime.RechargeAmount)
 	require.Equal(t, float64(10), summary.Lifetime.ActualCostExcludingAdmin)
 	require.Equal(t, int64(165), summary.Lifetime.TotalTokens)

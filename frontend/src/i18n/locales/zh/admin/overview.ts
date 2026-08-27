@@ -87,6 +87,8 @@ export default {
       historicalRecharge: '历史充值总额',
       historicalRechargeDescription: "仅统计金额大于 1 的余额充值（兑换/管理员），已排除 admin{'@'}example.com",
       historicalConsumption: '历史消费总额',
+      upstreamRechargeTotal: '上游充值总额',
+      upstreamRechargeDescription: '充值记录中的全部上游站点',
       historicalAccountCost: '历史账号成本',
       historicalTokens: '历史 Token 总量',
       selectedRange: '所选时间范围',
