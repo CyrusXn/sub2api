@@ -23,6 +23,8 @@ vi.mock('vue-chartjs', () => ({
 
 const response = {
   upstream_recharge_total: 8932.97,
+  user_balance_total: 321.45,
+  upstream_balance_total: 678.9,
   lifetime: {
     recharge_amount: 500,
     total_requests: 999,
@@ -91,7 +93,13 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$20.00')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$18.00')
+    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('$500.00')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('$321.45')
     expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('$8,932.97')
+    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('$678.90')
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('$8,254.07')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$-8,234.07')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$-8,236.07')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
   })
@@ -99,6 +107,9 @@ describe('BusinessHistoryView', () => {
   it('明确标注排除管理员后的消费口径', () => {
     expect(zhBusinessHistory.businessHistory.excludingAdmin).toBe("消费总额（已排除 admin{'@'}example.com）")
     expect(enBusinessHistory.businessHistory.excludingAdmin).toBe("消费总额（已排除 admin{'@'}example.com）")
+    expect(zhBusinessHistory.businessHistory.userTotalRecharge).toBe('用户总充值')
+    expect(zhBusinessHistory.businessHistory.upstreamRechargeTotal).toBe('上游总充值')
+    expect(enBusinessHistory.businessHistory.upstreamRechargeTotal).toBe('上游总充值')
   })
 
   it('不再显示与页面标题重复的经营历史说明', async () => {

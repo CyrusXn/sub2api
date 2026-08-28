@@ -153,8 +153,12 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 		return nil, nil
 	}
 	persisted, err := s.repository.PersistSnapshot(ctx, snapshot)
-	if err != nil || persisted == nil || persisted.Status != "ok" {
+	if err != nil || persisted == nil {
 		return persisted, err
+	}
+	// 倍率失败不应阻断独立成功的余额告警；完全没有成功余额的失败快照仍只做留痕。
+	if persisted.Status != "ok" && persisted.ConvertedBalance == nil {
+		return persisted, nil
 	}
 	alertRepo, ok := s.repository.(BalanceCenterAlertRepository)
 	if !ok {

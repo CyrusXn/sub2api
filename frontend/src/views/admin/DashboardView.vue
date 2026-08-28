@@ -229,23 +229,7 @@
 
         <!-- 第三排历史经营指标，各卡片可独立触发异步刷新。 -->
         <div class="space-y-2">
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div class="card p-4">
-              <div class="mb-3 flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2">
-                  <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30">
-                    <Icon name="creditCard" size="md" class="text-emerald-600 dark:text-emerald-400" :stroke-width="2" />
-                  </div>
-                  <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">{{ t('admin.dashboard.historicalRecharge') }}</span>
-                </div>
-                <button type="button" :title="t('common.refresh')" class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-700 dark:hover:text-white" @click="loadBusinessSummary">
-                  <Icon name="refresh" size="sm" :class="{ 'animate-spin': businessLoading }" />
-                </button>
-              </div>
-              <p class="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatBusinessMoney(businessSummary?.lifetime.recharge_amount) }}</p>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.historicalRechargeDescription') }}</p>
-            </div>
-
+          <div class="grid grid-cols-1 gap-4">
             <div class="card p-4">
               <div class="mb-3 flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2">
@@ -269,7 +253,7 @@
               <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.dashboard.selectedRange') }}</h3>
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ startDate }} - {{ endDate }}</span>
             </div>
-            <div class="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-4">
+            <div class="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-5">
               <div>
                 <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.rangeRecharge') }}</p>
                 <p class="mt-1 text-base font-bold text-emerald-600 dark:text-emerald-400">{{ formatBusinessMoney(businessSummary?.range.recharge_amount) }}</p>
@@ -285,6 +269,10 @@
                   <span class="text-gray-300 dark:text-dark-500">/</span>
                   <span class="text-sky-600 dark:text-sky-400">{{ formatBusinessMoney(businessSummary?.range.actual_cost_excluding_admin) }}</span>
                 </p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.userTotalRecharge') }}</p>
+                <p data-test="dashboard-user-total-recharge" class="mt-1 text-base font-bold text-emerald-600 dark:text-emerald-400">{{ formatBusinessMoney(businessSummary?.lifetime.recharge_amount) }}</p>
               </div>
               <div>
                 <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.rangeAccountCost') }}</p>

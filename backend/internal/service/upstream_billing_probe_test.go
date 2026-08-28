@@ -185,6 +185,7 @@ func (r *balanceCenterRepositorySpy) lastSnapshot() *BalanceCenterSnapshot {
 
 type upstreamBillingProbeHTTPStub struct {
 	calls          atomic.Int64
+	billingCalls   atomic.Int64
 	active         atomic.Int64
 	maxActive      atomic.Int64
 	beforeResponse func()
@@ -192,6 +193,10 @@ type upstreamBillingProbeHTTPStub struct {
 
 func (u *upstreamBillingProbeHTTPStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	u.calls.Add(1)
+	isBillingProbe := req != nil && req.URL != nil && req.URL.Path == "/v1/sub2api/billing"
+	if isBillingProbe {
+		u.billingCalls.Add(1)
+	}
 	active := u.active.Add(1)
 	defer u.active.Add(-1)
 	for {
@@ -200,7 +205,7 @@ func (u *upstreamBillingProbeHTTPStub) Do(req *http.Request, proxyURL string, ac
 			break
 		}
 	}
-	if u.beforeResponse != nil {
+	if u.beforeResponse != nil && isBillingProbe {
 		u.beforeResponse()
 	}
 	return &http.Response{
@@ -578,6 +583,35 @@ func TestUpstreamBillingProbePersistsFailedBalanceCenterSnapshotWithoutStaleValu
 	require.JSONEq(t, `{"failure_count":1,"http_status":502}`, string(persisted.Payload))
 }
 
+func TestBuildBalanceCenterProbeSnapshotKeepsSuccessfulBalanceWhenRateProbeFails(t *testing.T) {
+	account := &Account{
+		ID:          66,
+		Name:        "【派大星】0065Pro",
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": "https://api.aigo0.com/v1"},
+	}
+	amount := 4.5
+	snapshot := &UpstreamBillingProbeSnapshot{
+		Status:        UpstreamBillingProbeStatusFailed,
+		LastAttemptAt: time.Date(2026, time.August, 28, 1, 0, 0, 0, time.UTC),
+		LastError:     "web_auth_failed",
+		Balance: &UpstreamAccountBalanceSnapshot{
+			Status: UpstreamBillingProbeStatusOK,
+			Amount: &amount,
+			Unit:   "USD",
+		},
+	}
+
+	result, err := buildBalanceCenterProbeSnapshot(account, snapshot)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, result.Status)
+	require.Equal(t, "web_auth_failed", result.Reason)
+	require.NotNil(t, result.ConvertedBalance)
+	require.InDelta(t, 4.5, *result.ConvertedBalance, 1e-12)
+	require.Nil(t, result.RateMultiplier)
+}
+
 func TestUpstreamBillingProbeBalanceCenterSourceKeyIsStable(t *testing.T) {
 	account := &Account{ID: 63, Name: "Pite", Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://ai.pite.chat/v1"}}
 	now := time.Date(2026, time.August, 12, 8, 2, 0, 456, time.UTC)
@@ -892,7 +926,7 @@ func TestUpstreamBillingProbeUsesStandardEndpointBeforeWebFallback(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 	require.Equal(t, 0.8, snapshot.Data["effective_rate_multiplier"])
-	require.EqualValues(t, 1, upstream.calls.Load())
+	require.EqualValues(t, 1, upstream.billingCalls.Load())
 }
 
 func TestUpstreamBillingProbeUsesStandardRateAndWebAccountBalanceTogether(t *testing.T) {
@@ -1284,7 +1318,7 @@ func TestUpstreamBillingProbeReusesWebLoginTokenButRefreshesKeyRate(t *testing.T
 	}, upstream.requestPaths())
 }
 
-func TestUpstreamBillingProbeWebAccountFailureClearsPreviousRate(t *testing.T) {
+func TestUpstreamBillingProbeWithoutWebCredentialsKeepsAPIKeyBalanceAndClearsPreviousRate(t *testing.T) {
 	receivedAt := time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC)
 	account := &Account{
 		ID:          42,
@@ -1293,7 +1327,7 @@ func TestUpstreamBillingProbeWebAccountFailureClearsPreviousRate(t *testing.T) {
 		Status:      StatusActive,
 		Concurrency: 1,
 		Credentials: map[string]any{
-			"api_key":  "sk-live",
+			"api_key":  "sk-standard",
 			"base_url": "https://hubway.cc/v1",
 		},
 		Extra: map[string]any{
@@ -1305,7 +1339,10 @@ func TestUpstreamBillingProbeWebAccountFailureClearsPreviousRate(t *testing.T) {
 		},
 	}
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
-	upstream := &webAccountRateHTTPStub{}
+	upstream := &webAccountRateHTTPStub{
+		usageStatus:   http.StatusOK,
+		usageResponse: `{"balance":4.5,"unit":"USD"}`,
+	}
 	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
 
 	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
@@ -1316,7 +1353,41 @@ func TestUpstreamBillingProbeWebAccountFailureClearsPreviousRate(t *testing.T) {
 	require.Empty(t, snapshot.Data)
 	require.Nil(t, snapshot.ReceivedAt)
 	require.Nil(t, snapshot.FreshUntil)
-	require.Equal(t, []string{"GET /v1/sub2api/billing"}, upstream.requestPaths())
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.InDelta(t, 4.5, *snapshot.Balance.Amount, 1e-12)
+	require.Equal(t, []string{"GET /v1/sub2api/billing", "GET /v1/usage"}, upstream.requestPaths())
+}
+
+func TestUpstreamBillingProbeKeepsAPIKeyBalanceWhenBillingEndpointFails(t *testing.T) {
+	account := &Account{
+		ID:          67,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-standard",
+			"base_url": "https://api.aigo0.com/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &webAccountRateHTTPStub{
+		standardStatus: http.StatusBadGateway,
+		usageStatus:    http.StatusOK,
+		usageResponse:  `{"balance":4.25,"unit":"USD"}`,
+	}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
+	require.Equal(t, "http_error", snapshot.LastError)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.InDelta(t, 4.25, *snapshot.Balance.Amount, 1e-12)
+	require.Equal(t, []string{"GET /v1/sub2api/billing", "GET /v1/usage"}, upstream.requestPaths())
 }
 
 func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {
@@ -1380,10 +1451,12 @@ func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {
 	require.Equal(t, 0.6, *account.RateMultiplier)
 	require.NotNil(t, snapshot.SyncedRateMultiplier)
 	require.Equal(t, 0.6, *snapshot.SyncedRateMultiplier)
-	require.Equal(t, "https://upstream.example/v1/sub2api/billing", upstream.lastReq.URL.String())
-	require.Equal(t, http.MethodGet, upstream.lastReq.Method)
-	require.Equal(t, "Bearer sk-sensitive", upstream.lastReq.Header.Get("Authorization"))
-	require.True(t, HTTPUpstreamRedirectsDisabled(upstream.lastReq.Context()))
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://upstream.example/v1/sub2api/billing", upstream.requests[0].URL.String())
+	require.Equal(t, "https://upstream.example/v1/usage", upstream.requests[1].URL.String())
+	require.Equal(t, http.MethodGet, upstream.requests[0].Method)
+	require.Equal(t, "Bearer sk-sensitive", upstream.requests[0].Header.Get("Authorization"))
+	require.True(t, HTTPUpstreamRedirectsDisabled(upstream.requests[0].Context()))
 
 	persisted := decodeUpstreamBillingProbeSnapshot(account.Extra)
 	require.NotNil(t, persisted)
@@ -1419,7 +1492,9 @@ func TestUpstreamBillingProbeAdaptiveCNUsesChatProtocolBaseURL(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
-	require.Equal(t, "https://chat-relay.example/v1/sub2api/billing", upstream.lastReq.URL.String())
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://chat-relay.example/v1/sub2api/billing", upstream.requests[0].URL.String())
+	require.Equal(t, "https://chat-relay.example/v1/usage", upstream.requests[1].URL.String())
 }
 
 func TestUpstreamBillingProbeSyncsResolvedRateForAllAPIKeyPlatforms(t *testing.T) {
@@ -1980,13 +2055,13 @@ func TestUpstreamBillingProbeRunnerIsBoundedAndManualProbeIgnoresSwitches(t *tes
 	svc.now = func() time.Time { return time.Date(2026, time.July, 13, 2, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, svc.RunDue(context.Background()))
-	require.Equal(t, int64(20), upstream.calls.Load())
+	require.Equal(t, int64(20), upstream.billingCalls.Load())
 
 	settingsRepo.mu.Lock()
 	settingsRepo.values[SettingKeyUpstreamBillingProbeSettings] = `{"enabled":false,"interval_minutes":30}`
 	settingsRepo.mu.Unlock()
 	require.NoError(t, svc.RunDue(context.Background()))
-	require.Equal(t, int64(20), upstream.calls.Load())
+	require.Equal(t, int64(20), upstream.billingCalls.Load())
 
 	accounts[25].Extra[UpstreamBillingProbeEnabledExtraKey] = false
 	manualRate := 0.25
@@ -1994,7 +2069,7 @@ func TestUpstreamBillingProbeRunnerIsBoundedAndManualProbeIgnoresSwitches(t *tes
 	snapshot, err := svc.ProbeAccount(context.Background(), 25)
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
-	require.Equal(t, int64(21), upstream.calls.Load())
+	require.Equal(t, int64(21), upstream.billingCalls.Load())
 	require.NotNil(t, accounts[25].RateMultiplier)
 	require.Equal(t, manualRate, *accounts[25].RateMultiplier)
 }
@@ -2022,7 +2097,7 @@ func TestUpstreamBillingProbeRunDueConsumesBalanceCenterEventsWhenFallbackDisabl
 	svc.now = func() time.Time { return time.Date(2026, time.August, 12, 2, 0, 0, 0, time.UTC) }
 
 	require.NoError(t, svc.RunDue(context.Background()))
-	require.Equal(t, int64(1), upstream.calls.Load())
+	require.Equal(t, int64(1), upstream.billingCalls.Load())
 }
 
 func TestUpstreamBillingProbeRunnerRechecksEnabledAfterDueSelection(t *testing.T) {
@@ -2121,7 +2196,7 @@ func TestUpstreamBillingProbeRunnerOnlyScansOnLeader(t *testing.T) {
 
 	require.NoError(t, cache.ReleaseLeaderLock(context.Background(), lockKey, "peer"))
 	require.NoError(t, svc.RunDue(context.Background()))
-	require.Equal(t, int64(1), upstream.calls.Load())
+	require.Equal(t, int64(1), upstream.billingCalls.Load())
 }
 
 func TestUpstreamBillingProbeLeaderLockFailsClosedOnCacheError(t *testing.T) {
@@ -2202,10 +2277,10 @@ func TestUpstreamBillingProbeFiveInstancesRunOneConcurrentBatch(t *testing.T) {
 			t.Fatal("non-leader instance did not skip the active batch")
 		}
 	}
-	require.Equal(t, int64(1), upstream.calls.Load())
+	require.Equal(t, int64(1), upstream.billingCalls.Load())
 	close(unblock)
 	require.NoError(t, <-results)
-	require.Equal(t, int64(1), upstream.calls.Load())
+	require.Equal(t, int64(1), upstream.billingCalls.Load())
 }
 
 func TestUpstreamBillingProbeManualBatchesShareConcurrencyLimit(t *testing.T) {
@@ -2311,7 +2386,7 @@ func TestUpstreamBillingProbeManualAndScheduledRequestsShareOneNetworkProbe(t *t
 	close(unblock)
 	require.NoError(t, <-errs)
 	require.NoError(t, <-errs)
-	require.Equal(t, int64(1), upstream.calls.Load())
+	require.Equal(t, int64(1), upstream.billingCalls.Load())
 }
 
 func TestUpstreamBillingProbeScheduledRechecksAfterWaitingForSlot(t *testing.T) {
@@ -2367,7 +2442,7 @@ func TestUpstreamBillingProbeLeaderLockCoversStaggeredInstancesInCadenceWindow(t
 	first.SetLeaderLock(cache, nil)
 
 	require.NoError(t, first.RunDue(context.Background()))
-	require.Equal(t, int64(1), upstream.calls.Load())
+	require.Equal(t, int64(1), upstream.billingCalls.Load())
 	require.Equal(t, first.instanceID, cache.heldBy(upstreamBillingProbeLeaderLockKeyAt(time.Now())))
 
 	repo.mu.Lock()
@@ -2376,5 +2451,5 @@ func TestUpstreamBillingProbeLeaderLockCoversStaggeredInstancesInCadenceWindow(t
 	staggered := newUpstreamBillingProbeTestService(repo, upstream, settingsRepo)
 	staggered.SetLeaderLock(cache, nil)
 	require.NoError(t, staggered.RunDue(context.Background()))
-	require.Equal(t, int64(1), upstream.calls.Load(), "a staggered instance must not start a second batch inside the cadence window")
+	require.Equal(t, int64(1), upstream.billingCalls.Load(), "a staggered instance must not start a second batch inside the cadence window")
 }

@@ -19,7 +19,7 @@ func usageLogColumn(alias, name string) string {
 
 // upstreamCostRateMultiplierSQLExpr 从账号保存的上游探测快照按请求发生时刻计算倍率。
 // 本站用户分组倍率、专属倍率和管理附加倍率均不属于上游实际消耗，不能参与该计算。
-// 探测异常时，才以账号静态倍率作为保守回退。
+// 临时探测失败时沿用快照保留的最近成功声明值；没有可用声明值时才回退账号静态倍率。
 func upstreamCostRateMultiplierSQLExpr(logAlias, accountAlias string) string {
 	logCreatedAt := usageLogColumn(logAlias, "created_at")
 	snapshot := accountAlias + ".extra -> 'upstream_billing_probe'"
@@ -28,7 +28,10 @@ func upstreamCostRateMultiplierSQLExpr(logAlias, accountAlias string) string {
 	return fmt.Sprintf(`
 		COALESCE(
 			CASE
-				WHEN %[1]s ->> 'status' = 'ok'
+				WHEN %[1]s ->> 'status' = 'failed'
+					AND jsonb_typeof(%[1]s -> 'manual_rate_multiplier') = 'number'
+				THEN (%[1]s ->> 'manual_rate_multiplier')::numeric
+				WHEN %[1]s ->> 'status' IN ('ok', 'failed')
 					AND %[2]s ->> 'billing_scope' = 'token'
 					AND jsonb_typeof(%[2]s -> 'resolved_rate_multiplier') = 'number'
 				THEN (%[2]s ->> 'resolved_rate_multiplier')::numeric * CASE
@@ -44,9 +47,6 @@ func upstreamCostRateMultiplierSQLExpr(logAlias, accountAlias string) string {
 					WHEN %[2]s ->> 'peak_rate_enabled' = 'true' THEN 1
 					ELSE NULL
 				END
-				WHEN %[1]s ->> 'status' = 'failed'
-					AND jsonb_typeof(%[1]s -> 'manual_rate_multiplier') = 'number'
-				THEN (%[1]s ->> 'manual_rate_multiplier')::numeric
 			END,
 			COALESCE(%[4]s.rate_multiplier, 1)
 		)`, snapshot, data, logCreatedAt, accountAlias)

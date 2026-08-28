@@ -131,6 +131,9 @@ describe('admin DashboardView', () => {
       end_date: ''
     })
     getBusinessSummary.mockResolvedValue({
+      upstream_recharge_total: 0,
+      user_balance_total: 0,
+      upstream_balance_total: 0,
       lifetime: {},
       range: {},
       daily: []
@@ -256,6 +259,8 @@ describe('admin DashboardView', () => {
   it('shows all permanent business metrics for the selected range', async () => {
     getBusinessSummary.mockResolvedValueOnce({
       upstream_recharge_total: 8932.97,
+      user_balance_total: 321.45,
+      upstream_balance_total: 678.9,
       lifetime: {
         recharge_amount: 100,
         actual_cost: 80,
@@ -294,11 +299,13 @@ describe('admin DashboardView', () => {
     expect(text).toContain('admin.dashboard.rangeRecharge')
     expect(text).toContain('admin.dashboard.rangeTokens')
     expect(text).toContain('admin.dashboard.rangeConsumption')
+    expect(text).toContain('admin.dashboard.userTotalRecharge')
     expect(text).toContain('admin.dashboard.rangeAccountCost')
     expect(text).toContain('$11.11')
     expect(text).toContain('22.22K')
     expect(text).toContain('$33.33')
     expect(text).toContain('$22.22')
+    expect(wrapper.get('[data-test="dashboard-user-total-recharge"]').text()).toBe('$100.00')
     expect(text).toContain('$9.99')
     expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('$8,932.97')
   })

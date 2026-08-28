@@ -8,6 +8,29 @@
         </RouterLink>
       </header>
 
+      <section v-if="settingsReady" class="flex flex-col gap-3 border-y border-gray-200 bg-gray-50 px-3 py-3 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-end sm:justify-between">
+        <div class="flex items-center gap-3">
+          <Icon name="bell" size="sm" class="text-gray-500 dark:text-gray-400" />
+          <div>
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.balanceCenter.alertSettings') }}</h2>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.alertThresholdRule') }}</span>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-end gap-4">
+          <label class="flex h-10 items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+            <Toggle v-model="alertSettings.email_enabled" data-test="balance-email-enabled" />
+            <span>{{ t('admin.balanceCenter.emailAlert') }}</span>
+          </label>
+          <label class="w-36">
+            <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.lowBalanceThreshold') }}</span>
+            <input v-model.number="alertSettings.low_balance_threshold" data-test="low-balance-threshold" type="number" min="0" step="0.01" inputmode="decimal" class="input h-10 w-full" />
+          </label>
+          <button type="button" data-test="save-alert-settings" class="btn btn-primary h-10" :disabled="settingsSaving" @click="saveAlertSettings">
+            <Icon name="check" size="sm" />{{ t('common.save') }}
+          </button>
+        </div>
+      </section>
+
       <nav class="border-b border-gray-200 dark:border-dark-700" role="tablist" :aria-label="t('admin.balanceCenter.title')">
         <div class="flex gap-6">
           <button
@@ -174,10 +197,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
-import type { BalanceCenterListParams, BalanceCenterRechargeEvent, BalanceCenterRechargeSummary, BalanceCenterSite } from '@/api/admin/balanceCenter'
+import type { BalanceCenterListParams, BalanceCenterRechargeEvent, BalanceCenterRechargeSummary, BalanceCenterSettings, BalanceCenterSite } from '@/api/admin/balanceCenter'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 
@@ -192,6 +216,8 @@ const amounts = reactive<Record<number, string>>({})
 const activeTab = ref<ActiveTab>('add')
 const sitesLoading = ref(false)
 const recordsLoading = ref(false)
+const settingsReady = ref(false)
+const settingsSaving = ref(false)
 const busySiteID = ref<number>()
 const dimension = ref<Dimension>('time')
 const rangePreset = ref<RangePreset | 'custom'>('24h')
@@ -206,6 +232,7 @@ const normalButtonClass = 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-dark-
 const activeTabClass = 'border-primary-600 text-primary-700 dark:border-primary-400 dark:text-primary-300'
 const inactiveTabClass = 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
 const summary = reactive<BalanceCenterRechargeSummary>({ total_amount: 0, items: [], sites: [], total: 0, page: 1, page_size: 20 })
+const alertSettings = reactive<BalanceCenterSettings>({ enabled: false, event_probe_enabled: false, email_enabled: false, low_balance_threshold: 5 })
 
 const sortedSites = computed(() => [...sites.value].sort((left, right) => {
   const totalDifference = (right.historical_recharge_total ?? 0) - (left.historical_recharge_total ?? 0)
@@ -269,6 +296,35 @@ async function initial() {
     notifyError(error)
   } finally {
     sitesLoading.value = false
+  }
+
+  try {
+    Object.assign(alertSettings, await adminAPI.balanceCenter.getSettings())
+    settingsReady.value = true
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function saveAlertSettings() {
+  const thresholdInput = String(alertSettings.low_balance_threshold).trim()
+  const threshold = Number(thresholdInput)
+  if (thresholdInput === '' || !Number.isFinite(threshold) || threshold < 0) {
+    app.showError(t('admin.balanceCenter.invalidLowBalanceThreshold'))
+    return
+  }
+  settingsSaving.value = true
+  try {
+    const updated = await adminAPI.balanceCenter.updateSettings({
+      ...alertSettings,
+      low_balance_threshold: threshold
+    })
+    Object.assign(alertSettings, updated)
+    app.showSuccess(t('admin.balanceCenter.alertSettingsSaved'))
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    settingsSaving.value = false
   }
 }
 

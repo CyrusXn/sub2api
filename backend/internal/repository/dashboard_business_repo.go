@@ -40,6 +40,21 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	query := `
 		SELECT
 			COALESCE((SELECT SUM(amount) FROM balance_center_recharge_events), 0),
+			COALESCE((SELECT SUM(balance) FROM users WHERE deleted_at IS NULL AND LOWER(TRIM(COALESCE(email, ''))) <> 'admin@example.com' AND total_recharged > 1), 0),
+			COALESCE((
+				SELECT SUM(site_balance)
+				FROM (
+					SELECT
+						COALESCE(NULLIF(TRIM(credentials ->> 'base_url'), ''), NULLIF(TRIM(platform), ''), 'unknown') AS site_key,
+						MIN((extra #>> '{upstream_billing_probe,balance,amount}')::double precision) AS site_balance
+					FROM accounts
+					WHERE deleted_at IS NULL
+					  AND extra #>> '{upstream_billing_probe,status}' = 'success'
+					  AND extra #>> '{upstream_billing_probe,balance,amount}' IS NOT NULL
+					  AND extra #>> '{upstream_billing_probe,balance,amount}' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+					GROUP BY 1
+				) upstream_site_balances
+			), 0),
 			COALESCE(SUM(recharge_amount), 0),
 			COALESCE(SUM(total_requests), 0),
 			COALESCE(SUM(input_tokens), 0),
@@ -74,6 +89,8 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	var lifetimeAdminUpstream, rangeAdminUpstream float64
 	values := []any{
 		&result.UpstreamRechargeTotal,
+		&result.UserBalanceTotal,
+		&result.UpstreamBalanceTotal,
 		&result.Lifetime.RechargeAmount,
 		&result.Lifetime.TotalRequests,
 		&result.Lifetime.InputTokens,

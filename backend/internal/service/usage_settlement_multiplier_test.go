@@ -29,6 +29,27 @@ func TestResolveUpstreamCostRateMultiplier_UsesAccountProbeEffectiveRate(t *test
 	require.InDelta(t, 0.07, got, 1e-12)
 }
 
+func TestResolveUpstreamCostRateMultiplier_KeepsLastDeclaredRateWhenProbeFails(t *testing.T) {
+	requestedAt := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	accountRate := 1.0
+	account := &Account{
+		RateMultiplier: &accountRate,
+		Extra: map[string]any{
+			UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{
+				Status: UpstreamBillingProbeStatusFailed,
+				Data: map[string]any{
+					"billing_scope":            "token",
+					"resolved_rate_multiplier": 0.07,
+					"peak_rate_enabled":        false,
+				},
+			},
+		},
+	}
+
+	got := resolveUpstreamCostRateMultiplier(account, requestedAt)
+	require.InDelta(t, 0.07, got, 1e-12)
+}
+
 func TestResolveAdminUsageSettlementMultiplier(t *testing.T) {
 	userMultiplier := 10.0
 

@@ -75,6 +75,10 @@ export interface DashboardBusinessDailyPoint {
 export interface DashboardBusinessSummary {
   // 直接来自全部上游充值记录，不随查询日期范围变化。
   upstream_recharge_total: number
+  // 用户余额只统计有效充值用户，排除管理员体验额度。
+  user_balance_total: number
+  // 上游余额按站点取最新最小余额后汇总。
+  upstream_balance_total: number
   lifetime: DashboardBusinessTotals
   range: DashboardBusinessTotals
   daily: DashboardBusinessDailyPoint[]

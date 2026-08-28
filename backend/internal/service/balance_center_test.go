@@ -237,6 +237,39 @@ func TestBalanceCenterServiceProcessesAlertsAndRetriesFailedSMTP(t *testing.T) {
 	require.Equal(t, BalanceCenterAlertDeliveryAccepted, repo.deliveries[2].Status)
 }
 
+func TestBalanceCenterServiceAlertsForSuccessfulBalanceInPartialSnapshot(t *testing.T) {
+	settings := &balanceCenterSettingRepoStub{values: map[string]string{
+		SettingKeyBalanceCenterEnabled:             "true",
+		SettingKeyBalanceCenterEmailEnabled:        "true",
+		SettingKeyBalanceCenterLowBalanceThreshold: "5",
+		SettingKeyOpsEmailNotificationConfig:       `{"alert":{"recipients":["ops@example.com"]}}`,
+	}}
+	repo := &balanceCenterServiceRepositoryStub{}
+	outbox := &balanceCenterAlertOutboxStub{}
+	svc := NewBalanceCenterService(repo, settings)
+	svc.SetAlertEmailOutbox(outbox)
+	accountID := int64(66)
+
+	_, err := svc.PersistSnapshot(context.Background(), &BalanceCenterSnapshot{
+		AccountID:        &accountID,
+		SiteName:         "派大星",
+		NormalizedDomain: "api.aigo0.com",
+		Source:           "sub2api_probe",
+		SourceKey:        "partial-balance",
+		Status:           UpstreamBillingProbeStatusFailed,
+		ConvertedBalance: float64Ptr(4.5),
+		ConversionScale:  1,
+		Currency:         "USD",
+		Reason:           "web_auth_failed",
+		ProbedAt:         time.Date(2026, time.August, 28, 1, 0, 0, 0, time.UTC),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, outbox.inputs, 1)
+	require.Equal(t, BalanceCenterAlertLowBalance, outbox.inputs[0].AlertType)
+	require.True(t, repo.state.LowBalanceActive)
+}
+
 func TestBalanceCenterServiceSendsBothAlertTypesAndIgnoresQuietHours(t *testing.T) {
 	settings := &balanceCenterSettingRepoStub{values: map[string]string{
 		SettingKeyBalanceCenterEnabled:             "true",

@@ -23,7 +23,7 @@
         {{ t('admin.businessHistory.loadFailed') }}
       </p>
 
-      <section class="grid grid-cols-1 gap-4 lg:grid-cols-4" aria-label="经营指标">
+      <section class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="经营指标">
         <article class="card p-5">
           <div class="flex items-center gap-3">
             <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30"><Icon name="document" size="md" class="text-blue-600 dark:text-blue-400" /></div>
@@ -67,6 +67,20 @@
 
         <article class="card p-5">
           <div class="flex items-start gap-3">
+            <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30"><Icon name="creditCard" size="md" class="text-emerald-600 dark:text-emerald-400" /></div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userTotalRecharge') }}</p>
+              <p data-test="user-total-recharge" class="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.lifetime.recharge_amount) }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.businessHistory.userBalanceTotal') }}:
+                <span data-test="user-balance-total" class="font-semibold text-gray-700 dark:text-gray-200">{{ formatMoney(summary?.user_balance_total) }}</span>
+              </p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card p-5">
+          <div class="flex items-start gap-3">
             <div class="rounded-lg bg-red-100 p-2 dark:bg-red-900/30"><Icon name="dollar" size="md" class="text-red-600 dark:text-red-400" /></div>
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeTotal') }}</p>
@@ -74,6 +88,43 @@
                 {{ formatMoney(summary?.upstream_recharge_total) }}
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeDescription') }}</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card p-5">
+          <div class="flex items-start gap-3">
+            <div class="rounded-lg bg-sky-100 p-2 dark:bg-sky-900/30"><Icon name="database" size="md" class="text-sky-600 dark:text-sky-400" /></div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceTotal') }}</p>
+              <p data-test="upstream-balance-total" class="mt-1 text-2xl font-bold text-sky-600 dark:text-sky-400">{{ formatMoney(summary?.upstream_balance_total) }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card p-5">
+          <div class="flex items-start gap-3">
+            <div class="rounded-lg bg-orange-100 p-2 dark:bg-orange-900/30"><Icon name="chart" size="md" class="text-orange-600 dark:text-orange-400" /></div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamTotalConsumption') }}</p>
+              <p data-test="upstream-total-consumption" class="mt-1 text-2xl font-bold text-orange-600 dark:text-orange-400">{{ formatMoney(upstreamTotalConsumption) }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamTotalConsumptionFormula') }}</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card p-5">
+          <div class="flex items-start gap-3">
+            <div class="rounded-lg bg-violet-100 p-2 dark:bg-violet-900/30"><Icon name="bolt" size="md" class="text-violet-600 dark:text-violet-400" /></div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.totalProfit') }}</p>
+              <p data-test="total-profit" class="mt-1 flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
+                <span>{{ formatMoney(totalProfitAllAccounts) }}</span>
+                <span class="text-gray-300 dark:text-dark-500">/</span>
+                <span class="text-violet-600 dark:text-violet-400">{{ formatMoney(totalProfitUsers) }}</span>
+              </p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.totalProfitFormula') }}</p>
             </div>
           </div>
         </article>
@@ -173,6 +224,20 @@ const selectedMetricClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-g
 const normalMetricClass = 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-gray-200'
 
 const daily = computed(() => [...(summary.value?.daily ?? [])].sort((a, b) => a.bucket_date.localeCompare(b.bucket_date)))
+// 上游总消费按充值减余额估算，用于和当前查询范围消费口径计算总收益。
+const upstreamTotalConsumption = computed(() => {
+  if (!summary.value) return null
+  return summary.value.upstream_recharge_total - summary.value.upstream_balance_total
+})
+// 总收益展示“全部账号 / 用户消费”两个口径，消费侧沿用当前经营历史查询范围。
+const totalProfitAllAccounts = computed(() => {
+  if (!summary.value || upstreamTotalConsumption.value == null) return null
+  return summary.value.range.actual_cost - upstreamTotalConsumption.value
+})
+const totalProfitUsers = computed(() => {
+  if (!summary.value || upstreamTotalConsumption.value == null) return null
+  return summary.value.range.actual_cost_excluding_admin - upstreamTotalConsumption.value
+})
 
 const chartData = computed(() => {
   if (!daily.value.length) return null

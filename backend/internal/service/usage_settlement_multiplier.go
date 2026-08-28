@@ -34,8 +34,8 @@ func resolveAdminUsageSettlementMultiplierForAccount(user *User, group *Group, a
 	return ResolveAdminUsageSettlementMultiplierForAccount(user, group, account)
 }
 
-// resolveUpstreamCostRateMultiplier 返回上游站点在请求发生时实际声明的结算倍率。
-// 该倍率与本站用户分组的收费倍率无关，探测不可用时才回退账号已配置倍率。
+// resolveUpstreamCostRateMultiplier 返回账号中保存的上游声明结算倍率。
+// 临时探测失败时沿用最近一次成功声明值，避免回退静态倍率导致上游成本虚增。
 func resolveUpstreamCostRateMultiplier(account *Account, requestedAt time.Time) float64 {
 	if account == nil {
 		return 1
@@ -52,7 +52,7 @@ func resolveUpstreamCostRateMultiplier(account *Account, requestedAt time.Time) 
 			return value
 		}
 	}
-	if snapshot.Status != UpstreamBillingProbeStatusOK {
+	if snapshot.Status != UpstreamBillingProbeStatusOK && snapshot.Status != UpstreamBillingProbeStatusFailed {
 		return fallback
 	}
 	if requestedAt.IsZero() {

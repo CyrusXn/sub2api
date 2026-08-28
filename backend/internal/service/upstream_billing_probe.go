@@ -729,12 +729,19 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	if s.accountTestService.tlsFPProfileService != nil {
 		tlsProfile = s.accountTestService.tlsFPProfileService.ResolveTLSProfile(account)
 	}
+	persistFailureWithAPIKeyBalance := func(statusCode int, reason string, retryDelay time.Duration) (*UpstreamBillingProbeSnapshot, error) {
+		if !upstreamBillingSupportsWebAccount(normalizedBaseURL) {
+			return s.persistProbeFailure(ctx, account, intervalMinutes, now, statusCode, reason, retryDelay)
+		}
+		balance := s.fetchConfiguredAPIKeyUsageBalance(ctx, account, normalizedBaseURL, apiKey, proxyURL, tlsProfile, now)
+		return s.persistProbeFailureWithBalance(ctx, account, intervalMinutes, now, statusCode, reason, retryDelay, balance)
+	}
 	probeURL := buildOpenAIEndpointURL(normalizedBaseURL, "/v1/sub2api/billing")
 	probeCtx, cancel := context.WithTimeout(ctx, upstreamBillingProbeRequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, probeURL, bytes.NewReader(nil))
 	if err != nil {
-		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "request_build_failed", 0)
+		return persistFailureWithAPIKeyBalance(0, "request_build_failed", 0)
 	}
 	// OpenAI 账号保持官方 openai 传输画像；其他平台探测走默认画像。
 	profile := HTTPUpstreamProfileDefault
@@ -748,18 +755,18 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	account.ApplyHeaderOverrides(req.Header)
 	resp, err := s.accountTestService.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
 	if err != nil {
-		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "request_failed", 0)
+		return persistFailureWithAPIKeyBalance(0, "request_failed", 0)
 	}
 	if resp == nil || resp.Body == nil {
-		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "empty_response", 0)
+		return persistFailureWithAPIKeyBalance(0, "empty_response", 0)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, upstreamBillingProbeMaxBodyBytes+1))
 	if readErr != nil {
-		return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "response_read_failed", retryAfter(resp.Header, now))
+		return persistFailureWithAPIKeyBalance(resp.StatusCode, "response_read_failed", retryAfter(resp.Header, now))
 	}
 	if len(body) > upstreamBillingProbeMaxBodyBytes {
-		return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "response_too_large", retryAfter(resp.Header, now))
+		return persistFailureWithAPIKeyBalance(resp.StatusCode, "response_too_large", retryAfter(resp.Header, now))
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		if !upstreamBillingSupportsWebAccount(normalizedBaseURL) {
@@ -773,7 +780,7 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		return s.persistProbeSuccess(ctx, account, intervalMinutes, now, statusCode, data, balance)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "http_error", retryAfter(resp.Header, now))
+		return persistFailureWithAPIKeyBalance(resp.StatusCode, "http_error", retryAfter(resp.Header, now))
 	}
 	data, err := parseUpstreamBillingProbeResponse(body)
 	if err != nil {
@@ -899,6 +906,20 @@ func (s *UpstreamBillingProbeService) persistProbeFailure(
 	reason string,
 	retryAfterDuration time.Duration,
 ) (*UpstreamBillingProbeSnapshot, error) {
+	return s.persistProbeFailureWithBalance(ctx, account, intervalMinutes, now, statusCode, reason, retryAfterDuration, nil)
+}
+
+func (s *UpstreamBillingProbeService) persistProbeFailureWithBalance(
+	ctx context.Context,
+	account *Account,
+	intervalMinutes int,
+	now time.Time,
+	statusCode int,
+	reason string,
+	retryAfterDuration time.Duration,
+	balance *UpstreamAccountBalanceSnapshot,
+) (*UpstreamBillingProbeSnapshot, error) {
+	applyUpstreamRechargeScale(account, nil, balance)
 	previous := decodeUpstreamBillingProbeSnapshot(account.Extra)
 	failureCount := 1
 	if previous != nil {
@@ -912,6 +933,7 @@ func (s *UpstreamBillingProbeService) persistProbeFailure(
 	}
 	snapshot := &UpstreamBillingProbeSnapshot{
 		Status:        status,
+		Balance:       balance,
 		LastAttemptAt: now,
 		NextProbeAt:   now.Add(delay),
 		FailureCount:  failureCount,
@@ -943,6 +965,7 @@ func (s *UpstreamBillingProbeService) persistProbeFailureCleared(
 	retryAfterDuration time.Duration,
 	balance *UpstreamAccountBalanceSnapshot,
 ) (*UpstreamBillingProbeSnapshot, error) {
+	applyUpstreamRechargeScale(account, nil, balance)
 	failureCount := 1
 	if previous := decodeUpstreamBillingProbeSnapshot(account.Extra); previous != nil {
 		failureCount = previous.FailureCount + 1
@@ -1081,9 +1104,10 @@ func (s *UpstreamBillingProbeService) fetchConfiguredAPIKeyUsageBalance(
 	tlsProfile *tlsfingerprint.Profile,
 	now time.Time,
 ) *UpstreamAccountBalanceSnapshot {
-	if s.resolveWebAccountCredential(ctx, baseURL) == nil {
+	if !upstreamBillingSupportsWebAccount(baseURL) {
 		return nil
 	}
+	// API Key 余额接口与网页登录配置独立；新站点无需先配置后台账号。
 	return s.fetchAPIKeyUsageBalance(ctx, account, baseURL, apiKey, proxyURL, tlsProfile, now)
 }
 
@@ -2113,15 +2137,16 @@ func buildBalanceCenterProbeSnapshot(account *Account, snapshot *UpstreamBilling
 	if err != nil {
 		return nil, fmt.Errorf("序列化余额中心探测摘要失败: %w", err)
 	}
-	if snapshot.Status != UpstreamBillingProbeStatusOK {
-		return result, nil
-	}
+	// 余额与倍率是独立探测结果；即使倍率链路失败，成功取得的余额仍需进入低余额告警。
 	if snapshot.Balance != nil && snapshot.Balance.Status == UpstreamBillingProbeStatusOK && snapshot.Balance.Amount != nil {
 		converted := *snapshot.Balance.Amount
 		raw := converted / result.ConversionScale
 		result.Balance = &raw
 		result.ConvertedBalance = &converted
 		result.Currency = snapshot.Balance.Unit
+	}
+	if snapshot.Status != UpstreamBillingProbeStatusOK {
+		return result, nil
 	}
 	if value, ok := resolveAccountExtraNumber(snapshot.Data, "resolved_rate_multiplier"); ok {
 		result.RateMultiplier = &value

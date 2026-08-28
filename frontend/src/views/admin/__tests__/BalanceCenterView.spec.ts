@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import BalanceCenterView from '../BalanceCenterView.vue'
 
 const api = vi.hoisted(() => ({
-  sites: vi.fn(), rechargeSummary: vi.fn(), createRechargeEvent: vi.fn(), deleteRechargeEvent: vi.fn()
+  sites: vi.fn(), rechargeSummary: vi.fn(), createRechargeEvent: vi.fn(), deleteRechargeEvent: vi.fn(),
+  getSettings: vi.fn(), updateSettings: vi.fn()
 }))
 const notifications = vi.hoisted(() => ({ showSuccess: vi.fn(), showError: vi.fn() }))
 
@@ -52,6 +53,8 @@ describe('BalanceCenterView', () => {
     api.rechargeSummary.mockResolvedValue(summary)
     api.createRechargeEvent.mockResolvedValue(summary.items[0])
     api.deleteRechargeEvent.mockResolvedValue(undefined)
+    api.getSettings.mockResolvedValue({ enabled: true, event_probe_enabled: true, email_enabled: true, low_balance_threshold: 5 })
+    api.updateSettings.mockImplementation(async settings => settings)
   })
 
   it('默认只展示新增充值并仅加载站点', async () => {
@@ -59,12 +62,57 @@ describe('BalanceCenterView', () => {
     await flushPromises()
 
     expect(api.sites).toHaveBeenCalledOnce()
+    expect(api.getSettings).toHaveBeenCalledOnce()
     expect(api.rechargeSummary).not.toHaveBeenCalled()
     expect(wrapper.get('[data-test="tab-add-recharge"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.findAll('[data-test="site-recharge-row"]')).toHaveLength(2)
     expect(wrapper.find('[data-test="total-amount"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="recharge-list-scroll"]').classes()).toContain('overflow-y-auto')
     expect(wrapper.findAll('[data-test="site-recharge-row"]')[0].text()).toContain('VoVo')
+  })
+
+  it('在余额中心直接设置低余额邮件阈值', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const threshold = wrapper.get('[data-test="low-balance-threshold"]')
+    expect((threshold.element as HTMLInputElement).value).toBe('5')
+    expect(wrapper.get('[data-test="balance-email-enabled"]').attributes('aria-checked')).toBe('true')
+
+    await threshold.setValue('8.5')
+    await wrapper.get('[data-test="save-alert-settings"]').trigger('click')
+    await flushPromises()
+
+    expect(api.updateSettings).toHaveBeenCalledWith({
+      enabled: true,
+      event_probe_enabled: true,
+      email_enabled: true,
+      low_balance_threshold: 8.5
+    })
+    expect(notifications.showSuccess).toHaveBeenCalledWith('admin.balanceCenter.alertSettingsSaved')
+  })
+
+  it('低余额阈值为空时拒绝保存', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="low-balance-threshold"]').setValue('')
+    await wrapper.get('[data-test="save-alert-settings"]').trigger('click')
+    await flushPromises()
+
+    expect(api.updateSettings).not.toHaveBeenCalled()
+    expect(notifications.showError).toHaveBeenCalledWith('admin.balanceCenter.invalidLowBalanceThreshold')
+  })
+
+  it('告警设置加载失败时仍展示站点列表', async () => {
+    api.getSettings.mockRejectedValue(new Error('settings unavailable'))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-test="site-recharge-row"]')).toHaveLength(2)
+    expect(wrapper.find('[data-test="low-balance-threshold"]').exists()).toBe(false)
+    expect(notifications.showError).toHaveBeenCalled()
   })
 
   it('新增充值和充值记录都使用不透明斑马纹', async () => {
