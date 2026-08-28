@@ -12,7 +12,7 @@ export default {
     totalConsumption: '总消费',
     upstreamConsumption: '上游站点总消费',
     userTotalRecharge: '用户总充值',
-    userBalanceTotal: '用户余额',
+    userBalanceTotal: '用户总余额',
     upstreamRechargeTotal: '上游总充值',
     upstreamRechargeDescription: '充值记录中的全部上游站点',
     upstreamBalanceTotal: '上游总余额',

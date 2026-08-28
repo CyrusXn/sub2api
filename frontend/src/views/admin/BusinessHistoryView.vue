@@ -66,15 +66,20 @@
         </article>
 
         <article class="card p-5">
-          <div class="flex items-start gap-3">
-            <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30"><Icon name="creditCard" size="md" class="text-emerald-600 dark:text-emerald-400" /></div>
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userTotalRecharge') }}</p>
-              <p data-test="user-total-recharge" class="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.lifetime.recharge_amount) }}</p>
-              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.businessHistory.userBalanceTotal') }}:
-                <span data-test="user-balance-total" class="font-semibold text-gray-700 dark:text-gray-200">{{ formatMoney(summary?.user_balance_total) }}</span>
-              </p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <Icon name="creditCard" size="sm" class="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <p class="truncate text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userTotalRecharge') }}</p>
+              </div>
+              <p data-test="user-total-recharge" class="mt-2 text-xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.lifetime.recharge_amount) }}</p>
+            </div>
+            <div class="min-w-0 border-l border-gray-200 pl-4 dark:border-dark-700">
+              <div class="flex items-center gap-2">
+                <Icon name="dollar" size="sm" class="shrink-0 text-teal-600 dark:text-teal-400" />
+                <p class="truncate text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userBalanceTotal') }}</p>
+              </div>
+              <p data-test="user-balance-total" class="mt-2 text-xl font-bold text-teal-600 dark:text-teal-400">{{ formatMoney(summary?.user_balance_total) }}</p>
             </div>
           </div>
         </article>
