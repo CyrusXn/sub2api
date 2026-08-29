@@ -13,6 +13,7 @@ CANDIDATE_FILE="$APP_DIR/.bluegreen-candidate-image"
 BLUE_IMAGE_FILE="$APP_DIR/.bluegreen-blue-image"
 CANDIDATE_SLOT_FILE="$APP_DIR/.bluegreen-candidate-slot"
 PREVIOUS_ACTIVE_FILE="$APP_DIR/.bluegreen-previous-active"
+PRIMARY_NAME=sub2api
 BLUE_PORT=8080
 GREEN_PORT=18081
 CANARY_PORT=18082
@@ -40,8 +41,13 @@ record_previous_active() {
 }
 ensure_runtime_env() {
   if [[ ! -f "$RUNTIME_ENV" ]]; then
+    local active source_container
     umask 077
-    docker inspect sub2api --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Ev '^(DEPLOYMENT_ROLE|DATABASE_MAX_OPEN_CONNS|DATABASE_MAX_IDLE_CONNS)=' > "$RUNTIME_ENV"
+    # primary 丢失时从当前健康流量槽位恢复运行环境，避免自愈依赖已丢失容器。
+    active=$(active_port)
+    source_container=$(container_for_port "$active")
+    health "$active"
+    docker inspect "$source_container" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Ev '^(DEPLOYMENT_ROLE|DATABASE_MAX_OPEN_CONNS|DATABASE_MAX_IDLE_CONNS)=' > "$RUNTIME_ENV"
   fi
   chmod 600 "$RUNTIME_ENV"
 }
@@ -55,6 +61,32 @@ run_api_slot() {
 	for _ in $(seq 1 24); do health "$port" && return; sleep 5; done
 	docker logs --tail 80 "$name" >&2 || true
 	return 1
+}
+ensure_primary_slot() {
+  local image=$1 active role
+  [[ "$image" =~ ^weishaw/sub2api:[A-Za-z0-9._-]+$ ]] || { log 'primary 镜像标签无效'; return 1; }
+  if docker inspect "$PRIMARY_NAME" >/dev/null 2>&1; then
+    role=$(docker inspect "$PRIMARY_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^DEPLOYMENT_ROLE=//p' | head -n 1)
+    if [[ "$role" == primary ]] && health "$BLUE_PORT"; then
+      log "primary 后台节点健康，保持现有实例: $PRIMARY_NAME"
+      return
+    fi
+    active=$(active_port || true)
+    [[ "$active" != "$BLUE_PORT" ]] || { log '拒绝替换正在承接流量的 primary'; return 1; }
+    # 仅替换未承接流量且角色错误或不健康的后台节点。
+    docker rm -f "$PRIMARY_NAME" >/dev/null
+  fi
+  ensure_runtime_env
+  docker run -d --name "$PRIMARY_NAME" --restart unless-stopped --network sub2api_sub2api-network -v sub2api_sub2api_data:/app/data -p "127.0.0.1:$BLUE_PORT:8080" --security-opt no-new-privileges:true --ulimit nofile=100000:100000 --env-file "$RUNTIME_ENV" -e DEPLOYMENT_ROLE=primary "$image" >/dev/null
+  for _ in $(seq 1 24); do
+    if health "$BLUE_PORT"; then
+      log "唯一 primary 后台节点已恢复: $PRIMARY_NAME:$BLUE_PORT"
+      return
+    fi
+    sleep 5
+  done
+  docker logs --tail 80 "$PRIMARY_NAME" >&2 || true
+  return 1
 }
 write_active() {
   local port=$1 tmp
@@ -125,9 +157,11 @@ cleanup_release() {
   health "$previous_port"
   curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null
   current_image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
+  ensure_primary_slot "$current_image"
 
-  # 只移除既不是当前活跃实例、也不是上一版本回滚实例的旧槽位。
-  for slot in sub2api sub2api-green sub2api-canary; do
+  # primary 专门承担后台任务，不能按非流量槽位清理。
+  for slot in "$PRIMARY_NAME" sub2api-green sub2api-canary; do
+    [[ "$slot" == "$PRIMARY_NAME" ]] && continue
     [[ "$slot" == "$active_container" || "$slot" == "$previous_name" ]] && continue
     docker inspect "$slot" >/dev/null 2>&1 || continue
     docker rm -f "$slot" >/dev/null
@@ -162,6 +196,13 @@ cleanup_release() {
 }
 
 case "$ACTION" in
+  ensure-primary)
+    active=$(active_port)
+    active_container=$(container_for_port "$active")
+    health "$active"
+    image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
+    ensure_primary_slot "$image"
+    ;;
   backup-release)
     backup_release
     ;;
@@ -180,9 +221,11 @@ case "$ACTION" in
     ;;
   prepare-bluegreen)
     prepare_nginx
-	active=$(active_port)
-	active_container=$(container_for_port "$active")
-	docker inspect "$active_container" --format '{{.Config.Image}}' > "$BLUE_IMAGE_FILE"
+		active=$(active_port)
+		active_container=$(container_for_port "$active")
+		image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
+		ensure_primary_slot "$image"
+		printf '%s\n' "$image" > "$BLUE_IMAGE_FILE"
 	if [[ "$active" == "$GREEN_PORT" ]]; then
 		candidate_name=sub2api-canary
 		candidate_port=$CANARY_PORT
@@ -204,6 +247,10 @@ case "$ACTION" in
 	IFS='|' read -r candidate_name candidate_port < "$CANDIDATE_SLOT_FILE"
 	[[ "$candidate_name" =~ ^sub2api-(green|canary)$ && "$candidate_port" =~ ^(18081|18082)$ ]] || { log '候选槽位无效'; exit 1; }
 	health "$candidate_port"
+	active=$(active_port)
+	active_container=$(container_for_port "$active")
+	image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
+	ensure_primary_slot "$image"
 	record_previous_active
 	write_active "$candidate_port"; nginx_reload
     curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null

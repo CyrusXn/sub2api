@@ -84,6 +84,6 @@ case "${1:-}" in
   status) status ;;
   build) build ;;
   deploy) deploy ;;
-  stage-candidate|prepare-bluegreen|canary-green|return-blue|rollback|cleanup-release) [[ "$1" == stage-candidate ]] && stage_candidate || remote_action "$1" ;;
-  *) fail '允许操作: status, build, deploy, stage-candidate, prepare-bluegreen, canary-green, return-blue, rollback, cleanup-release' ;;
+  stage-candidate|ensure-primary|prepare-bluegreen|canary-green|return-blue|rollback|cleanup-release) [[ "$1" == stage-candidate ]] && stage_candidate || remote_action "$1" ;;
+  *) fail '允许操作: status, build, deploy, stage-candidate, ensure-primary, prepare-bluegreen, canary-green, return-blue, rollback, cleanup-release' ;;
 esac
