@@ -24,7 +24,9 @@ func TestGatewayRoutesCodexModelsManifestPathIsRegistered(t *testing.T) {
 	require.NotEmpty(t, registered["/backend-api/codex/models"], "GET /backend-api/codex/models should be registered")
 	require.NotEmpty(t, registered["/v1/models"], "GET /v1/models should be registered")
 	require.NotEmpty(t, registered["/models"], "GET /models should be registered")
-	require.Equal(t, registered["/v1/models"], registered["/models"], "root alias should use the same platform-aware handler")
+	// 根路径是 Codex 自定义 provider 的发现地址，不能依赖新版客户端已不保证携带的 client_version 参数。
+	require.Equal(t, registered["/backend-api/codex/models"], registered["/models"], "root alias should always use the Codex manifest handler")
+	require.NotEqual(t, registered["/v1/models"], registered["/models"], "standard /v1/models should keep OpenAI list compatibility")
 }
 
 func TestDispatchCodexModelsGatewayKeepsOnlyOpenAIOnLiveManifestHandler(t *testing.T) {
