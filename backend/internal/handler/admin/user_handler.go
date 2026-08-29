@@ -74,6 +74,7 @@ type CreateUserRequest struct {
 	// AdminUsageMultiplier 仅管理端可配置；nil 表示继承分组附加倍率。
 	AdminUsageMultiplier *float64 `json:"admin_usage_multiplier"`
 	AllowedGroups        []int64  `json:"allowed_groups"`
+	RestrictPublicGroups bool     `json:"restrict_public_groups"`
 }
 
 // UpdateUserRequest represents admin update user request
@@ -93,6 +94,7 @@ type UpdateUserRequest struct {
 	ClearAdminUsageMultiplier bool     `json:"clear_admin_usage_multiplier"`
 	Status                    string   `json:"status" binding:"omitempty,oneof=active disabled"`
 	AllowedGroups             *[]int64 `json:"allowed_groups"`
+	RestrictPublicGroups      *bool    `json:"restrict_public_groups"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64 `json:"group_rates"`
@@ -387,6 +389,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		RPMLimit:             req.RPMLimit,
 		AdminUsageMultiplier: req.AdminUsageMultiplier,
 		AllowedGroups:        req.AllowedGroups,
+		RestrictPublicGroups: req.RestrictPublicGroups,
 		ActorAdminID:         getAdminIDFromContext(c),
 	})
 	if err != nil {
@@ -447,6 +450,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		ClearAdminUsageMultiplier: req.ClearAdminUsageMultiplier,
 		Status:                    req.Status,
 		AllowedGroups:             req.AllowedGroups,
+		RestrictPublicGroups:      req.RestrictPublicGroups,
 		GroupRates:                req.GroupRates,
 		ActorAdminID:              getAdminIDFromContext(c),
 	})

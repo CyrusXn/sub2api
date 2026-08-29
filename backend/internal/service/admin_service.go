@@ -150,6 +150,7 @@ type CreateUserInput struct {
 	AllowedGroups []int64
 	// AdminUsageMultiplier 仅管理端配置的结算附加倍率；nil 表示继承分组附加倍率。
 	AdminUsageMultiplier *float64
+	RestrictPublicGroups bool
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
 }
@@ -169,6 +170,8 @@ type UpdateUserInput struct {
 	AdminUsageMultiplier *float64
 	// ClearAdminUsageMultiplier 为 true 时清空用户附加倍率，恢复继承分组。
 	ClearAdminUsageMultiplier bool
+	// RestrictPublicGroups 指针区分"未提供"和"显式开关"。
+	RestrictPublicGroups *bool
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64
