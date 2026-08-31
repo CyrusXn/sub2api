@@ -65,6 +65,8 @@ type ChannelMonitorRunner struct {
 	inFlightMu sync.Mutex
 }
 
+const monitorRunnerReconcileInterval = 15 * time.Second
+
 // scheduledMonitor 单个监控的运行时上下文。
 type scheduledMonitor struct {
 	id       int64
@@ -131,12 +133,67 @@ func (r *ChannelMonitorRunner) Start() {
 	enabled, err := r.svc.ListEnabledMonitors(ctx)
 	if err != nil {
 		slog.Error("channel_monitor: load enabled monitors failed at startup", "error", err)
-		return
-	}
-	for _, m := range enabled {
-		r.Schedule(m)
+	} else {
+		for _, m := range enabled {
+			r.Schedule(m)
+		}
 	}
 	slog.Info("channel_monitor: runner started", "scheduled_tasks", len(enabled))
+	r.wg.Add(1)
+	go r.reconcileLoop()
+}
+
+// reconcileLoop 定期从数据库对账，解决管理请求落到 api_only 节点时进程内回调无法抵达 primary 的问题。
+func (r *ChannelMonitorRunner) reconcileLoop() {
+	defer r.wg.Done()
+	ticker := time.NewTicker(monitorRunnerReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.parentCtx.Done():
+			return
+		case <-ticker.C:
+			r.reconcileEnabledMonitors()
+		}
+	}
+}
+
+// reconcileEnabledMonitors 只变更新增、删除或参数变化的任务，避免对账时重置正常 ticker。
+func (r *ChannelMonitorRunner) reconcileEnabledMonitors() {
+	if r == nil || r.svc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), monitorStartupLoadTimeout)
+	defer cancel()
+	enabled, err := r.svc.ListEnabledMonitors(ctx)
+	if err != nil {
+		slog.Warn("channel_monitor: reconcile enabled monitors failed", "error", err)
+		return
+	}
+	desired := make(map[int64]*ChannelMonitor, len(enabled))
+	for _, m := range enabled {
+		if m != nil {
+			desired[m.ID] = m
+		}
+	}
+
+	r.mu.Lock()
+	current := make(map[int64]*scheduledMonitor, len(r.tasks))
+	for id, task := range r.tasks {
+		current[id] = task
+	}
+	r.mu.Unlock()
+	for id := range current {
+		if _, ok := desired[id]; !ok {
+			r.Unschedule(id)
+		}
+	}
+	for id, monitor := range desired {
+		task, ok := current[id]
+		if !ok || task.name != monitor.Name || task.interval != time.Duration(monitor.IntervalSeconds)*time.Second || task.jitter != time.Duration(monitor.JitterSeconds)*time.Second {
+			r.Schedule(monitor)
+		}
+	}
 }
 
 // Schedule 为指定监控创建（或重置）独立定时任务。

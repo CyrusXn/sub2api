@@ -284,6 +284,28 @@ func TestStart_SkipsDecryptFailedMonitor(t *testing.T) {
 	stoppedWithin(t, r, 3*time.Second)
 }
 
+func TestReconcileEnabledMonitors_AddsAndRemovesTasks(t *testing.T) {
+	svc := &stubMonitorSvc{enabled: []*ChannelMonitor{{ID: 1, Name: "old", Enabled: true, IntervalSeconds: 60}}}
+	r := newRunnerForTest(svc)
+	r.Start()
+	waitFor(t, time.Second, "initial task scheduled", func() bool { return runnerTaskCount(r) == 1 })
+
+	// 模拟监控在 api_only 节点创建、旧监控在另一节点删除后的数据库状态。
+	svc.enabled = []*ChannelMonitor{{ID: 2, Name: "new", Enabled: true, IntervalSeconds: 60}}
+	r.reconcileEnabledMonitors()
+
+	if got := runnerTaskCount(r); got != 1 {
+		t.Fatalf("expected one reconciled task, got %d", got)
+	}
+	if runnerTaskPtr(r, 1) != nil {
+		t.Fatal("deleted monitor task should be removed")
+	}
+	if runnerTaskPtr(r, 2) == nil {
+		t.Fatal("new monitor task should be scheduled")
+	}
+	r.Stop()
+}
+
 // TestStop_DrainsAllGoroutines 验证 Stop 会等待所有调度 goroutine 退出（无游离）。
 func TestStop_DrainsAllGoroutines(t *testing.T) {
 	svc := &stubMonitorSvc{}
