@@ -63,12 +63,13 @@ run_api_slot() {
 	return 1
 }
 ensure_primary_slot() {
-  local image=$1 active role
+  local image=$1 active role current_image
   [[ "$image" =~ ^weishaw/sub2api:[A-Za-z0-9._-]+$ ]] || { log 'primary 镜像标签无效'; return 1; }
   if docker inspect "$PRIMARY_NAME" >/dev/null 2>&1; then
     role=$(docker inspect "$PRIMARY_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^DEPLOYMENT_ROLE=//p' | head -n 1)
-    if [[ "$role" == primary ]] && health "$BLUE_PORT"; then
-      log "primary 后台节点健康，保持现有实例: $PRIMARY_NAME"
+    current_image=$(docker inspect "$PRIMARY_NAME" --format '{{.Config.Image}}')
+    if [[ "$role" == primary ]] && [[ "$current_image" == "$image" ]] && health "$BLUE_PORT"; then
+      log "primary 后台节点健康且版本一致，保持现有实例: $PRIMARY_NAME"
       return
     fi
     active=$(active_port || true)
@@ -249,7 +250,7 @@ case "$ACTION" in
 	health "$candidate_port"
 	active=$(active_port)
 	active_container=$(container_for_port "$active")
-	image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
+	image=$(candidate_image)
 	ensure_primary_slot "$image"
 	record_previous_active
 	write_active "$candidate_port"; nginx_reload
