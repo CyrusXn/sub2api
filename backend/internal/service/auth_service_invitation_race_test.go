@@ -155,7 +155,9 @@ func TestAuthService_Register_InvitationCodeSingleUseUnderConcurrency(t *testing
 			defer wg.Done()
 			<-start
 			email := fmt.Sprintf("race-%d@example.com", i)
-			_, _, err := svc.RegisterWithVerification(ctx, email, "Password123!", "", "", code, "")
+			// 本站已把官方 RegisterWithVerification 改名为 RegisterWithOptions 并移除 verifyCode 形参；
+			// 官方这三处调用的 verifyCode 实参本就是空串，去掉后语义完全等价。
+			_, _, err := svc.RegisterWithOptions(ctx, email, "Password123!", "", code, "")
 			results <- err
 		}(i)
 	}
@@ -205,7 +207,7 @@ func TestAuthService_Register_InvitationCodeRejectedWhenAlreadyUsed(t *testing.T
 		&userPlatformQuotaRepoStub{},
 	)
 
-	_, _, err := svc.RegisterWithVerification(context.Background(), "later@example.com", "Password123!", "", "", code, "")
+	_, _, err := svc.RegisterWithOptions(context.Background(), "later@example.com", "Password123!", "", code, "")
 	require.ErrorIs(t, err, ErrInvitationCodeInvalid)
 }
 
@@ -227,7 +229,7 @@ func TestAuthService_Register_InvitationCodeMissingWhenEnabled(t *testing.T) {
 		&userPlatformQuotaRepoStub{},
 	)
 
-	_, _, err := svc.RegisterWithVerification(context.Background(), "no-invite@example.com", "Password123!", "", "", "", "")
+	_, _, err := svc.RegisterWithOptions(context.Background(), "no-invite@example.com", "Password123!", "", "", "")
 	require.ErrorIs(t, err, ErrInvitationCodeRequired)
 
 	ok, err := userRepo.ExistsByEmail(context.Background(), "no-invite@example.com")

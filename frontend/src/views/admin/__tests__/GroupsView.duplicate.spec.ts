@@ -8,6 +8,7 @@ import GroupsView from '@/views/admin/GroupsView.vue'
 const {
   listGroups,
   duplicateGroup,
+  updateGroup,
   getModelsListCandidates,
   getUsageSummary,
   getCapacitySummary,
@@ -17,6 +18,7 @@ const {
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   duplicateGroup: vi.fn(),
+  updateGroup: vi.fn(),
   getModelsListCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
@@ -36,7 +38,7 @@ vi.mock('@/api/admin', () => ({
       getLiveCapability,
       getAll: vi.fn(),
       create: vi.fn(),
-      update: vi.fn(),
+      update: updateGroup,
       delete: vi.fn(),
       updateSortOrder: vi.fn()
     },
@@ -136,6 +138,13 @@ const DataTableStub = defineComponent({
   template: '<div><div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row" /></div></div>'
 })
 
+const BaseDialogStub = defineComponent({
+  props: {
+    show: { type: Boolean, default: false }
+  },
+  template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+})
+
 function mountView() {
   return mount(GroupsView, {
     global: {
@@ -144,7 +153,7 @@ function mountView() {
         TablePageLayout: TablePageLayoutStub,
         DataTable: DataTableStub,
         Pagination: true,
-        BaseDialog: true,
+        BaseDialog: BaseDialogStub,
         ConfirmDialog: true,
         EmptyState: true,
         Select: true,
@@ -166,6 +175,7 @@ describe('GroupsView duplicate action', () => {
     for (const fn of [
       listGroups,
       duplicateGroup,
+      updateGroup,
       getModelsListCandidates,
       getUsageSummary,
       getCapacitySummary,
@@ -269,6 +279,31 @@ describe('GroupsView duplicate action', () => {
     expect(showSuccess).toHaveBeenCalledWith('admin.groups.duplicateSuccess')
     expect(showError).toHaveBeenCalledWith('admin.groups.failedToLoad')
     expect(showError).not.toHaveBeenCalledWith('admin.groups.duplicateFailed')
+    wrapper.unmount()
+  })
+
+  it('shows the standardized API message when updating a group fails', async () => {
+    updateGroup.mockRejectedValueOnce({
+      status: 409,
+      code: 409,
+      message: 'group name already exists',
+      reason: 'GROUP_EXISTS'
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((button) => button.text() === 'common.edit')
+    expect(editButton).toBeTruthy()
+    await editButton!.trigger('click')
+    await flushPromises()
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateGroup).toHaveBeenCalledTimes(1)
+    // 官方原用例断言把上游英文报错原样弹给用户；本站 utils/userFacingMessage.ts 明确规定
+    // 面向中国客户的提示必须为中文，未知英文报错统一兜底，所以这里断言归一化后的中文文案，
+    // 仍然覆盖官方意图：更新失败必须弹出错误提示，而不是被静默吞掉。
+    expect(showError).toHaveBeenCalledWith('操作失败，请稍后重试。')
     wrapper.unmount()
   })
 })

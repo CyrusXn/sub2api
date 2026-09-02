@@ -44,6 +44,7 @@ type dashboardSnapshotV2Filters struct {
 	Model                 string
 	RequestType           *int16
 	Stream                *bool
+	NativeCompactionV2    *bool
 	BillingType           *int8
 	UpstreamModelMismatch *bool
 	Multi                 usagestats.UsageLogFilters
@@ -60,6 +61,7 @@ type dashboardSnapshotV2CacheKey struct {
 	Model                 string                     `json:"model"`
 	RequestType           *int16                     `json:"request_type"`
 	Stream                *bool                      `json:"stream"`
+	NativeCompactionV2    *bool                      `json:"native_compaction_v2"`
 	BillingType           *int8                      `json:"billing_type"`
 	UpstreamModelMismatch *bool                      `json:"upstream_model_mismatch"`
 	Multi                 usagestats.UsageLogFilters `json:"multi"`
@@ -107,6 +109,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		Model:                 filters.Model,
 		RequestType:           filters.RequestType,
 		Stream:                filters.Stream,
+		NativeCompactionV2:    filters.NativeCompactionV2,
 		BillingType:           filters.BillingType,
 		UpstreamModelMismatch: filters.UpstreamModelMismatch,
 		Multi:                 filters.Multi,
@@ -283,6 +286,14 @@ func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filter
 		filters.Stream = &streamVal
 	}
 
+	if nativeCompactionV2Str := strings.TrimSpace(c.Query("native_compaction_v2")); nativeCompactionV2Str != "" {
+		value, err := strconv.ParseBool(nativeCompactionV2Str)
+		if err != nil {
+			return nil, err
+		}
+		filters.NativeCompactionV2 = &value
+	}
+
 	if billingTypeStr := strings.TrimSpace(c.Query("billing_type")); billingTypeStr != "" {
 		v, err := strconv.ParseInt(billingTypeStr, 10, 8)
 		if err != nil {
@@ -313,6 +324,8 @@ func (filters *dashboardSnapshotV2Filters) usageLogFilters() usagestats.UsageLog
 	result.ModelFilterSource = usagestats.ModelSourceRequested
 	result.RequestType = filters.RequestType
 	result.Stream = filters.Stream
+	// native_compaction_v2 来自官方 v0.1.185，本站快照 V2 走结构体透传。
+	result.NativeCompactionV2 = filters.NativeCompactionV2
 	result.BillingType = filters.BillingType
 	result.UpstreamModelMismatch = filters.UpstreamModelMismatch
 	result.AdminView = true

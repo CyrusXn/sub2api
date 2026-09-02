@@ -19,6 +19,9 @@ const messages: Record<string, string> = {
   'usage.ws': 'WS',
   'usage.stream': 'Stream',
   'usage.sync': 'Sync',
+  'usage.compactionFilter': 'Request Kind',
+  'usage.allCompactionTypes': 'All Requests',
+  'usage.compactionOnly': 'Compaction Only',
   'admin.usage.billingType': 'Billing Type',
   'admin.usage.allBillingTypes': 'All Billing Types',
   'admin.usage.billingTypeBalance': 'Balance',
@@ -81,6 +84,7 @@ const defaultFilters = () => ({
   account_ids: [],
   models: [],
   request_types: [],
+  native_compaction_v2: null,
   billing_types: [],
   billing_modes: [],
 	upstream_model_mismatches: [],
@@ -325,5 +329,51 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
       upstream_model_mismatches: [],
       group_ids: [],
     })
+  })
+})
+
+describe('UsageFilters — native compaction filter', () => {
+  it('offers only All/Compaction and emits the independent boolean filter', async () => {
+    const SelectStub = {
+      name: 'Select',
+      props: ['modelValue', 'options'],
+      emits: ['update:modelValue', 'change'],
+      template: '<div />',
+    }
+    const filters = defaultFilters()
+    const wrapper = mount(UsageFilters, {
+      props: {
+        modelValue: filters,
+        exporting: false,
+        startDate: '2026-05-01',
+        endDate: '2026-05-28',
+        showActions: false,
+        modelOptions: [],
+      },
+      global: { stubs: { Select: SelectStub, Teleport: true } },
+    })
+
+    const compactionSelect = wrapper.findAllComponents(SelectStub).find((select: any) =>
+      (select.props('options') as Array<{ value: unknown }>).some((option) => option.value === true)
+    )
+    expect(compactionSelect).toBeDefined()
+    expect(compactionSelect!.props('options')).toEqual([
+      { value: null, label: 'All Requests' },
+      { value: true, label: 'Compaction Only' },
+    ])
+    expect(compactionSelect!.props('options')).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ value: false })])
+    )
+
+    compactionSelect!.vm.$emit('update:modelValue', true)
+    compactionSelect!.vm.$emit('change')
+    await wrapper.vm.$nextTick()
+
+    // 本站 UsageFilters 用本地副本 + v-model 显式同步(组件内注释已说明:直接改 props
+    // 会让父页面拿到旧值,所有多选筛选失效),因此官方"就地修改 props 对象"的断言不成立,
+    // 改为断言同步给父页面的 update:modelValue 载荷。
+    const updates = wrapper.emitted('update:modelValue') as Array<[Record<string, any>]> | undefined
+    expect(updates?.at(-1)?.[0]?.native_compaction_v2).toBe(true)
+    expect(wrapper.emitted('change')).toBeTruthy()
   })
 })

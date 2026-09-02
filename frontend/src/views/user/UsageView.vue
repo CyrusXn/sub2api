@@ -112,6 +112,10 @@
               <label class="input-label">{{ t('usage.type') }}</label>
               <Select v-model="filters.request_type" :options="requestTypeOptions" @change="applyFilters" />
             </div>
+            <div class="w-full sm:w-auto sm:min-w-[180px]">
+              <label class="input-label">{{ t('usage.compactionFilter') }}</label>
+              <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="applyFilters" />
+            </div>
             <div class="w-full sm:w-auto sm:min-w-[200px]">
               <label class="input-label">{{ t('admin.usage.billingType') }}</label>
               <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="applyFilters" />
@@ -360,6 +364,7 @@ const filters = ref<UsageQueryParams>({
   start_date: startDate.value,
   end_date: endDate.value,
   request_type: undefined,
+  native_compaction_v2: null,
   billing_type: null,
   billing_mode: null,
 })
@@ -384,6 +389,10 @@ const requestTypeOptions = computed<SelectOption[]>(() => [
   { value: 'live', label: t('usage.live') },
   { value: 'stream', label: t('usage.stream') },
   { value: 'sync', label: t('usage.sync') },
+])
+const compactionOptions = computed<SelectOption[]>(() => [
+  { value: null, label: t('usage.allCompactionTypes') },
+  { value: true, label: t('usage.compactionOnly') },
 ])
 const billingTypeOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allBillingTypes') },
@@ -558,6 +567,7 @@ const resetFilters = () => {
     start_date: range.start,
     end_date: range.end,
     request_type: undefined,
+    native_compaction_v2: null,
     billing_type: null,
     billing_mode: null,
   }

@@ -17,11 +17,14 @@ type dashboardUsageRepoCapture struct {
 	service.UsageLogRepository
 	trendRequestType          *int16
 	trendStream               *bool
+	trendNativeCompaction     *bool
 	modelRequestType          *int16
 	modelStream               *bool
+	modelNativeCompaction     *bool
 	trendMismatch             *bool
 	modelMismatch             *bool
 	groupMismatch             *bool
+	groupNativeCompaction     *bool
 	trendUpstreamSiteAccounts []int64
 	modelUpstreamSiteAccounts []int64
 	groupUpstreamSiteAccounts []int64
@@ -49,6 +52,7 @@ func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
 ) ([]usagestats.TrendDataPoint, error) {
 	s.trendRequestType = filters.RequestType
 	s.trendStream = filters.Stream
+	s.trendNativeCompaction = filters.NativeCompactionV2
 	s.trendMismatch = filters.UpstreamModelMismatch
 	s.trendUpstreamSiteAccounts = append([]int64(nil), filters.UpstreamSiteAccountIDs...)
 	s.trendAccounts = append([]int64(nil), filters.AccountIDs...)
@@ -86,6 +90,7 @@ func (s *dashboardUsageRepoCapture) GetModelStatsWithUsageFiltersBySource(
 ) ([]usagestats.ModelStat, error) {
 	s.modelRequestType = filters.RequestType
 	s.modelStream = filters.Stream
+	s.modelNativeCompaction = filters.NativeCompactionV2
 	s.modelMismatch = filters.UpstreamModelMismatch
 	s.modelUpstreamSiteAccounts = append([]int64(nil), filters.UpstreamSiteAccountIDs...)
 	s.modelAccounts = append([]int64(nil), filters.AccountIDs...)
@@ -97,6 +102,7 @@ func (s *dashboardUsageRepoCapture) GetGroupStatsWithUsageFilters(
 	startTime, endTime time.Time,
 	filters usagestats.UsageLogFilters,
 ) ([]usagestats.GroupStat, error) {
+	s.groupNativeCompaction = filters.NativeCompactionV2
 	s.groupMismatch = filters.UpstreamModelMismatch
 	s.groupUpstreamSiteAccounts = append([]int64(nil), filters.UpstreamSiteAccountIDs...)
 	s.groupAccounts = append([]int64(nil), filters.AccountIDs...)
@@ -234,6 +240,48 @@ func TestDashboardModelStatsValidModelSource(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestDashboardNativeCompactionFilterPropagatesAlongsideTransport(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?request_type=stream&native_compaction_v2=true",
+		"/admin/dashboard/models?request_type=stream&native_compaction_v2=true",
+		"/admin/dashboard/groups?request_type=stream&native_compaction_v2=true",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
+	require.NotNil(t, repo.trendNativeCompaction)
+	require.True(t, *repo.trendNativeCompaction)
+	require.NotNil(t, repo.modelNativeCompaction)
+	require.True(t, *repo.modelNativeCompaction)
+	require.NotNil(t, repo.groupNativeCompaction)
+	require.True(t, *repo.groupNativeCompaction)
+	require.NotNil(t, repo.trendRequestType)
+	require.Equal(t, int16(service.RequestTypeStream), *repo.trendRequestType)
+}
+
+func TestDashboardNativeCompactionFilterRejectsInvalidBoolean(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?native_compaction_v2=invalid",
+		"/admin/dashboard/models?native_compaction_v2=invalid",
+		"/admin/dashboard/groups?native_compaction_v2=invalid",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, path)
+	}
 }
 
 func TestDashboardModelAuditFilterPropagatesToTrendModelAndGroupQueries(t *testing.T) {

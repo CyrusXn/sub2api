@@ -252,6 +252,7 @@ const breakdownFilters = computed(() => {
   f.group_ids = csv(filters.value.group_ids)
   f.models = csv(filters.value.models)
   f.request_types = csv(filters.value.request_types)
+  if (filters.value.native_compaction_v2 != null) f.native_compaction_v2 = filters.value.native_compaction_v2
   f.billing_types = csv(filters.value.billing_types)
   f.billing_modes = csv(filters.value.billing_modes)
   f.upstream_model_mismatches = csv(filters.value.upstream_model_mismatches)
@@ -319,6 +320,7 @@ const filters = ref<Record<string, any>>({
   group_ids: undefined,
   models: undefined,
   request_types: undefined,
+  native_compaction_v2: null,
   billing_types: undefined,
   billing_modes: undefined,
   upstream_model_mismatches: undefined,
@@ -493,6 +495,7 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
       group_ids: csv(filters.value.group_ids),
       models: csv(filters.value.models),
       request_types: csv(filters.value.request_types),
+      native_compaction_v2: filters.value.native_compaction_v2,
       billing_types: csv(filters.value.billing_types),
       billing_modes: csv(filters.value.billing_modes),
       upstream_model_mismatches: csv(filters.value.upstream_model_mismatches),
@@ -544,6 +547,7 @@ const loadChartData = async () => {
       group_ids: csv(filters.value.group_ids),
       models: csv(filters.value.models),
       request_types: csv(filters.value.request_types),
+      native_compaction_v2: filters.value.native_compaction_v2,
       billing_types: csv(filters.value.billing_types),
       billing_modes: csv(filters.value.billing_modes),
       upstream_model_mismatches: csv(filters.value.upstream_model_mismatches),
@@ -608,6 +612,7 @@ const resetFilters = () => {
     group_ids: undefined,
     models: undefined,
     request_types: undefined,
+    native_compaction_v2: null,
     billing_types: undefined,
     billing_modes: undefined,
     upstream_model_mismatches: undefined,

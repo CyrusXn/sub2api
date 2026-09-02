@@ -5,6 +5,14 @@ import { defineComponent } from 'vue'
 import UserUsageView from '@/views/user/UsageView.vue'
 import AdminUsageView from '@/views/admin/UsageView.vue'
 
+// 真实 DateRangePicker 通过 defineExpose 暴露 refreshRange，用量页面的 refreshData 会直接调用；
+// VTU 自动桩件没有该方法会抛 TypeError 打断整个挂载，这里补一个空实现。
+const dateRangePickerStub = {
+  name: 'DateRangePicker',
+  methods: { refreshRange: () => false },
+  template: '<div />',
+}
+
 const {
   userQuery,
   userGetStats,
@@ -202,7 +210,7 @@ const sharedPageStubs = {
   AppLayout: layoutStub,
   Pagination: true,
   Select: true,
-  DateRangePicker: true,
+  DateRangePicker: dateRangePickerStub,
   Icon: iconStub,
   UsageStatsCards: chartStub,
   ModelDistributionChart: chartStub,

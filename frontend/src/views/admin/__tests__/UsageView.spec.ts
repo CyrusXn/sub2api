@@ -4,6 +4,24 @@ import { defineComponent, ref } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
+// 真实 DateRangePicker 通过 defineExpose 暴露 refreshRange：默认动态预设「最近 24 小时」会重算
+// 区间并用 v-model 分两次回传起止值。VTU 自动桩件没有该方法会抛 TypeError 打断整个挂载，
+// 这里按同样语义补最小实现，页面刷新时的区间重置逻辑才能继续被真实覆盖。
+const dateRangePickerStub = defineComponent({
+  name: 'DateRangePicker',
+  emits: ['update:startDate', 'update:endDate', 'change'],
+  methods: {
+    refreshRange(): boolean {
+      const now = new Date()
+      const start = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+      this.$emit('update:startDate', toLocalDateTime(start))
+      this.$emit('update:endDate', toLocalDateTime(now))
+      return true
+    },
+  },
+  template: '<div />',
+})
+
 const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery, aoaToSheet, sheetAddAoa, saveAs, xlsxWrite } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
@@ -49,6 +67,9 @@ const formatLocalDate = (date: Date): string => {
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+
+const toLocalDateTime = (date: Date): string =>
+  `${formatLocalDate(date)}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
@@ -172,7 +193,7 @@ const mountRouteFilteredUsageView = () => mount(UsageView, {
     AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
     UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
     UserBalanceHistoryModal: true, Pagination: true, Select: true,
-    DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+    DateRangePicker: dateRangePickerStub, Icon: true, TokenUsageTrend: true,
     ModelDistributionChart: true, GroupDistributionChart: true,
     EndpointDistributionChart: true, UserTokenRanking: true,
   } },
@@ -275,6 +296,71 @@ describe('admin UsageView route filters', () => {
   })
 })
 
+describe('admin UsageView native compaction filter', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    list.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getStats.mockReset().mockResolvedValue({
+      total_requests: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_tokens: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      total_actual_cost: 0,
+      average_duration_ms: 0,
+    })
+    getSnapshotV2.mockReset().mockResolvedValue({ trend: [], models: [], groups: [] })
+    getModelStats.mockReset().mockResolvedValue({ models: [] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('propagates the filter to list/stats/model/snapshot requests and clears it on reset', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    list.mockClear()
+    getStats.mockClear()
+    getModelStats.mockClear()
+    getSnapshotV2.mockClear()
+
+    ;(wrapper.vm as any).filters.native_compaction_v2 = true
+    ;(wrapper.vm as any).applyFilters()
+    await flushPromises()
+
+    expect((wrapper.vm as any).breakdownFilters.native_compaction_v2).toBe(true)
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ native_compaction_v2: true }),
+      expect.anything()
+    )
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: true }))
+    expect(getModelStats).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: true }))
+    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: true }))
+
+    list.mockClear()
+    getStats.mockClear()
+    getModelStats.mockClear()
+    getSnapshotV2.mockClear()
+
+    ;(wrapper.vm as any).resetFilters()
+    await flushPromises()
+
+    expect((wrapper.vm as any).filters.native_compaction_v2).toBeNull()
+    expect((wrapper.vm as any).breakdownFilters).not.toHaveProperty('native_compaction_v2')
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ native_compaction_v2: null }),
+      expect.anything()
+    )
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: null }))
+    expect(getModelStats).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: null }))
+    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: null }))
+  })
+})
+
 describe('admin UsageView distribution metric toggles', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -320,7 +406,7 @@ describe('admin UsageView distribution metric toggles', () => {
         AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
         UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
         UserBalanceHistoryModal: true, AuditLogModal: true, Pagination: true, Select: true,
-        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        DateRangePicker: dateRangePickerStub, Icon: true, TokenUsageTrend: true,
         ModelDistributionChart: ModelDistributionChartStub, GroupDistributionChart: GroupDistributionChartStub,
         EndpointDistributionChart: true, UserTokenRanking: true,
       } },
@@ -387,7 +473,7 @@ describe('admin UsageView distribution metric toggles', () => {
         AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
         UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
         UserBalanceHistoryModal: true, Pagination: true, Select: true,
-        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        DateRangePicker: dateRangePickerStub, Icon: true, TokenUsageTrend: true,
         ModelDistributionChart: true, GroupDistributionChart: true,
         EndpointDistributionChart: true, UserTokenRanking: true,
       } },
@@ -430,7 +516,7 @@ describe('admin UsageView distribution metric toggles', () => {
           UserBalanceHistoryModal: true,
           Pagination: true,
           Select: true,
-          DateRangePicker: true,
+          DateRangePicker: dateRangePickerStub,
           Icon: true,
           TokenUsageTrend: true,
           ModelDistributionChart: ModelDistributionChartStub,
@@ -506,7 +592,7 @@ describe('admin UsageView request ID column visibility', () => {
           AuditLogModal: true,
           Pagination: true,
           Select: true,
-          DateRangePicker: true,
+          DateRangePicker: dateRangePickerStub,
           Icon: true,
           TokenUsageTrend: true,
           ModelDistributionChart: true,
@@ -566,7 +652,7 @@ describe('admin UsageView request ID column visibility', () => {
           AuditLogModal: true,
           Pagination: true,
           Select: true,
-          DateRangePicker: true,
+          DateRangePicker: dateRangePickerStub,
           Icon: true,
           TokenUsageTrend: true,
           ModelDistributionChart: true,
@@ -628,7 +714,7 @@ describe('admin UsageView handleUserClick', () => {
           AuditLogModal: true,
           Pagination: true,
           Select: true,
-          DateRangePicker: true,
+          DateRangePicker: dateRangePickerStub,
           Icon: true,
           TokenUsageTrend: true,
           ModelDistributionChart: true,
@@ -678,7 +764,7 @@ describe('admin UsageView errors tab filter forwarding', () => {
         AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
         UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
         UserBalanceHistoryModal: true, AuditLogModal: true, Pagination: true, Select: true,
-        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        DateRangePicker: dateRangePickerStub, Icon: true, TokenUsageTrend: true,
         ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
         UserTokenRanking: true, OpsErrorLogTable: true, OpsErrorDetailModal: true,
       } },
@@ -686,11 +772,11 @@ describe('admin UsageView errors tab filter forwarding', () => {
     vi.advanceTimersByTime(120)
     await flushPromises()
 
-    // 模拟用户在过滤器里选择了模型/账户/分组
+    // 模拟用户在过滤器里选择了模型/账户/分组（本站过滤器已全部改为多选数组）
     const vm = wrapper.vm as any
-    vm.filters.model = 'gpt-5.3-codex'
-    vm.filters.account_id = 7
-    vm.filters.group_id = 3
+    vm.filters.models = ['gpt-5.3-codex']
+    vm.filters.account_ids = [7]
+    vm.filters.group_ids = [3]
     await flushPromises()
 
     // 切换到「错误请求」标签（第二个 tab 按钮）触发 loadAdminErrors
@@ -698,11 +784,12 @@ describe('admin UsageView errors tab filter forwarding', () => {
     await tabs[1].trigger('click')
     await flushPromises()
 
+    // loadAdminErrors 通过 csvQuery 把多选数组拼成 CSV 再传给运维错误日志接口
     expect(listErrorLogs).toHaveBeenCalledWith(expect.objectContaining({
       view: 'all',
-      model: 'gpt-5.3-codex',
-      account_id: 7,
-      group_id: 3,
+      models: 'gpt-5.3-codex',
+      account_ids: '7',
+      group_ids: '3',
     }))
   })
 })
@@ -734,7 +821,7 @@ describe('admin UsageView ranking tab', () => {
         AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
         UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
         UserBalanceHistoryModal: true, Pagination: true, Select: true,
-        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        DateRangePicker: dateRangePickerStub, Icon: true, TokenUsageTrend: true,
         ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
         UserTokenRanking: UserTokenRankingStub, OpsErrorLogTable: true, OpsErrorDetailModal: true,
       } },
@@ -804,9 +891,15 @@ describe('admin UsageView model audit export', () => {
 		const wrapper = mountRouteFilteredUsageView()
 		vi.advanceTimersByTime(120)
 		await flushPromises()
+		;(wrapper.vm as any).filters.native_compaction_v2 = true
 
 		await (wrapper.vm as any).exportToExcel()
 		await flushPromises()
+
+		expect(exportList).toHaveBeenCalledWith(
+			expect.objectContaining({ native_compaction_v2: true }),
+			expect.anything()
+		)
 
 		const headers = aoaToSheet.mock.calls[0][0][0]
 		expect(headers.slice(4, 8)).toEqual([

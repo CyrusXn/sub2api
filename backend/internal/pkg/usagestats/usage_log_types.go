@@ -199,8 +199,10 @@ type UserBreakdownDimension struct {
 	RequestType  *int16 // filter by request_type (non-nil to enable)
 	RequestTypes []int16
 	Stream       *bool // filter by stream flag (non-nil to enable)
-	BillingType  *int8 // filter by billing_type (non-nil to enable)
-	BillingTypes []int8
+	// NativeCompactionV2 来自官方 v0.1.185，本站只做单值筛选，不扩多选。
+	NativeCompactionV2 *bool // filter by native compaction v2 flag (non-nil to enable)
+	BillingType        *int8 // filter by billing_type (non-nil to enable)
+	BillingTypes       []int8
 	// SortBy 指定排序列(空 = 默认按 actual_cost)。合法值由 repo 层 allowlist 校验。
 	SortBy string
 }
@@ -291,10 +293,12 @@ type UsageLogFilters struct {
 	Model                  string
 	Models                 []string
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
-	ModelFilterSource       string
-	RequestType             *int16
-	RequestTypes            []int16
-	Stream                  *bool
+	ModelFilterSource string
+	RequestType       *int16
+	RequestTypes      []int16
+	Stream            *bool
+	// NativeCompactionV2 来自官方 v0.1.185，本站只做单值筛选，不扩多选。
+	NativeCompactionV2      *bool
 	BillingType             *int8
 	BillingTypes            []int8
 	BillingMode             string
