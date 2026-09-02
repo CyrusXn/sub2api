@@ -72,14 +72,15 @@
                 <Icon name="creditCard" size="sm" class="shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <p class="truncate text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userTotalRecharge') }}</p>
               </div>
-              <p data-test="user-total-recharge" class="mt-2 text-xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.lifetime.recharge_amount) }}</p>
+              <p data-test="user-total-recharge" class="mt-2 text-xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.range.recharge_amount) }}</p>
             </div>
             <div class="min-w-0 border-l border-gray-200 pl-4 dark:border-dark-700">
               <div class="flex items-center gap-2">
                 <Icon name="dollar" size="sm" class="shrink-0 text-teal-600 dark:text-teal-400" />
                 <p class="truncate text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userBalanceTotal') }}</p>
               </div>
-              <p data-test="user-balance-total" class="mt-2 text-xl font-bold text-teal-600 dark:text-teal-400">{{ formatMoney(summary?.user_balance_total) }}</p>
+              <p data-test="user-balance-total" class="mt-2 text-xl font-bold text-teal-600 dark:text-teal-400">{{ formatMoney(summary?.range_user_balance_total) }}</p>
+              <p data-test="user-balance-snapshot-hint" class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{{ balanceSnapshotHint }}</p>
             </div>
           </div>
         </article>
@@ -90,7 +91,7 @@
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeTotal') }}</p>
               <p data-test="upstream-recharge-total" class="mt-1 text-2xl font-bold text-red-600 dark:text-red-400">
-                {{ formatMoney(summary?.upstream_recharge_total) }}
+                {{ formatMoney(summary?.range_upstream_recharge_total) }}
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeDescription') }}</p>
             </div>
@@ -102,8 +103,9 @@
             <div class="rounded-lg bg-sky-100 p-2 dark:bg-sky-900/30"><Icon name="database" size="md" class="text-sky-600 dark:text-sky-400" /></div>
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceTotal') }}</p>
-              <p data-test="upstream-balance-total" class="mt-1 text-2xl font-bold text-sky-600 dark:text-sky-400">{{ formatMoney(summary?.upstream_balance_total) }}</p>
+              <p data-test="upstream-balance-total" class="mt-1 text-2xl font-bold text-sky-600 dark:text-sky-400">{{ formatMoney(summary?.range_upstream_balance_total) }}</p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
+              <p data-test="upstream-balance-snapshot-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ balanceSnapshotHint }}</p>
             </div>
           </div>
         </article>
@@ -202,7 +204,7 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { adminAPI } from '@/api/admin'
-import type { DashboardBusinessSummary } from '@/api/admin/dashboard'
+import type { DashboardBusinessDailyPoint, DashboardBusinessSummary } from '@/api/admin/dashboard'
 import Icon from '@/components/icons/Icon.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -212,7 +214,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 
 const { t } = useI18n()
 const app = useAppStore()
-type TrendMetric = 'requests' | 'tokens' | 'consumption'
+type TrendMetric = 'requests' | 'tokens' | 'consumption' | 'profit'
 
 const today = new Date()
 // 经营历史默认从 2026 年 7 月 9 日开始，结束日期仍使用当前日期。
@@ -224,41 +226,80 @@ const summary = ref<DashboardBusinessSummary | null>(null)
 const loading = ref(false)
 const loadError = ref(false)
 const trendMetric = ref<TrendMetric>('requests')
-const trendMetrics: TrendMetric[] = ['requests', 'tokens', 'consumption']
+const trendMetrics: TrendMetric[] = ['requests', 'tokens', 'consumption', 'profit']
 const selectedMetricClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900'
 const normalMetricClass = 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-gray-200'
 
 const daily = computed(() => [...(summary.value?.daily ?? [])].sort((a, b) => a.bucket_date.localeCompare(b.bucket_date)))
-// 上游总消费按充值减余额估算，用于和当前查询范围消费口径计算总收益。
-const upstreamTotalConsumption = computed(() => {
-  if (!summary.value) return null
-  return summary.value.upstream_recharge_total - summary.value.upstream_balance_total
-})
-// 总收益展示“全部账号 / 用户消费”两个口径，消费侧沿用当前经营历史查询范围。
+// 上游总消费改用区间内上游计价成本：余额是即时值，无法还原任意区间的期初余额，
+// 因此原来的“上游总充值 - 上游总余额”无法按日期查询，也和每日收益趋势对不上。
+const upstreamTotalConsumption = computed(() => summary.value?.range.upstream_cost ?? null)
+// 总收益展示“全部账号 / 排除 admin”两个口径，与每日收益趋势的两条线口径一致。
 const totalProfitAllAccounts = computed(() => {
-  if (!summary.value || upstreamTotalConsumption.value == null) return null
-  return summary.value.range.actual_cost - upstreamTotalConsumption.value
+  if (!summary.value) return null
+  return summary.value.range.actual_cost - summary.value.range.upstream_cost
 })
 const totalProfitUsers = computed(() => {
-  if (!summary.value || upstreamTotalConsumption.value == null) return null
-  return summary.value.range.actual_cost_excluding_admin - upstreamTotalConsumption.value
+  if (!summary.value) return null
+  return summary.value.range.actual_cost_excluding_admin - summary.value.range.upstream_cost_excluding_admin
 })
+// 余额快照按日采集，所选区间可能一天都没有采集到，此时提示“暂无快照”而不是展示误导性的 $0.00。
+const balanceSnapshotHint = computed(() => {
+  if (!summary.value) return ''
+  const snapshotDate = summary.value.range_balance_snapshot_date
+  if (!snapshotDate) return t('admin.businessHistory.balanceSnapshotEmpty')
+  return t('admin.businessHistory.balanceSnapshotAsOf', { date: formatDate(snapshotDate) })
+})
+// 消费与收益都用美元刻度，请求数和 Token 各自单独格式化。
+const isMoneyTrend = computed(() => trendMetric.value === 'consumption' || trendMetric.value === 'profit')
+
+const METRIC_COLORS: Record<TrendMetric, string> = {
+  requests: '#2563eb',
+  tokens: '#d97706',
+  consumption: '#059669',
+  profit: '#7c3aed'
+}
+
+// 每日收益 = 当日消费 - 当日上游计价成本，可能为负数，所以趋势图不强制从 0 起。
+function metricValue(point: DashboardBusinessDailyPoint, metric: TrendMetric): number {
+  switch (metric) {
+    case 'requests':
+      return point.total_requests
+    case 'tokens':
+      return point.total_tokens
+    case 'consumption':
+      return point.actual_cost
+    case 'profit':
+      return point.actual_cost - point.upstream_cost
+  }
+}
 
 const chartData = computed(() => {
   if (!daily.value.length) return null
   const metric = trendMetric.value
-  const color = metric === 'requests' ? '#2563eb' : metric === 'tokens' ? '#d97706' : '#059669'
-  const values = daily.value.map((point) => metric === 'requests' ? point.total_requests : metric === 'tokens' ? point.total_tokens : point.actual_cost)
+  const color = METRIC_COLORS[metric]
+  const datasets = [{
+    label: metric === 'profit' ? t('admin.businessHistory.profitLegendAll') : t(`admin.businessHistory.${metric}Trend`),
+    data: daily.value.map((point) => metricValue(point, metric)),
+    borderColor: color,
+    backgroundColor: `${color}18`,
+    fill: metric !== 'profit',
+    tension: 0.25
+  }]
+  if (metric === 'profit') {
+    // 排除 admin 的收益单独一条线，避免管理员体验额度把真实收益抬高。
+    datasets.push({
+      label: t('admin.businessHistory.profitLegendExcludingAdmin'),
+      data: daily.value.map((point) => point.actual_cost_excluding_admin - point.upstream_cost_excluding_admin),
+      borderColor: '#0d9488',
+      backgroundColor: '#0d948818',
+      fill: false,
+      tension: 0.25
+    })
+  }
   return {
     labels: daily.value.map((point) => formatDate(point.bucket_date)),
-    datasets: [{
-      label: t(`admin.businessHistory.${metric}Trend`),
-      data: values,
-      borderColor: color,
-      backgroundColor: `${color}18`,
-      fill: true,
-      tension: 0.25
-    }]
+    datasets
   }
 })
 
@@ -267,21 +308,25 @@ const chartOptions = computed(() => ({
   maintainAspectRatio: false,
   interaction: { intersect: false, mode: 'index' as const },
   plugins: {
-    legend: { display: false },
+    // 收益指标同图两条线，必须显示图例才能区分口径。
+    legend: { display: trendMetric.value === 'profit' },
     tooltip: {
       callbacks: {
-        label: (context: { raw: unknown }) => trendMetric.value === 'consumption'
-          ? formatMoney(Number(context.raw ?? 0))
-          : trendMetric.value === 'tokens'
-            ? formatTokens(Number(context.raw ?? 0))
-            : `${formatNumber(Number(context.raw ?? 0))} ${t('admin.businessHistory.requestUnit')}`
+        label: (context: { raw: unknown; dataset?: { label?: string } }) => {
+          const raw = Number(context.raw ?? 0)
+          if (trendMetric.value === 'profit') return `${context.dataset?.label ?? ''} ${formatMoney(raw)}`
+          if (trendMetric.value === 'consumption') return formatMoney(raw)
+          if (trendMetric.value === 'tokens') return formatTokens(raw)
+          return `${formatNumber(raw)} ${t('admin.businessHistory.requestUnit')}`
+        }
       }
     }
   },
   scales: {
     x: { ticks: { maxTicksLimit: 10 } },
     y: {
-      beginAtZero: true,
+      // 收益可能为负，强制从 0 起会把亏损日压平。
+      beginAtZero: trendMetric.value !== 'profit',
       title: {
         display: true,
         text: trendMetric.value === 'requests'
@@ -291,7 +336,7 @@ const chartOptions = computed(() => ({
             : t('admin.businessHistory.consumptionUnit')
       },
       ticks: {
-        callback: (raw: string | number) => trendMetric.value === 'consumption'
+        callback: (raw: string | number) => isMoneyTrend.value
           ? `$${Number(raw).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
           : trendMetric.value === 'tokens'
             ? formatTokens(Number(raw))

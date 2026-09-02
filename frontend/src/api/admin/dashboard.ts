@@ -79,6 +79,13 @@ export interface DashboardBusinessSummary {
   user_balance_total: number
   // 上游余额按站点取最新最小余额后汇总。
   upstream_balance_total: number
+  // 按充值事件时间过滤后的区间上游充值。
+  range_upstream_recharge_total: number
+  // 区间内最后一天的余额快照；null 表示该区间还没有采集到快照。
+  range_user_balance_total: number | null
+  range_upstream_balance_total: number | null
+  // 上述余额快照对应的自然日。
+  range_balance_snapshot_date: string | null
   lifetime: DashboardBusinessTotals
   range: DashboardBusinessTotals
   daily: DashboardBusinessDailyPoint[]

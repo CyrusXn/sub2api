@@ -540,6 +540,16 @@ export default {
       degraded: 'DEGRADED',
       unavailable: 'UNAVAILABLE'
     },
+    // Platform group titles (channel status cards are grouped by platform)
+    platformGroups: {
+      openai: 'OpenAI',
+      claude: 'Claude',
+      grok: 'Grok',
+      cn: 'Chinese Models',
+      gemini: 'Gemini',
+      antigravity: 'Antigravity',
+      other: 'Others'
+    },
     columns: {
       name: 'Name',
       provider: 'Provider',

@@ -22,12 +22,21 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 		"cache_creation_tokens", "cache_read_tokens", "total_cost", "actual_cost",
 		"account_cost", "admin_actual_cost", "admin_account_cost", "upstream_cost", "admin_upstream_cost",
 	}
+	// 末尾四列是支持按日期查询的区间上游充值与区间余额快照。
+	rangeColumns := []string{
+		"range_upstream_recharge_total", "range_user_balance_total",
+		"range_upstream_balance_total", "range_balance_snapshot_date",
+	}
+	summaryColumns := append([]string{"upstream_recharge_total", "user_balance_total", "upstream_balance_total"}, totalColumns...)
+	summaryColumns = append(summaryColumns, totalColumns...)
+	summaryColumns = append(summaryColumns, rangeColumns...)
 	mock.ExpectQuery(`(?s)SELECT.*balance_center_recharge_events.*FROM dashboard_business_daily`).
 		WithArgs(start, end).
-		WillReturnRows(sqlmock.NewRows(append([]string{"upstream_recharge_total", "user_balance_total", "upstream_balance_total"}, append(totalColumns, totalColumns...)...)).AddRow(
+		WillReturnRows(sqlmock.NewRows(summaryColumns).AddRow(
 			8932.97, 321.45, 678.9,
 			100.0, int64(20), int64(100), int64(50), int64(10), int64(5), 8.0, 12.0, 3.0, 2.0, 0.5, 4.0, 0.7,
 			40.0, int64(8), int64(40), int64(20), int64(4), int64(2), 3.0, 5.0, 1.0, 1.0, 0.2, 2.0, 0.3,
+			1234.56, 300.5, 660.25, time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC),
 		))
 	mock.ExpectQuery(`(?s)FROM dashboard_business_daily`).
 		WithArgs(start, end).
@@ -42,6 +51,13 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 	require.InDelta(t, 8932.97, summary.UpstreamRechargeTotal, 0.0001)
 	require.InDelta(t, 321.45, summary.UserBalanceTotal, 0.0001)
 	require.InDelta(t, 678.9, summary.UpstreamBalanceTotal, 0.0001)
+	require.InDelta(t, 1234.56, summary.RangeUpstreamRechargeTotal, 0.0001)
+	require.NotNil(t, summary.RangeUserBalanceTotal)
+	require.InDelta(t, 300.5, *summary.RangeUserBalanceTotal, 0.0001)
+	require.NotNil(t, summary.RangeUpstreamBalanceTotal)
+	require.InDelta(t, 660.25, *summary.RangeUpstreamBalanceTotal, 0.0001)
+	require.NotNil(t, summary.RangeBalanceSnapshotDate)
+	require.Equal(t, "2026-08-14", summary.RangeBalanceSnapshotDate.Format("2006-01-02"))
 	require.Equal(t, float64(100), summary.Lifetime.RechargeAmount)
 	require.Equal(t, float64(10), summary.Lifetime.ActualCostExcludingAdmin)
 	require.Equal(t, int64(165), summary.Lifetime.TotalTokens)

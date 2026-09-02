@@ -25,6 +25,10 @@ const response = {
   upstream_recharge_total: 8932.97,
   user_balance_total: 321.45,
   upstream_balance_total: 678.9,
+  range_upstream_recharge_total: 1234.56,
+  range_user_balance_total: 300.5,
+  range_upstream_balance_total: 660.25,
+  range_balance_snapshot_date: '2026-08-16T00:00:00Z',
   lifetime: {
     recharge_amount: 500,
     total_requests: 999,
@@ -93,13 +97,15 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$20.00')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$18.00')
-    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('$500.00')
-    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('$321.45')
-    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('$8,932.97')
-    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('$678.90')
-    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('$8,254.07')
-    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$-8,234.07')
-    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$-8,236.07')
+    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('$120.00')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('$300.50')
+    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('$1,234.56')
+    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('$660.25')
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('$8.00')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$12.00')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$11.00')
+    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotAsOf')
+    expect(wrapper.get('[data-test="upstream-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotAsOf')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
   })
@@ -152,6 +158,39 @@ describe('BusinessHistoryView', () => {
 
     const chart = wrapper.findComponent({ name: 'Line' })
     expect((chart.props('data') as any).labels).toEqual(['2026-08-16', '2026-08-17'])
+  })
+
+  it('区间内没有余额快照时展示占位符与暂无快照提示', async () => {
+    getBusinessSummary.mockResolvedValue({
+      ...response,
+      range_user_balance_total: null,
+      range_upstream_balance_total: null,
+      range_balance_snapshot_date: null
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('--')
+    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('--')
+    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotEmpty')
+  })
+
+  it('收益趋势同图展示全部账号与排除 admin 两条线', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const profitButton = wrapper.findAll('button').find((button) => button.text() === 'admin.businessHistory.profitTrend')
+    expect(profitButton).toBeTruthy()
+    await profitButton!.trigger('click')
+
+    const chart = wrapper.findComponent({ name: 'Line' })
+    const datasets = (chart.props('data') as any).datasets
+    expect(datasets).toHaveLength(2)
+    expect(datasets[0].label).toBe('admin.businessHistory.profitLegendAll')
+    expect(datasets[0].data).toEqual([5, 7])
+    expect(datasets[1].label).toBe('admin.businessHistory.profitLegendExcludingAdmin')
+    expect(datasets[1].data).toEqual([4, 7])
+    expect((chart.props('options') as any).plugins.legend.display).toBe(true)
   })
 
   it('没有每日汇总时显示历史暂无统计数据', async () => {

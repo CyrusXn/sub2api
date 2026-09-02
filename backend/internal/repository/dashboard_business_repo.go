@@ -51,7 +51,9 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 					WHERE deleted_at IS NULL
 					  AND extra #>> '{upstream_billing_probe,status}' = 'success'
 					  AND extra #>> '{upstream_billing_probe,balance,amount}' IS NOT NULL
-					  AND extra #>> '{upstream_billing_probe,balance,amount}' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+					  -- 只用单反斜杠：raw string 里写 \\. 会被 Postgres 解释为"匹配一个反斜杠"，
+					  -- 从而把所有带小数点的余额全部过滤掉，这里必须是转义小数点。
+					  AND extra #>> '{upstream_billing_probe,balance,amount}' ~ '^-?[0-9]+(\.[0-9]+)?$'
 					GROUP BY 1
 				) upstream_site_balances
 			), 0),
@@ -80,13 +82,42 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			COALESCE(SUM(admin_actual_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
 			COALESCE(SUM(admin_account_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
 			COALESCE(SUM(upstream_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
-			COALESCE(SUM(admin_upstream_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0)
+			COALESCE(SUM(admin_upstream_cost) FILTER (WHERE bucket_date >= $1::date AND bucket_date < $2::date), 0),
+			COALESCE((
+				SELECT SUM(amount)
+				FROM balance_center_recharge_events
+				WHERE occurred_at >= $1 AND occurred_at < $2
+			), 0),
+			(
+				SELECT b.user_balance_total
+				FROM dashboard_business_daily b
+				WHERE b.bucket_date >= $1::date AND b.bucket_date < $2::date AND b.balance_captured_at IS NOT NULL
+				ORDER BY b.bucket_date DESC
+				LIMIT 1
+			),
+			(
+				SELECT b.upstream_balance_total
+				FROM dashboard_business_daily b
+				WHERE b.bucket_date >= $1::date AND b.bucket_date < $2::date AND b.balance_captured_at IS NOT NULL
+				ORDER BY b.bucket_date DESC
+				LIMIT 1
+			),
+			(
+				SELECT b.bucket_date
+				FROM dashboard_business_daily b
+				WHERE b.bucket_date >= $1::date AND b.bucket_date < $2::date AND b.balance_captured_at IS NOT NULL
+				ORDER BY b.bucket_date DESC
+				LIMIT 1
+			)
 		FROM dashboard_business_daily
 	`
 	result := &service.DashboardBusinessSummary{Daily: make([]service.DashboardBusinessDailyPoint, 0)}
 	var lifetimeAdminActual, lifetimeAdminAccount float64
 	var rangeAdminActual, rangeAdminAccount float64
 	var lifetimeAdminUpstream, rangeAdminUpstream float64
+	// 余额类指标只有每日快照，区间内可能一天都没采集到，用 NULL 承载"暂无数据"。
+	var rangeUserBalance, rangeUpstreamBalance sql.NullFloat64
+	var rangeBalanceSnapshotDate sql.NullTime
 	values := []any{
 		&result.UpstreamRechargeTotal,
 		&result.UserBalanceTotal,
@@ -117,6 +148,10 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 		&rangeAdminAccount,
 		&result.Range.UpstreamCost,
 		&rangeAdminUpstream,
+		&result.RangeUpstreamRechargeTotal,
+		&rangeUserBalance,
+		&rangeUpstreamBalance,
+		&rangeBalanceSnapshotDate,
 	}
 	if err := scanSingleRow(ctx, r.sql, query, []any{start, end}, values...); err != nil {
 		return nil, err
@@ -129,6 +164,12 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	result.Range.ActualCostExcludingAdmin = result.Range.ActualCost - rangeAdminActual
 	result.Range.AccountCostExcludingAdmin = result.Range.AccountCost - rangeAdminAccount
 	result.Range.UpstreamCostExcludingAdmin = result.Range.UpstreamCost - rangeAdminUpstream
+	result.RangeUserBalanceTotal = nullableFloat64(rangeUserBalance)
+	result.RangeUpstreamBalanceTotal = nullableFloat64(rangeUpstreamBalance)
+	if rangeBalanceSnapshotDate.Valid {
+		snapshotDate := rangeBalanceSnapshotDate.Time
+		result.RangeBalanceSnapshotDate = &snapshotDate
+	}
 
 	rows, err := r.sql.QueryContext(ctx, `
 		SELECT

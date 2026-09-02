@@ -155,6 +155,14 @@ func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context,
 	if err := r.upsertBusinessDailyAggregates(ctx, dayStart, dayEnd); err != nil {
 		return err
 	}
+	// 余额类指标（用户总余额、上游总余额）在库里只有当前值、没有历史，
+	// 因此在覆盖到"今天"的聚合周期里顺带把当日余额快照写入永久经营日汇总。
+	// 历史回填区间（dayEnd 不含今天）跳过，避免重复写同一行。
+	if dayEnd.After(truncateToDay(time.Now().In(timezone.Location()))) {
+		if err := r.snapshotBusinessDailyBalances(ctx); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -733,6 +741,60 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 		WHERE dashboard_business_daily.finalized_at IS NULL
 	`
 	_, err := r.sql.ExecContext(ctx, query, start, end, tzName)
+	return err
+}
+
+// snapshotBusinessDailyBalances 把"当前"的用户总余额与上游总余额写入当日经营日汇总行。
+//
+// 余额本身是时点值：users.balance 与 accounts.extra.upstream_billing_probe 都是被覆盖写的最新状态，
+// 数据库里不存在历史。这里每个聚合周期覆盖写当日快照，日切之后当日行不再被更新，
+// 于是每一天都留下了该日最后一次采集到的余额，经营历史即可按日期区间取到期末余额。
+//
+// 两段余额表达式与 dashboard_business_repo.go 的当前值口径保持一致：
+// 用户侧排除管理员与未真实充值账号；上游侧先按站点去重再求和。
+func (r *dashboardAggregationRepository) snapshotBusinessDailyBalances(ctx context.Context) error {
+	tzName := timezone.Name()
+	query := `
+		INSERT INTO dashboard_business_daily (
+			bucket_date,
+			user_balance_total,
+			upstream_balance_total,
+			balance_captured_at
+		)
+		SELECT
+			(NOW() AT TIME ZONE $1)::date,
+			COALESCE((
+				SELECT SUM(balance)
+				FROM users
+				WHERE deleted_at IS NULL
+				  AND LOWER(TRIM(COALESCE(email, ''))) <> 'admin@example.com'
+				  AND total_recharged > 1
+			), 0),
+			COALESCE((
+				SELECT SUM(site_balance)
+				FROM (
+					SELECT
+						COALESCE(NULLIF(TRIM(credentials ->> 'base_url'), ''), NULLIF(TRIM(platform), ''), 'unknown') AS site_key,
+						MIN((extra #>> '{upstream_billing_probe,balance,amount}')::double precision) AS site_balance
+					FROM accounts
+					WHERE deleted_at IS NULL
+					  AND extra #>> '{upstream_billing_probe,status}' = 'success'
+					  AND extra #>> '{upstream_billing_probe,balance,amount}' IS NOT NULL
+					  -- 只用单反斜杠：raw string 里写 \\. 会被 Postgres 解释为"匹配一个反斜杠"，
+					  -- 从而把所有带小数点的余额全部过滤掉，这里必须是转义小数点。
+					  AND extra #>> '{upstream_billing_probe,balance,amount}' ~ '^-?[0-9]+(\.[0-9]+)?$'
+					GROUP BY 1
+				) upstream_site_balances
+			), 0),
+			NOW()
+		ON CONFLICT (bucket_date)
+		DO UPDATE SET
+			user_balance_total = EXCLUDED.user_balance_total,
+			upstream_balance_total = EXCLUDED.upstream_balance_total,
+			balance_captured_at = EXCLUDED.balance_captured_at
+		WHERE dashboard_business_daily.finalized_at IS NULL
+	`
+	_, err := r.sql.ExecContext(ctx, query, tzName)
 	return err
 }
 

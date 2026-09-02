@@ -43,10 +43,18 @@ type DashboardBusinessSummary struct {
 	// UserBalanceTotal 仅统计有效充值用户当前余额，排除 admin 体验额度。
 	UserBalanceTotal float64 `json:"user_balance_total"`
 	// UpstreamBalanceTotal 按上游站点取最新最小余额后汇总。
-	UpstreamBalanceTotal float64                       `json:"upstream_balance_total"`
-	Lifetime             DashboardBusinessTotals       `json:"lifetime"`
-	Range                DashboardBusinessTotals       `json:"range"`
-	Daily                []DashboardBusinessDailyPoint `json:"daily"`
+	UpstreamBalanceTotal float64 `json:"upstream_balance_total"`
+	// RangeUpstreamRechargeTotal 按充值事件发生时间过滤后的区间上游充值。
+	RangeUpstreamRechargeTotal float64 `json:"range_upstream_recharge_total"`
+	// RangeUserBalanceTotal 取区间内最后一天的用户总余额快照；nil 表示该区间尚未采集到快照。
+	RangeUserBalanceTotal *float64 `json:"range_user_balance_total"`
+	// RangeUpstreamBalanceTotal 取区间内最后一天的上游总余额快照；nil 表示该区间尚未采集到快照。
+	RangeUpstreamBalanceTotal *float64 `json:"range_upstream_balance_total"`
+	// RangeBalanceSnapshotDate 上述两个余额快照对应的自然日，便于前端说明"截至某日"。
+	RangeBalanceSnapshotDate *time.Time                    `json:"range_balance_snapshot_date"`
+	Lifetime                 DashboardBusinessTotals       `json:"lifetime"`
+	Range                    DashboardBusinessTotals       `json:"range"`
+	Daily                    []DashboardBusinessDailyPoint `json:"daily"`
 }
 
 type DashboardLowBalanceAccount struct {

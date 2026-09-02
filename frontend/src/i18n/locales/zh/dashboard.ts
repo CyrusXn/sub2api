@@ -545,6 +545,16 @@ export default {
       degraded: 'DEGRADED',
       unavailable: 'UNAVAILABLE'
     },
+    // 平台分组标题（渠道状态页按平台分组展示）
+    platformGroups: {
+      openai: 'OpenAI',
+      claude: 'Claude',
+      grok: 'Grok',
+      cn: '国模',
+      gemini: 'Gemini',
+      antigravity: 'Antigravity',
+      other: '其他'
+    },
     columns: {
       name: '名称',
       provider: '供应商',
