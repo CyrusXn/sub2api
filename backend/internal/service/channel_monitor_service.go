@@ -715,8 +715,13 @@ func (s *ChannelMonitorService) runChecksConcurrent(ctx context.Context, m *Chan
 	for i, model := range models {
 		i, model := i, model
 		eg.Go(func() error {
-			r := runCheckForModel(ctx, m.Provider, m.Endpoint, m.APIKey, model, opts)
+			// 一轮探针内部会按需重试（等价于切换分组内的下一个账号），
+			// 只把最终选定的那条结果落库。
+			round := runProbeRound(ctx, m.Provider, m.Endpoint, m.APIKey, model, opts)
+			r := round.result
 			r.PingLatencyMs = pingMs
+			r.ProbeAttempts = round.attempts
+			r.DegradedAttempts = round.degradedAttempts
 			mu.Lock()
 			results[i] = r
 			mu.Unlock()

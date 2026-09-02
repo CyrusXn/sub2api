@@ -91,6 +91,25 @@ func (t *scheduledMonitor) nextDelay() time.Duration {
 	return d
 }
 
+// nextDelayWithPenalty 在基础间隔上叠加「黄色退避」：本轮产生了几次降级探针，
+// 下一轮就等基础间隔的几倍。
+//
+// 动机是控制费用：黄色意味着上游已经处理并计费，只是慢到不可接受。一轮里把整个分组
+// 的账号都探完就是几次付费请求，若仍按原间隔高频重复会明显放大成本。
+// 绿色（1 次请求即命中）和红色（连接层失败，不计费）都不触发退避，倍数保持 1。
+func (t *scheduledMonitor) nextDelayWithPenalty(degradedAttempts int) time.Duration {
+	base := t.nextDelay()
+	if degradedAttempts <= 1 {
+		return base
+	}
+	d := base * time.Duration(degradedAttempts)
+	// 溢出兜底：极端脏数据下 base × 次数可能翻成负数。
+	if d < base || d > monitorProbeBackoffMaxDelay {
+		return monitorProbeBackoffMaxDelay
+	}
+	return d
+}
+
 // NewChannelMonitorRunner 构造调度器。Start 在 wire 中调用一次。
 // settingService 用于在每次 fire 前读取功能开关；传 nil 时视为总是启用（兼容测试）。
 //
@@ -296,43 +315,66 @@ func (r *ChannelMonitorRunner) Stop() {
 func (r *ChannelMonitorRunner) runScheduled(ctx context.Context, task *scheduledMonitor) {
 	defer r.wg.Done()
 
-	r.fire(ctx, task)
-
-	timer := time.NewTimer(task.nextDelay())
+	timer := time.NewTimer(r.fireAndWait(ctx, task))
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			r.fire(ctx, task)
-			timer.Reset(task.nextDelay())
+			timer.Reset(r.fireAndWait(ctx, task))
 		}
+	}
+}
+
+// fireAndWait 提交一次检测，等本轮真正跑完后再返回下一轮应等待的时长。
+//
+// 必须等待而不是「提交即排期」：黄色退避倍数只有等本轮结果出来才知道。
+// 若沿用提交后立刻 Reset 的写法，退避会晚一轮生效，中间那一轮又会把整组账号的
+// 付费请求打满一遍，正好是用户要避免的开销。
+// 跳过本次（开关关闭 / 重复在飞 / 池满）时按基础间隔排下一轮。
+func (r *ChannelMonitorRunner) fireAndWait(ctx context.Context, task *scheduledMonitor) time.Duration {
+	done, ok := r.fire(ctx, task)
+	if !ok {
+		return task.nextDelay()
+	}
+	select {
+	case <-ctx.Done():
+		return task.nextDelay()
+	case degradedAttempts := <-done:
+		return task.nextDelayWithPenalty(degradedAttempts)
 	}
 }
 
 // fire 提交一次检测到 worker 池。功能开关关闭时跳过本次（不取消任务，
 // 重新启用时立即恢复）；池满或重复在飞时也跳过。
-func (r *ChannelMonitorRunner) fire(ctx context.Context, task *scheduledMonitor) {
+//
+// 提交成功时返回一个容量 1 的通道：本轮跑完会写入「降级探针次数」，供调用方计算退避。
+// 跳过时返回 ok=false。
+func (r *ChannelMonitorRunner) fire(ctx context.Context, task *scheduledMonitor) (<-chan int, bool) {
 	if r.settingService != nil {
 		rt := r.settingService.GetChannelMonitorRuntime(ctx)
 		if !rt.ActiveProbesAllowed() {
-			return
+			return nil, false
 		}
 	}
 	if !r.tryAcquireInFlight(task.id) {
 		slog.Debug("channel_monitor: skip already in-flight",
 			"monitor_id", task.id, "name", task.name)
-		return
+		return nil, false
 	}
+	// 带缓冲：调用方可能因 ctx 取消提前返回，缓冲避免 worker 协程写入时永久阻塞。
+	done := make(chan int, 1)
 	if _, ok := r.pool.TrySubmit(func() {
-		r.runOne(task.id, task.name)
+		done <- r.runOne(task.id, task.name)
 	}); !ok {
 		// 池满：丢弃本次检测，但必须释放已占用的 inFlight 槽，否则该 monitor 会被永久卡住。
 		r.releaseInFlight(task.id)
 		slog.Warn("channel_monitor: worker pool full, skip submission",
 			"monitor_id", task.id, "name", task.name)
+		return nil, false
 	}
+	return done, true
 }
 
 // tryAcquireInFlight 原子地占用 monitor 的 in-flight 槽。
@@ -354,10 +396,12 @@ func (r *ChannelMonitorRunner) releaseInFlight(id int64) {
 	r.inFlightMu.Unlock()
 }
 
-// runOne 执行单个监控的检测。普通错误只记日志；API key 解密失败会撤销任务。
+// runOne 执行单个监控的检测，返回本轮所有模型累计的降级（黄色）探针次数，
+// 由调用方换算成下一轮的退避时长。普通错误只记日志；API key 解密失败会撤销任务。
 // 任务结束时（含 panic recover）必须释放 in-flight 槽。
-func (r *ChannelMonitorRunner) runOne(id int64, name string) {
-	ctx, cancel := context.WithTimeout(context.Background(), monitorRequestTimeout+monitorPingTimeout+monitorRunOneBuffer)
+func (r *ChannelMonitorRunner) runOne(id int64, name string) (degradedAttempts int) {
+	// 预算按「一轮最多 N 次 9.9s 探针 + 一次 ping」计算，多模型是并发跑的不累加。
+	ctx, cancel := context.WithTimeout(context.Background(), monitorRoundTimeout)
 	defer cancel()
 
 	defer r.releaseInFlight(id)
@@ -369,11 +413,23 @@ func (r *ChannelMonitorRunner) runOne(id int64, name string) {
 		}
 	}()
 
-	if _, err := r.svc.RunCheck(ctx, id); err != nil {
+	results, err := r.svc.RunCheck(ctx, id)
+	if err != nil {
 		if errors.Is(err, ErrChannelMonitorAPIKeyDecryptFailed) {
 			r.Unschedule(id)
 		}
 		slog.Warn("channel_monitor: run check failed",
 			"monitor_id", id, "name", name, "error", err)
+		return 0
 	}
+	for _, res := range results {
+		if res != nil {
+			degradedAttempts += res.DegradedAttempts
+		}
+	}
+	if degradedAttempts > 1 {
+		slog.Info("channel_monitor: degraded probes detected, backing off next round",
+			"monitor_id", id, "name", name, "degraded_attempts", degradedAttempts)
+	}
+	return degradedAttempts
 }

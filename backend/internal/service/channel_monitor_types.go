@@ -142,6 +142,11 @@ type CheckResult struct {
 	CheckedAt     time.Time
 	// Quota 配额模式附带快照（quota 模式唯一数据；quota_probe 挂在主模型行）。
 	Quota *domain.MonitorQuotaSnapshot
+	// ProbeAttempts 本轮为拿到这条结果实际发起的探针次数（1 次对应上游分组内 1 个账号）。
+	// DegradedAttempts 其中判定为降级（黄色）的次数，即真正产生扣费又不可接受的慢请求数。
+	// 两者都只在内存里流转，供调度器计算下一轮等待时长，不写入历史表。
+	ProbeAttempts    int
+	DegradedAttempts int
 }
 
 // UserMonitorView 用户只读视图：监控概览（含主模型最近状态 + 7d 可用率 + 附加模型最近状态）。
