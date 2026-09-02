@@ -156,7 +156,7 @@
       <section class="space-y-3">
         <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.businessHistory.dailyDetails') }}</h2>
         <div class="overflow-x-auto border-y border-gray-200 dark:border-dark-700">
-          <table class="w-full min-w-[1100px] text-sm">
+          <table class="w-full min-w-[1350px] text-sm">
             <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-dark-800 dark:text-gray-400">
               <tr>
                 <th class="px-3 py-2">{{ t('admin.businessHistory.date') }}</th>
@@ -166,6 +166,8 @@
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.excludingAdmin') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.upstreamConsumption') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.upstreamExcludingAdmin') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.profitLegendAll') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.profitLegendExcludingAdmin') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.effectiveRecharge') }}</th>
               </tr>
             </thead>
@@ -178,9 +180,11 @@
                 <td class="px-3 py-3 text-right text-emerald-600 dark:text-emerald-400">{{ formatMoney(point.actual_cost_excluding_admin) }}</td>
                 <td class="px-3 py-3 text-right text-red-600 dark:text-red-400">{{ formatMoney(point.upstream_cost) }}</td>
                 <td class="px-3 py-3 text-right text-red-600 dark:text-red-400">{{ formatMoney(point.upstream_cost_excluding_admin) }}</td>
+                <td class="px-3 py-3 text-right font-medium" :class="profitClass(dailyProfit(point, false))" data-test="history-daily-profit-all">{{ formatMoney(dailyProfit(point, false)) }}</td>
+                <td class="px-3 py-3 text-right font-medium" :class="profitClass(dailyProfit(point, true))" data-test="history-daily-profit-users">{{ formatMoney(dailyProfit(point, true)) }}</td>
                 <td class="px-3 py-3 text-right">{{ formatMoney(point.recharge_amount) }}</td>
               </tr>
-              <tr v-if="!loading && daily.length === 0"><td colspan="8" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.noData') }}</td></tr>
+              <tr v-if="!loading && daily.length === 0"><td colspan="10" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.noData') }}</td></tr>
             </tbody>
           </table>
         </div>
@@ -261,6 +265,18 @@ const METRIC_COLORS: Record<TrendMetric, string> = {
 }
 
 // 每日收益 = 当日消费 - 当日上游计价成本，可能为负数，所以趋势图不强制从 0 起。
+// 抽成单一函数：每日明细表格、趋势主线和排除 admin 副线共用同一口径，避免三处算法漂移。
+function dailyProfit(point: DashboardBusinessDailyPoint, excludingAdmin: boolean): number {
+  return excludingAdmin
+    ? point.actual_cost_excluding_admin - point.upstream_cost_excluding_admin
+    : point.actual_cost - point.upstream_cost
+}
+
+// 亏损日标红、盈利日标绿，和上方汇总卡片的语义保持一致。
+function profitClass(value: number): string {
+  return value < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+}
+
 function metricValue(point: DashboardBusinessDailyPoint, metric: TrendMetric): number {
   switch (metric) {
     case 'requests':
@@ -270,7 +286,7 @@ function metricValue(point: DashboardBusinessDailyPoint, metric: TrendMetric): n
     case 'consumption':
       return point.actual_cost
     case 'profit':
-      return point.actual_cost - point.upstream_cost
+      return dailyProfit(point, false)
   }
 }
 
@@ -290,7 +306,7 @@ const chartData = computed(() => {
     // 排除 admin 的收益单独一条线，避免管理员体验额度把真实收益抬高。
     datasets.push({
       label: t('admin.businessHistory.profitLegendExcludingAdmin'),
-      data: daily.value.map((point) => point.actual_cost_excluding_admin - point.upstream_cost_excluding_admin),
+      data: daily.value.map((point) => dailyProfit(point, true)),
       borderColor: '#0d9488',
       backgroundColor: '#0d948818',
       fill: false,
