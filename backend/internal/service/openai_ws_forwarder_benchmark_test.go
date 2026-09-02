@@ -112,7 +112,7 @@ func BenchmarkReplaceOpenAIWSMessageModel_NoMatchFastPath(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		benchmarkOpenAIWSBytesSink = replaceOpenAIWSMessageModel(event, "gpt-5.1", "custom-model")
+		benchmarkOpenAIWSBytesSink = replaceOpenAIWSMessageModel(event, "custom-model")
 	}
 }
 
@@ -122,6 +122,6 @@ func BenchmarkReplaceOpenAIWSMessageModel_DualReplace(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		benchmarkOpenAIWSBytesSink = replaceOpenAIWSMessageModel(event, "gpt-5.1", "custom-model")
+		benchmarkOpenAIWSBytesSink = replaceOpenAIWSMessageModel(event, "custom-model")
 	}
 }

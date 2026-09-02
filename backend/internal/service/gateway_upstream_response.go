@@ -831,7 +831,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		flusher.Flush()
 	}
 
-	needModelReplace := originalModel != mappedModel
+	// 只要下游带了模型名就统一回显，不再要求本站存在模型映射，
+	// 否则上游返回的日期快照/变体模型名会透传给下游并被判定为模型不一致。
+	needModelReplace := strings.TrimSpace(originalModel) != ""
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
 	sawTerminalEvent := false
 	useNoopDeltaKeepalive := c != nil && c.Request != nil && shouldUseClaudeCodeNoopDeltaKeepalive(c.GetHeader("User-Agent"))
@@ -961,11 +963,18 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		if needModelReplace {
+			// 强制回显下游请求的模型，无论上游声明的是映射模型还是它的日期快照/变体。
+			// message.model 与顶层 model 都要改：下游审计两处都会读，
+			// 只改一处仍会被判定为「模型不一致」。
 			if msg, ok := event["message"].(map[string]any); ok {
-				if model, ok := msg["model"].(string); ok && model == mappedModel {
+				if model, ok := msg["model"].(string); ok && model != originalModel {
 					msg["model"] = originalModel
 					eventChanged = true
 				}
+			}
+			if model, ok := event["model"].(string); ok && model != originalModel {
+				event["model"] = originalModel
+				eventChanged = true
 			}
 		}
 
@@ -1434,9 +1443,9 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		}
 	}
 
-	// 如果有模型映射，替换响应中的model字段
-	if originalModel != mappedModel {
-		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
+	// 把 model 字段回显成下游请求的模型
+	if strings.TrimSpace(originalModel) != "" {
+		body = s.replaceModelInResponseBody(body, originalModel)
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -1456,17 +1465,10 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	return &response.Usage, nil
 }
 
-// replaceModelInResponseBody 替换响应体中的model字段
-// 使用 gjson/sjson 精确替换，避免全量 JSON 反序列化
-func (s *GatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
-	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
-		newBody, err := sjson.SetBytes(body, "model", toModel)
-		if err != nil {
-			return body
-		}
-		return newBody
-	}
-	return body
+// replaceModelInResponseBody 把出站响应体里的 model 字段强制回显为下游请求的模型，
+// 避免上游返回的日期快照或变体模型名透传后被下游判定为「模型不一致」。
+func (s *GatewayService) replaceModelInResponseBody(body []byte, clientModel string) []byte {
+	return forceDownstreamModelInJSONBytes(body, clientModel)
 }
 
 // reconcileCachedTokens 兼容 Kimi 等上游：

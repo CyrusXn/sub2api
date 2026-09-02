@@ -687,16 +687,10 @@ func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
 	return trimmedBase + trimmedSuffix
 }
 
-func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
-	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
-	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
-		newBody, err := sjson.SetBytes(body, "model", toModel)
-		if err != nil {
-			return body
-		}
-		return newBody
-	}
-	return body
+// replaceModelInResponseBody 把出站响应体里的 model 字段强制回显为下游请求的模型，
+// 避免上游返回的日期快照或变体模型名透传后被下游判定为「模型不一致」。
+func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, clientModel string) []byte {
+	return forceDownstreamModelInJSONBytes(body, clientModel)
 }
 
 func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any, requestedModel string) (value string, present bool) {

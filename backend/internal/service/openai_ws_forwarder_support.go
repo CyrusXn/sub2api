@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 func (s *OpenAIGatewayService) isOpenAIWSGeneratePrewarmEnabled() bool {
@@ -386,34 +384,10 @@ func isOpenAIWSTokenEvent(eventType string) bool {
 	return false
 }
 
-func replaceOpenAIWSMessageModel(message []byte, fromModel, toModel string) []byte {
-	if len(message) == 0 {
-		return message
-	}
-	if strings.TrimSpace(fromModel) == "" || strings.TrimSpace(toModel) == "" || fromModel == toModel {
-		return message
-	}
-	if !bytes.Contains(message, []byte(`"model"`)) || !bytes.Contains(message, []byte(fromModel)) {
-		return message
-	}
-	modelValues := gjson.GetManyBytes(message, "model", "response.model")
-	replaceModel := modelValues[0].Exists() && modelValues[0].Str == fromModel
-	replaceResponseModel := modelValues[1].Exists() && modelValues[1].Str == fromModel
-	if !replaceModel && !replaceResponseModel {
-		return message
-	}
-	updated := message
-	if replaceModel {
-		if next, err := sjson.SetBytes(updated, "model", toModel); err == nil {
-			updated = next
-		}
-	}
-	if replaceResponseModel {
-		if next, err := sjson.SetBytes(updated, "response.model", toModel); err == nil {
-			updated = next
-		}
-	}
-	return updated
+// replaceOpenAIWSMessageModel 把 WebSocket 事件里的 model 字段强制回显为下游请求的
+// 模型，避免上游返回的日期快照或变体模型名透传后被下游判定为「模型不一致」。
+func replaceOpenAIWSMessageModel(message []byte, clientModel string) []byte {
+	return forceDownstreamModelInJSONBytes(message, clientModel)
 }
 
 func populateOpenAIUsageFromResponseJSON(body []byte, usage *OpenAIUsage) {
