@@ -72,3 +72,107 @@ export const MONITOR_STATUSES: readonly MonitorStatus[] = [
 
 /** Default polling interval (seconds) for new monitors. */
 export const DEFAULT_INTERVAL_SECONDS = 60
+
+/**
+ * 渠道状态页平台分组键。
+ *
+ * 用户要求渠道状态按平台分组展示，固定顺序为 OpenAI → Claude → Grok → 国模，
+ * 其余平台依次追加。这里用固定枚举 + 固定顺序表达，渲染时过滤掉空分组，
+ * 避免引入动态分组注册表（YAGNI）。
+ */
+export type MonitorGroupKey =
+  | 'openai'
+  | 'claude'
+  | 'grok'
+  | 'cn'
+  | 'gemini'
+  | 'antigravity'
+  | 'other'
+
+/** 分组展示顺序；空分组不渲染。 */
+export const MONITOR_GROUP_ORDER: readonly MonitorGroupKey[] = [
+  'openai',
+  'claude',
+  'grok',
+  'cn',
+  'gemini',
+  'antigravity',
+  'other',
+]
+
+/** provider → 分组的静态映射；未列出的 provider 落入 other。 */
+const PROVIDER_GROUP_MAP: Readonly<Record<string, MonitorGroupKey>> = {
+  [PROVIDER_OPENAI]: 'openai',
+  [PROVIDER_ANTHROPIC]: 'claude',
+  [PROVIDER_GROK]: 'grok',
+  [PROVIDER_KIMI]: 'cn',
+  [PROVIDER_ZHIPU]: 'cn',
+  [PROVIDER_DEEPSEEK]: 'cn',
+  [PROVIDER_GEMINI]: 'gemini',
+  [PROVIDER_ANTIGRAVITY]: 'antigravity',
+}
+
+/**
+ * 国模关键词兜底表。
+ *
+ * 部分国产模型渠道走的是 OpenAI 兼容协议，后台 provider 只能填 openai
+ * （改成 kimi/zhipu 会改变探活路径并丢失 responses 模式），但实际提供的是国产模型，
+ * 例如渠道名「国模」、主模型 `k3`。这里用渠道名 + 主模型名关键词把它们纠正到国模分组。
+ */
+const CN_MODEL_KEYWORDS: readonly string[] = [
+  '国模',
+  '国产',
+  'kimi',
+  'moonshot',
+  'k2',
+  'k3',
+  'glm',
+  'zhipu',
+  'chatglm',
+  '智谱',
+  'deepseek',
+  'qwen',
+  'tongyi',
+  '通义',
+  'doubao',
+  '豆包',
+  'hunyuan',
+  '混元',
+  'ernie',
+  '文心',
+  'minimax',
+  '星火',
+  'spark',
+]
+
+/** 渠道分组判定所需的最小字段集合（避免依赖完整的 UserMonitorView 类型）。 */
+export interface MonitorGroupInput {
+  provider?: string | null
+  name?: string | null
+  primary_model?: string | null
+}
+
+/** 文本是否命中国模关键词（大小写不敏感）。 */
+function matchesCNKeyword(text: string): boolean {
+  const lower = text.toLowerCase()
+  return CN_MODEL_KEYWORDS.some(keyword => lower.includes(keyword.toLowerCase()))
+}
+
+/**
+ * 判定渠道所属平台分组。
+ *
+ * 先按 provider 静态映射；只有当结果是 openai 或 other（即 provider 本身无法区分国产模型）时，
+ * 才用渠道名 / 主模型名做国模关键词兜底，避免误把 anthropic、grok 等明确平台的渠道搬走。
+ */
+export function providerGroupOf(item: MonitorGroupInput): MonitorGroupKey {
+  const provider = (item.provider || '').trim().toLowerCase()
+  const group = PROVIDER_GROUP_MAP[provider] ?? 'other'
+  if (group !== 'openai' && group !== 'other') {
+    return group
+  }
+  const hint = `${item.name || ''} ${item.primary_model || ''}`.trim()
+  if (hint && matchesCNKeyword(hint)) {
+    return 'cn'
+  }
+  return group
+}

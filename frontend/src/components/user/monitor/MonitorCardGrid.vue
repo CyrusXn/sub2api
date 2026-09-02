@@ -31,27 +31,45 @@
       :description="t('channelStatus.empty.description')"
     />
 
-    <div
-      v-else
-      class="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
-    >
-      <MonitorCard
-        v-for="item in items"
-        :key="item.id"
-        :item="item"
-        :window="window"
-        :availability-value="resolveAvailability(item)"
-        :countdown-seconds="countdownSeconds"
-        @click="emit('cardClick', item)"
-      />
+    <!-- 按平台分组展示：固定顺序 OpenAI → Claude → Grok → 国模 → 其余平台 -->
+    <div v-else class="space-y-8">
+      <section v-for="group in groupedItems" :key="group.key">
+        <div class="flex items-center gap-2 mb-3">
+          <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">
+            {{ t(`channelStatus.platformGroups.${group.key}`) }}
+          </h3>
+          <span
+            class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300"
+          >
+            {{ group.items.length }}
+          </span>
+        </div>
+        <div class="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <MonitorCard
+            v-for="item in group.items"
+            :key="item.id"
+            :item="item"
+            :window="window"
+            :availability-value="resolveAvailability(item)"
+            :countdown-seconds="countdownSeconds"
+            @click="emit('cardClick', item)"
+          />
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { UserMonitorView, UserMonitorDetail } from '@/api/channelMonitor'
 import EmptyState from '@/components/common/EmptyState.vue'
+import {
+  MONITOR_GROUP_ORDER,
+  providerGroupOf,
+  type MonitorGroupKey,
+} from '@/constants/channelMonitor'
 import MonitorCard from './MonitorCard.vue'
 
 const props = defineProps<{
@@ -67,6 +85,28 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/**
+ * 按平台分组后的渠道列表。
+ *
+ * 分组顺序固定（MONITOR_GROUP_ORDER），组内保持后端返回的原有顺序；
+ * 空分组直接过滤掉，避免出现只有标题没有卡片的空段。
+ */
+const groupedItems = computed<{ key: MonitorGroupKey; items: UserMonitorView[] }[]>(() => {
+  const buckets = new Map<MonitorGroupKey, UserMonitorView[]>()
+  for (const item of props.items) {
+    const key = providerGroupOf(item)
+    const bucket = buckets.get(key)
+    if (bucket) {
+      bucket.push(item)
+    } else {
+      buckets.set(key, [item])
+    }
+  }
+  return MONITOR_GROUP_ORDER
+    .filter(key => (buckets.get(key)?.length ?? 0) > 0)
+    .map(key => ({ key, items: buckets.get(key) as UserMonitorView[] }))
+})
 
 function resolveAvailability(item: UserMonitorView): number | null {
   if (props.window === '7d') {
