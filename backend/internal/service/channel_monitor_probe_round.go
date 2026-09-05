@@ -18,14 +18,13 @@ type probeRoundOutcome struct {
 
 // runProbeRound 对单个模型执行一轮探针，最多 monitorProbeMaxAttemptsPerRound 次尝试。
 //
-// 每次尝试都套一层 monitorProbeAttemptTimeout（9.9s）硬上限：卡在 10s 之前中止，
-// 这一次不作为最终结果记录，直接重试——因为上游网关每次请求都会在分组内重新选账号，
-// 重试等价于「切换到分组内的下一个账号」。
+// 每次尝试都套一层 monitorProbeAttemptTimeout（45s）硬上限：10s 内成功为绿色，
+// 10s 至 45s 内成功为黄色，45s 超时或请求失败为红色；失败后继续切换分组内账号重试。
 //
 // 记录规则：
 //   - 命中绿色（operational）→ 立刻记录并结束本轮，剩余账号不再探针；
-//   - 所有尝试都没绿色但出现过黄色（9.9s 未返回 / 成功但超阈值）→ 记录最快的那条黄色；
-//   - 连黄色都没有（全是硬失败：HTTP 错误、连接失败、challenge 校验不通过）→ 记录第一条红色。
+//   - 所有尝试都没绿色但出现过黄色（10s 至 45s 内成功）→ 记录最快的那条黄色；
+//   - 连黄色都没有（HTTP/网络/challenge 失败或超过 45s 超时）→ 记录第一条红色。
 func runProbeRound(ctx context.Context, provider, endpoint, apiKey, model string, opts *CheckOptions) probeRoundOutcome {
 	out := probeRoundOutcome{}
 	var bestDegraded, firstFailure *CheckResult
@@ -58,24 +57,14 @@ func runProbeRound(ctx context.Context, provider, endpoint, apiKey, model string
 	return out
 }
 
-// runProbeAttempt 执行一次带 9.9s 硬上限的探针尝试。
+// runProbeAttempt 执行一次带 45s 硬上限的探针尝试。
 //
-// 上限到点而请求仍未返回时，把结果归类为 degraded（黄色）而不是 error（红色）：
-// 上游其实已经开始处理并会产生费用，只是慢到不可接受，语义上属于「降级」。
-// 仅当父 ctx 仍然健康时才这样归类——父 ctx 已取消说明是进程退出或整轮预算耗尽，
-// 那种超时不能算在渠道头上。
+// 超过 45s 仍未返回时保留 error（红色），因为这已经超过单次探针允许的最大等待时间。
 func runProbeAttempt(ctx context.Context, provider, endpoint, apiKey, model string, opts *CheckOptions, attempt int) *CheckResult {
 	attemptCtx, cancel := context.WithTimeout(ctx, monitorProbeAttemptTimeout)
 	defer cancel()
 
-	res := runCheckForModel(attemptCtx, provider, endpoint, apiKey, model, opts)
-	if res.Status == MonitorStatusError && attemptCtx.Err() != nil && ctx.Err() == nil {
-		res.Status = MonitorStatusDegraded
-		res.Message = truncateMessage(fmt.Sprintf(
-			"第 %d 次探针超过 %dms 未返回，已切换分组内下一个账号",
-			attempt, int(monitorProbeAttemptTimeout/time.Millisecond)))
-	}
-	return res
+	return runCheckForModel(attemptCtx, provider, endpoint, apiKey, model, opts)
 }
 
 // summarizeProbeRound 在本轮没拿到绿色时挑选最终落库的记录，并补上中文汇总说明。
@@ -86,7 +75,7 @@ func summarizeProbeRound(model string, attempts, degradedAttempts int, bestDegra
 	case bestDegraded != nil:
 		bestDegraded.Message = truncateMessage(fmt.Sprintf(
 			"分组内探针 %d 次均未拿到 %dms 内的正常响应（其中 %d 次降级）",
-			attempts, int(monitorProbeAttemptTimeout/time.Millisecond), degradedAttempts))
+			attempts, int(monitorDegradedThreshold/time.Millisecond), degradedAttempts))
 		return bestDegraded
 	case firstFailure != nil:
 		return firstFailure

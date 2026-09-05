@@ -328,6 +328,21 @@ const AIImageIcon = {
     )
 }
 
+const CubeIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'm21 7.5-9-5.25L3 7.5m18 0v9L12 21.75 3 16.5v-9m18 0-9 5.25M3 7.5l9 5.25m0 0v9'
+        })
+      ]
+    )
+}
+
 const ChartIcon = {
   render: () =>
     h(
@@ -723,6 +738,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/ai-image', label: t('nav.aiImage'), icon: AIImageIcon },
+    { path: '/model-factory', label: t('nav.modelFactory'), icon: CubeIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
@@ -883,6 +899,10 @@ function closeMobile() {
 }
 
 function handleMenuItemClick(itemPath: string) {
+  if (itemPath === '/model-factory' && route.path === itemPath) {
+    // 当前菜单再次点击也触发刷新，确保用户看到最新账号模型集合。
+    window.dispatchEvent(new CustomEvent('model-factory-refresh'))
+  }
   if (mobileOpen.value) {
     setTimeout(() => {
       appStore.setMobileOpen(false)

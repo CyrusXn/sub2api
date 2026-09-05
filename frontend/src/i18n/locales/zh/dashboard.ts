@@ -680,6 +680,10 @@ export default {
       backToDashboard: '回到后台'
     }
   },
+  modelFactory: {
+    title: '模型工厂',
+    description: '查看各分组当前所有账号综合支持的模型。',
+  },
 
   affiliate: {
     title: '邀请返利',

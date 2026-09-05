@@ -400,7 +400,7 @@ func (r *ChannelMonitorRunner) releaseInFlight(id int64) {
 // 由调用方换算成下一轮的退避时长。普通错误只记日志；API key 解密失败会撤销任务。
 // 任务结束时（含 panic recover）必须释放 in-flight 槽。
 func (r *ChannelMonitorRunner) runOne(id int64, name string) (degradedAttempts int) {
-	// 预算按「一轮最多 N 次 9.9s 探针 + 一次 ping」计算，多模型是并发跑的不累加。
+	// 预算按「一轮最多 N 次 45s 探针 + 一次 ping」计算，多模型是并发跑的不累加。
 	ctx, cancel := context.WithTimeout(context.Background(), monitorRoundTimeout)
 	defer cancel()
 

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// probeScript 按尝试次序描述 fake 上游的行为：sleep 超过单次上限即触发「切换下一个账号」。
+// probeScript 按尝试次序描述 fake 上游的行为：sleep 超过单次上限即触发红色失败并切换账号。
 type probeScript struct {
 	sleep  time.Duration
 	status int // 0 = 200
@@ -82,8 +82,8 @@ func TestRunProbeRound_GreenOnFirstAttemptStopsRound(t *testing.T) {
 
 func TestRunProbeRound_SlowAttemptsThenGreen(t *testing.T) {
 	endpoint, calls := scriptedUpstream(t, 200*time.Millisecond, 5, []probeScript{
-		{sleep: time.Second}, // 超上限 → 黄色，换下一个账号
-		{sleep: time.Second}, // 超上限 → 黄色，换下一个账号
+		{sleep: time.Second}, // 超上限 → 红色，换下一个账号
+		{sleep: time.Second}, // 超上限 → 红色，换下一个账号
 		{},                   // 秒回 → 绿色，本轮结束
 	})
 
@@ -95,30 +95,30 @@ func TestRunProbeRound_SlowAttemptsThenGreen(t *testing.T) {
 	if out.attempts != 3 {
 		t.Fatalf("应在第 3 次命中绿色，实际 attempts=%d", out.attempts)
 	}
-	if out.degradedAttempts != 2 {
-		t.Fatalf("前两次超时应计入降级次数，实际 degraded=%d", out.degradedAttempts)
+	if out.degradedAttempts != 0 {
+		t.Fatalf("前两次超时不应计入降级次数，实际 degraded=%d", out.degradedAttempts)
 	}
 	if got := atomic.LoadInt64(calls); got != 3 {
 		t.Fatalf("期望 3 次上游请求，实际 %d 次", got)
 	}
 }
 
-func TestRunProbeRound_AllSlowRecordsDegraded(t *testing.T) {
+func TestRunProbeRound_AllSlowRecordsError(t *testing.T) {
 	endpoint, calls := scriptedUpstream(t, 150*time.Millisecond, 4, []probeScript{{sleep: time.Second}})
 
 	out := runRound(t, endpoint)
 
-	if out.result.Status != MonitorStatusDegraded {
-		t.Fatalf("全部超过单次上限应记录黄色，实际 status=%s message=%q", out.result.Status, out.result.Message)
+	if out.result.Status != MonitorStatusError {
+		t.Fatalf("全部超过单次上限应记录红色，实际 status=%s message=%q", out.result.Status, out.result.Message)
 	}
-	if out.attempts != 4 || out.degradedAttempts != 4 {
+	if out.attempts != 4 || out.degradedAttempts != 0 {
 		t.Fatalf("应把 4 个账号全部探完，实际 attempts=%d degraded=%d", out.attempts, out.degradedAttempts)
 	}
 	if got := atomic.LoadInt64(calls); got != 4 {
 		t.Fatalf("期望 4 次上游请求，实际 %d 次", got)
 	}
 	if out.result.LatencyMs == nil {
-		t.Fatal("黄色记录应带延迟，便于前端展示慢到什么程度")
+		t.Fatal("红色记录应带延迟，便于前端展示超时耗时")
 	}
 }
 
@@ -143,7 +143,7 @@ func TestRunProbeRound_AllHardFailuresRecordsRed(t *testing.T) {
 	}
 }
 
-func TestRunProbeRound_DegradedWinsOverFailure(t *testing.T) {
+func TestRunProbeRound_FailureWinsWhenTimeoutExceedsLimit(t *testing.T) {
 	endpoint, _ := scriptedUpstream(t, 150*time.Millisecond, 3, []probeScript{
 		{status: http.StatusInternalServerError},
 		{sleep: time.Second},
@@ -152,12 +152,12 @@ func TestRunProbeRound_DegradedWinsOverFailure(t *testing.T) {
 
 	out := runRound(t, endpoint)
 
-	// 黄色优先于红色：能慢着返回比完全不可用更接近可用，与可用率口径（绿+黄计可用）一致。
-	if out.result.Status != MonitorStatusDegraded {
-		t.Fatalf("出现过黄色时应优先记录黄色，实际 status=%s", out.result.Status)
+	// 超过单次 45s 上限的请求属于失败，不应再被归类为黄色。
+	if out.result.Status != MonitorStatusError {
+		t.Fatalf("超时与硬失败混合时应记录红色，实际 status=%s", out.result.Status)
 	}
-	if out.degradedAttempts != 1 {
-		t.Fatalf("只有 1 次超时应记 1 次降级，实际 degraded=%d", out.degradedAttempts)
+	if out.degradedAttempts != 0 {
+		t.Fatalf("超时不应记降级，实际 degraded=%d", out.degradedAttempts)
 	}
 }
 

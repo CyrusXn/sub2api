@@ -176,6 +176,7 @@ export default {
     channels: 'Channels',
     availableChannels: 'Available Channels',
     modelPlaza: 'Model Plaza',
+    modelFactory: 'Model Factory',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     mockAccounts: 'Mock Accounts',

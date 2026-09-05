@@ -676,6 +676,10 @@ export default {
       backToDashboard: 'Back to Console'
     }
   },
+  modelFactory: {
+    title: 'Model Factory',
+    description: 'See the models currently supported across all accounts in each group.',
+  },
 
   affiliate: {
     title: 'Affiliate Rebates',

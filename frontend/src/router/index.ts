@@ -176,6 +176,17 @@ const routes: RouteRecordRaw[] = [
       titleKey: 'modelPlaza.title'
     }
   },
+  {
+    path: '/model-factory',
+    name: 'ModelFactory',
+    component: () => import('@/views/ModelFactoryView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Model Factory',
+      titleKey: 'modelFactory.title'
+    }
+  },
 
   // ==================== User Routes ====================
   {

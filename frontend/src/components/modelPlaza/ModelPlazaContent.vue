@@ -2,8 +2,8 @@
   <div class="space-y-5">
     <!-- 页头(独立形态下展示标题;后台形态 AppHeader 已有页面标题) -->
     <div v-if="!embedded">
-      <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-3xl">{{ t('modelPlaza.title') }}</h1>
-      <p class="mt-1.5 text-sm text-gray-500 dark:text-dark-400">{{ t('modelPlaza.description') }}</p>
+      <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-3xl">{{ t(titleKey) }}</h1>
+      <p class="mt-1.5 text-sm text-gray-500 dark:text-dark-400">{{ t(descriptionKey) }}</p>
     </div>
 
     <!-- 全局价格说明(管理员配置,Markdown) -->
@@ -79,11 +79,16 @@ const props = defineProps<{
   error?: boolean
   /** 后台内嵌形态(AppLayout 内):隐藏页头。 */
   embedded?: boolean
+  /** 允许模型工厂复用广场组件而只替换页面标题。 */
+  titleKey?: string
+  descriptionKey?: string
 }>()
 
 const { t } = useI18n()
 const authStore = useAuthStore()
 const isAuthenticated = computed(() => authStore.isAuthenticated)
+const titleKey = computed(() => props.titleKey ?? 'modelPlaza.title')
+const descriptionKey = computed(() => props.descriptionKey ?? 'modelPlaza.description')
 
 const selectedPlatform = ref<string>('all')
 const selectedGroupId = ref<number | 'all'>('all')

@@ -13,9 +13,8 @@ const (
 	monitorRequestTimeout = 45 * time.Second
 	// monitorPingTimeout HEAD 请求 endpoint origin 的超时。
 	monitorPingTimeout = 8 * time.Second
-	// monitorDegradedThreshold 主请求成功但耗时超过该阈值视为 degraded。
-	// 与 monitorProbeAttemptTimeout 对齐：单次探针在 9.9s 就会被硬中止，
-	// 因此「在上限内成功返回」一律算绿色，真正的黄色由超时中止路径产生。
+	// monitorDegradedThreshold 主请求成功但耗时达到该阈值视为 degraded。
+	// 10 秒以内返回为绿色，10 秒至单次探针上限之间返回为黄色。
 	monitorDegradedThreshold = 10 * time.Second
 	// monitorProbeBackoffMaxDelay 黄色退避后下一轮等待时长的上限。
 	// 防止「大间隔 × 多次黄色」把监控推迟到实际不可用的程度。
@@ -223,19 +222,18 @@ var (
 	)
 )
 
-// 探针轮次参数。定义为 var 而非 const：单元测试需要把 9.9s 的上限压到毫秒级，
+// 探针轮次参数。定义为 var 而非 const：单元测试需要把 45s 的上限压到毫秒级，
 // 否则一个「全部账号都超时」的用例要跑近一分钟。生产代码不修改这些值。
 var (
 	// monitorProbeAttemptTimeout 单次探针尝试的硬上限。
-	// 卡在 10s 之前（9.9s）中止：本次不作为最终结果记录，直接让上游网关换到
-	// 分组内的下一个账号重试，避免把一个慢账号的耗时记成整条渠道的状态。
-	monitorProbeAttemptTimeout = 9900 * time.Millisecond
+	// 45s 内成功返回才有机会按耗时记为绿色或黄色；超过 45s 的请求直接记为红色失败。
+	monitorProbeAttemptTimeout = 45 * time.Second
 	// monitorProbeMaxAttemptsPerRound 单个模型一轮最多发起的探针次数。
 	// 一次尝试对应上游网关分组内的一个账号；命中绿色即提前结束，
 	// 全部用尽仍无绿色时才落黄色/红色记录。
 	monitorProbeMaxAttemptsPerRound = 6
 	// monitorRoundTimeout runOne 单轮检测的总预算：
-	// 一个模型最多 monitorProbeMaxAttemptsPerRound 次尝试（各 9.9s）+ 一次 ping + 缓冲。
+	// 一个模型最多 monitorProbeMaxAttemptsPerRound 次尝试（各 45s）+ 一次 ping + 缓冲。
 	// 多模型是并发跑的，所以不按模型数累加。
 	monitorRoundTimeout = time.Duration(monitorProbeMaxAttemptsPerRound)*monitorProbeAttemptTimeout +
 		monitorPingTimeout + monitorRunOneBuffer
