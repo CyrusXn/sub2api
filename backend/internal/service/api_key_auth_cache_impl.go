@@ -14,9 +14,8 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-// v22 以官方版本号为基线：除官方分组免费 Fast 开关外，本站快照还携带管理附加倍率、
-// 利润控制和搜索/音频/视频模型计费字段，升级后强制刷新全部旧快照。
-const apiKeyAuthSnapshotVersion = 22
+// v24 同时覆盖官方分组模型清单与本站倍率/利润/搜索音视频计费快照，避免升级后复用旧结构。
+const apiKeyAuthSnapshotVersion = 24
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -427,6 +426,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
 			ModelsListConfig:                apiKey.Group.ModelsListConfig,
+			CodexModelsManifestConfig:       apiKey.Group.CodexModelsManifestConfig,
 			RPMLimit:                        apiKey.Group.RPMLimit,
 			MaxReasoningEffort:              apiKey.Group.MaxReasoningEffort,
 			MaxReasoningEffortOverLimit:     apiKey.Group.MaxReasoningEffortOverLimit,
@@ -531,6 +531,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
 			ModelsListConfig:                snapshot.Group.ModelsListConfig,
+			CodexModelsManifestConfig:       snapshot.Group.CodexModelsManifestConfig,
 			RPMLimit:                        snapshot.Group.RPMLimit,
 			MaxReasoningEffort:              snapshot.Group.MaxReasoningEffort,
 			MaxReasoningEffortOverLimit:     snapshot.Group.MaxReasoningEffortOverLimit,

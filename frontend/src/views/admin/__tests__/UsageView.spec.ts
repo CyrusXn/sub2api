@@ -625,7 +625,7 @@ describe('admin UsageView request ID column visibility', () => {
     )
     expect(localStorage.setItem).toHaveBeenCalledWith(
       'usage-hidden-columns-version',
-      'upstream-snapshots-hidden-by-default',
+      'upstream-snapshots-hidden-by-default-v2',
     )
 
     expect(wrapper.findAll('button').some((button) => button.text() === 'Upstream original cost')).toBe(true)

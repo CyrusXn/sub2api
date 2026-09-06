@@ -674,7 +674,7 @@ const exportToExcel = async () => {
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
       t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.upstreamTotalTokens'), t('usage.upstreamCost'), t('usage.upstreamOriginalCost'), t('usage.upstreamGroupRate'), t('usage.profit'), t('usage.accountBilled'),
       t('usage.firstToken'), t('usage.duration'),
-      t('admin.usage.requestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
+      t('admin.usage.requestId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
@@ -696,7 +696,7 @@ const exportToExcel = async () => {
         getUpstreamCost(log).toFixed(6), log.upstream_cost_base?.toFixed(6) || '', log.upstream_group_rate_multiplier?.toPrecision(4) || '',
         (log.actual_cost - getUpstreamCost(log)).toFixed(6),
         getUpstreamCost(log).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
-        log.request_id || '', log.user_agent || '', log.ip_address || ''
+        log.request_id || '', log.upstream_request_id || '', log.user_agent || '', log.ip_address || ''
       ])
       if (rows.length) {
         XLSX.utils.sheet_add_aoa(ws, rows, { origin: -1 })
@@ -721,7 +721,7 @@ const ALWAYS_VISIBLE = ['user', 'created_at']
 const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'request_id', 'user_agent', 'upstream_cost_base', 'upstream_group_rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'usage-hidden-columns'
 const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
-const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-snapshots-hidden-by-default'
+const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-snapshots-hidden-by-default-v2'
 
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
@@ -742,6 +742,7 @@ const allColumns = computed(() => [
   { key: 'latency', label: t('usage.latency'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
+  { key: 'upstream_request_id', label: t('admin.usage.upstreamRequestId'), sortable: false },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
   { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
 ])
@@ -853,6 +854,7 @@ const loadSavedColumns = () => {
         hiddenColumns.add('request_id')
         hiddenColumns.add('upstream_cost_base')
         hiddenColumns.add('upstream_group_rate_multiplier')
+        hiddenColumns.add('upstream_request_id')
         localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
         localStorage.setItem(HIDDEN_COLUMNS_VERSION_KEY, HIDDEN_COLUMNS_CURRENT_VERSION)
       }

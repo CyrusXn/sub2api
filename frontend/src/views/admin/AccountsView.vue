@@ -318,7 +318,7 @@
             />
           </template>
           <template #cell-groups="{ row }">
-            <AccountGroupsCell :groups="row.groups" :max-display="8" />
+            <AccountGroupsCell :groups="accountGroupsForRow(row)" :max-display="8" />
           </template>
           <template #header-usage="{ column }">
             <div class="flex items-center">
@@ -485,7 +485,7 @@
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @delete="handleDelete" @duplicate="handleDuplicateAccount" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @delete="handleDelete" @test="handleTest" @duplicate="handleDuplicateAccount" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -563,7 +563,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
-import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -571,6 +571,12 @@ const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
+const groupsByID = computed(() => new Map(groups.value.map(group => [group.id, group])))
+// 紧凑账号列表只返回 group_ids，展示时按目录映射出分组名称。
+const accountGroupsForRow = (account: Pick<AccountListItem, 'group_ids'>): AdminGroup[] => {
+  const groupIDs = account.group_ids ?? []
+  return groupIDs.map(id => groupsByID.value.get(id)).filter((group): group is AdminGroup => Boolean(group))
+}
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
@@ -1182,7 +1188,7 @@ const {
   debouncedReload: baseDebouncedReload,
   handlePageChange: baseHandlePageChange,
   handlePageSizeChange: baseHandlePageSizeChange
-} = useTableLoader<Account, any>({
+} = useTableLoader<AccountListItem, any>({
   fetchFn: adminAPI.accounts.list,
   initialParams: {
     platform: '',
@@ -1191,6 +1197,7 @@ const {
     privacy_mode: '',
     group: '',
     search: '',
+    lite: '1',
     include_scheduler_score: shouldIncludeSchedulerScore() ? '1' : '0',
     sort_by: sortState.sort_by,
     concurrency_metric: sortState.sort_by === 'concurrency' ? concurrencyMetric.value : undefined,
@@ -1252,7 +1259,6 @@ const resetAutoRefreshCache = () => {
   upstreamBillingRateETag.value = null
 }
 
-const isFirstLoad = ref(true)
 const isReadOnlyPreview = () => import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
 let activeUpstreamBillingProbeAccountID: number | null = null
 let upstreamBillingProbeWorker: Promise<boolean> | null = null
@@ -1400,14 +1406,8 @@ const load = async (options: AccountLoadOptions = {}) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
-  if (isFirstLoad.value) {
-    requestParams.lite = '1'
-  }
+  requestParams.lite = '1'
   await baseLoad()
-  if (isFirstLoad.value) {
-    isFirstLoad.value = false
-    delete requestParams.lite
-  }
   if (options.refreshTodayStats !== false) await refreshTodayStatsBatch()
   if (options.refreshUpstreamBilling !== false) {
     void refreshVisibleUpstreamBillingRates({ force: options.forceUpstreamBillingRefresh === true })
@@ -2094,7 +2094,26 @@ const cols = computed(() =>
   )
 )
 
-const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
+const accountDetailLoading = new Set<number>()
+const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise<Account | null> => {
+  if (accountDetailLoading.has(account.id)) return null
+  accountDetailLoading.add(account.id)
+  try {
+    return await adminAPI.accounts.getById(account.id)
+  } catch (error) {
+    console.error('Failed to load account details:', error)
+    appStore.showError(error instanceof Error ? error.message : extractApiErrorMessage(error, t('common.error')))
+    return null
+  } finally {
+    accountDetailLoading.delete(account.id)
+  }
+}
+const handleEdit = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  edAcc.value = account
+  showEdit.value = true
+}
 const openMenu = (a: Account, e: MouseEvent) => {
   menu.acc = a
 
@@ -2630,8 +2649,18 @@ const accountExportStepUp = useStepUp()
 const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
-const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }
-const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
+const handleTest = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  testingAcc.value = account
+  showTest.value = true
+}
+const handleViewStats = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  statsAcc.value = account
+  showStats.value = true
+}
 const handleSchedule = async (a: Account) => {
   scheduleAcc.value = a
   scheduleModelOptions.value = []

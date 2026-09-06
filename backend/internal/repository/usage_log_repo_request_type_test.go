@@ -1229,6 +1229,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			sql.NullFloat64{},
 			sql.NullFloat64{},
+			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
 			false, // native_compaction_v2
 			now,
@@ -1310,6 +1311,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullFloat64{}, // upstream_cost_base
 			sql.NullFloat64{}, // upstream_group_rate_multiplier
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
 			now,
@@ -1374,6 +1376,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullFloat64{}, // upstream_cost_base
 			sql.NullFloat64{}, // upstream_group_rate_multiplier
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			true,              // native_compaction_v2
 			now,
@@ -1439,6 +1442,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullFloat64{}, // upstream_cost_base
 			sql.NullFloat64{}, // upstream_group_rate_multiplier
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
 			now,
