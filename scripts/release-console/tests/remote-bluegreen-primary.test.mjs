@@ -17,7 +17,7 @@ test('缺失时可恢复唯一 primary 后台节点', () => {
   assert.match(script, /^PRIMARY_NAME=sub2api$/m)
   assert.match(
     script,
-    /ensure_primary_slot\(\)[\s\S]*?--name "\$PRIMARY_NAME"[\s\S]*?-e DEPLOYMENT_ROLE=primary/,
+    /ensure_primary_slot\(\)[\s\S]*?docker compose up -d --no-deps --force-recreate --pull never sub2api/,
   )
   assert.match(script, /^  ensure-primary\)$/m)
 })

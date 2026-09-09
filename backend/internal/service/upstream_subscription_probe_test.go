@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -49,6 +50,52 @@ func TestSubscriptionQuotaObservation(t *testing.T) {
 			o, reason := parseBalanceCenterSubscriptionObservation([]byte(`{"code":0,"data":[{"id":9,"expires_at":"2026-09-28T16:27:44+08:00",`+tc.fields+`}]}`), 9, now)
 			require.Empty(t, reason)
 			require.Equal(t, tc.want, o.RemainingUSD)
+		})
+	}
+}
+
+type subscriptionAssetRepoStub struct {
+	balanceCenterServiceRepositoryStub
+	messages []AlertEmailOutboxInput
+}
+
+func (r *subscriptionAssetRepoStub) ListBalanceCenterAssets(context.Context) ([]BalanceCenterAsset, error) {
+	return nil, nil
+}
+func (r *subscriptionAssetRepoStub) SaveBalanceCenterAsset(context.Context, *BalanceCenterAsset) error {
+	return nil
+}
+func (r *subscriptionAssetRepoStub) SaveBalanceCenterSubscriptionObservation(_ context.Context, _, _ int64, _ BalanceCenterSubscriptionObservation, _ time.Time, _ string, m []AlertEmailOutboxInput) error {
+	r.messages = m
+	return nil
+}
+
+// 检测边界、开关和未知状态直接验证入队行为，防止资产余额误入告警。
+func TestFishSubscriptionAlertThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		remaining       *float64
+		enabled, reason string
+		want            int
+	}{
+		{"低于阈值", float64Ptr(0.99), "true", "", 1},
+		{"等于阈值", float64Ptr(1), "true", "", 0},
+		{"缺失额度", nil, "true", "", 0},
+		{"关闭邮件", float64Ptr(0), "false", "", 0},
+		{"同步失败", float64Ptr(0), "true", "查询失败", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &subscriptionAssetRepoStub{}
+			settings := &balanceCenterSettingRepoStub{values: map[string]string{SettingKeyBalanceCenterEmailEnabled: tc.enabled, SettingKeyOpsEmailNotificationConfig: `{"alert":{"recipients":["ops@example.com"]}}`}}
+			svc := NewBalanceCenterService(r, settings)
+			now := time.Now()
+			require.NoError(t, svc.SaveSubscriptionObservation(t.Context(), 13, 944, BalanceCenterSubscriptionObservation{ExpiresAt: now.Add(time.Hour), RemainingUSD: tc.remaining, WindowKey: "944:window:expiry"}, now, tc.reason))
+			require.Len(t, r.messages, tc.want)
+			if tc.want > 0 {
+				require.Equal(t, now, r.messages[0].AvailableAt)
+				require.Contains(t, r.messages[0].BodyHTML, "手动重置")
+				require.Equal(t, "balance_center_subscription", r.messages[0].SourceType)
+			}
 		})
 	}
 }

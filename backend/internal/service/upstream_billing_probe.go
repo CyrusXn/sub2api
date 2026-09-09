@@ -1813,6 +1813,10 @@ func (s *UpstreamBillingProbeService) newWebAccountRequest(
 		return nil, func() {}, err
 	}
 	req.Header.Set("Accept", "application/json")
+	// 鱼鱼会拒绝默认脚本标识；已通过其网页客户端标识验证登录与订阅查询。
+	if strings.EqualFold(parsed.Hostname(), "sub.anzhiyu.com") {
+		req.Header.Set("User-Agent", "Mozilla/5.0")
+	}
 	req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI)))
 	return req, cancel, nil
 }

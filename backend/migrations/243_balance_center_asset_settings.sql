@@ -12,12 +12,11 @@ CREATE TABLE balance_center_asset_settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 用户确认停用站点余额为零；仅初始化有充值历史且不存在未停用账号的站点。
+-- 用户确认停用站点余额为零；包含没有充值记录的停用站点，避免遗漏后导致总额未知。
 -- 现存手工配置优先，启用中的站点查不到余额时仍保持未知。
 INSERT INTO balance_center_asset_settings(site_id, manual_balance)
 SELECT s.id, 0 FROM balance_center_sites s
-WHERE EXISTS(SELECT 1 FROM balance_center_recharge_events e WHERE e.site_id=s.id)
-AND NOT EXISTS(SELECT 1 FROM accounts a WHERE a.deleted_at IS NULL AND a.status <> 'disabled'
+WHERE NOT EXISTS(SELECT 1 FROM accounts a WHERE a.deleted_at IS NULL AND a.status <> 'disabled'
     AND LOWER(REGEXP_REPLACE(SPLIT_PART(REGEXP_REPLACE(TRIM(a.credentials->>'base_url'), '^https?://','','i'),'/',1), ':[0-9]+$',''))=s.normalized_domain)
 ON CONFLICT(site_id) DO NOTHING;
 

@@ -74,11 +74,26 @@ ensure_primary_slot() {
     fi
     active=$(active_port || true)
     [[ "$active" != "$BLUE_PORT" ]] || { log '拒绝替换正在承接流量的 primary'; return 1; }
-    # 仅替换未承接流量且角色错误或不健康的后台节点。
-    docker rm -f "$PRIMARY_NAME" >/dev/null
+    # 流量已由健康 API 槽位承接；后台节点统一通过 Compose 更新，保留项目运行配置。
   fi
   ensure_runtime_env
-  docker run -d --name "$PRIMARY_NAME" --restart unless-stopped --network sub2api_sub2api-network -v sub2api_sub2api_data:/app/data -p "127.0.0.1:$BLUE_PORT:8080" --security-opt no-new-privileges:true --ulimit nofile=100000:100000 --env-file "$RUNTIME_ENV" -e DEPLOYMENT_ROLE=primary "$image" >/dev/null
+  local compose_tmp
+  compose_tmp=$(mktemp "$APP_DIR/.compose-candidate.XXXXXX")
+  python3 - "$APP_DIR/docker-compose.yml" "$compose_tmp" "$image" <<'PYCOMPOSE'
+import re,sys
+src,out,image=sys.argv[1:]
+text=open(src).read()
+match=re.search(r'(?m)^  sub2api:\s*$',text)
+if not match: raise SystemExit('未找到 sub2api Compose 服务')
+end=re.search(r'(?m)^  [a-zA-Z0-9_-]+:\s*$',text[match.end():])
+stop=match.end()+end.start() if end else len(text)
+section,n=re.subn(r'(?m)^(    image:) .+$',lambda m:m[1]+' '+image,text[match.start():stop])
+if n!=1: raise SystemExit('sub2api 镜像配置不唯一')
+with open(out,'w') as f:f.write(text[:match.start()]+section+text[stop:])
+PYCOMPOSE
+  chmod --reference="$APP_DIR/docker-compose.yml" "$compose_tmp"
+  mv "$compose_tmp" "$APP_DIR/docker-compose.yml"
+  (cd "$APP_DIR" && docker compose up -d --no-deps --force-recreate --pull never sub2api)
   for _ in $(seq 1 24); do
     if health "$BLUE_PORT"; then
       log "唯一 primary 后台节点已恢复: $PRIMARY_NAME:$BLUE_PORT"
@@ -128,7 +143,7 @@ backup_release() {
   printf '%s\n' "$rollback_tag" > "$backup_dir/rollback-image.txt"
   docker exec sub2api-postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-acl' > "$backup_dir/postgres.dump"
   chmod 600 "$backup_dir"/postgres.dump "$backup_dir"/*.txt
-  (cd "$backup_dir" && sha256sum postgres.dump running-image.txt rollback-image.txt > SHA256SUMS)
+  (cd "$backup_dir" && sha256sum postgres.dump running-image.txt rollback-image.txt docker-compose.yml api.xnkaixin.eu.cc.conf relay-api.xnkaixin.eu.cc.conf nginx.conf > SHA256SUMS; if [[ -f .env ]]; then sha256sum .env >> SHA256SUMS; fi)
   log "发布备份已完成: $backup_dir"
 }
 
