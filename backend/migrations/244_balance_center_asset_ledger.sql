@@ -21,7 +21,8 @@ WITH account_values AS (
     FROM accounts WHERE deleted_at IS NULL
 ), site_values AS (
     SELECT s.id AS site_id,
-        COALESCE(a.manual_balance, (SELECT MIN(v.balance) FROM account_values v WHERE v.normalized_domain = s.normalized_domain)) AS cash_balance,
+        -- 用户确认查不到现金余额按零核算；多个账号取有效探测最小值，后续成功会自动替换零值。
+        COALESCE(a.manual_balance, (SELECT MIN(v.balance) FROM account_values v WHERE v.normalized_domain = s.normalized_domain), 0::numeric) AS cash_balance,
         CASE WHEN COALESCE(a.subscription_price, 0) = 0 THEN 0::numeric
             -- 自动订阅查询失败可能漏掉重置扣天，旧到期时间不能伪装成准确资产。
             WHEN a.subscription_auto_sync AND (a.subscription_synced_at IS NULL

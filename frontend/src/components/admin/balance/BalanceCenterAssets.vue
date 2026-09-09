@@ -4,7 +4,7 @@
       <span>现金余额与订阅资产（人民币）</span><span>{{ opened ? '收起' : '管理余额 / 订阅' }}</span>
     </button>
     <div v-if="opened" class="mt-4 space-y-4">
-      <p class="text-xs text-gray-500">上游显示金额按 1:1 记人民币。订阅费用已在充值中记录，此处仅计算剩余价值，不新增充值。自动余额超过 24 小时视为未知；已停用站点请核实后手工填 0。</p>
+      <p class="text-xs text-gray-500">上游显示金额按 1:1 记人民币。订阅费用已在充值中记录，此处仅计算剩余价值，不新增充值。自动现金余额取 24 小时内有效探测的最小值；查不到时按 0 统计，恢复探测后自动更新。已停用站点按 0 记账。</p>
       <p v-if="loading" class="text-sm">正在读取资产…</p>
       <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
       <div class="overflow-x-auto">

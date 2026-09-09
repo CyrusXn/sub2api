@@ -27,8 +27,4 @@ SELECT id, 944, 808, 30, '2026-09-28T16:27:44.861586+08:00'::timestamptz, TRUE
 FROM balance_center_sites WHERE normalized_domain='sub.anzhiyu.com'
 ON CONFLICT(site_id) DO NOTHING;
 
--- 用户逐项确认 pite 与自建 Grok 无预付余额，使用人工账面零值，不依赖失败探测。
-INSERT INTO balance_center_asset_settings(site_id, manual_balance)
-SELECT id, 0 FROM balance_center_sites
-WHERE normalized_domain IN ('ai.pite.chat', 'grok-api.xnkaixin.eu.cc')
-ON CONFLICT(site_id) DO NOTHING;
+-- 启用站点不固定写入人工零值；查不到时由资产视图按零核算，恢复探测后自动更新。
