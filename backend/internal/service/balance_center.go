@@ -328,6 +328,9 @@ func (s *BalanceCenterService) GetSettings(ctx context.Context) (*BalanceCenterS
 	settings.Enabled = parseBalanceCenterBool(values[SettingKeyBalanceCenterEnabled])
 	settings.EventProbeEnabled = parseBalanceCenterBool(values[SettingKeyBalanceCenterEventProbeEnabled])
 	settings.EmailEnabled = parseBalanceCenterBool(values[SettingKeyBalanceCenterEmailEnabled])
+	// 页面只暴露邮件开关；开启邮件即需要采集，兼容历史隐藏总开关关闭的配置。
+	settings.Enabled = settings.Enabled || settings.EmailEnabled
+	settings.EventProbeEnabled = settings.EventProbeEnabled || settings.EmailEnabled
 	if value, parseErr := strconv.ParseFloat(values[SettingKeyBalanceCenterLowBalanceThreshold], 64); parseErr == nil && value >= 0 && !math.IsInf(value, 0) && !math.IsNaN(value) {
 		settings.LowBalanceThreshold = value
 	}

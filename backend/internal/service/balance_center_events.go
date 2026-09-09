@@ -57,11 +57,13 @@ func (s *BalanceCenterEventService) RefreshSettings(ctx context.Context) error {
 	values, err := s.settingRepo.GetMultiple(ctx, []string{
 		SettingKeyBalanceCenterEnabled,
 		SettingKeyBalanceCenterEventProbeEnabled,
+		SettingKeyBalanceCenterEmailEnabled,
 	})
 	if err != nil {
 		return err
 	}
-	s.enabled.Store(parseBalanceCenterBool(values[SettingKeyBalanceCenterEnabled]) && parseBalanceCenterBool(values[SettingKeyBalanceCenterEventProbeEnabled]))
+	// 邮件告警需要活跃账号余额采集，与设置读取保持同一启用条件。
+	s.enabled.Store(parseBalanceCenterBool(values[SettingKeyBalanceCenterEmailEnabled]) || (parseBalanceCenterBool(values[SettingKeyBalanceCenterEnabled]) && parseBalanceCenterBool(values[SettingKeyBalanceCenterEventProbeEnabled])))
 	return nil
 }
 

@@ -129,7 +129,37 @@ export interface BalanceCenterListParams {
 
 const base = '/admin/balance-center'
 
+// 订阅是已入账充值的剩余资产，保存配置不会追加充值。
+export interface BalanceCenterAsset {
+  site_id: number
+  site_name: string
+  domain: string
+  account_id: number | null
+  manual_balance: number | null
+  cash_balance: number | null
+  subscription_id: number | null
+  subscription_price: number
+  subscription_days: number
+  subscription_expires_at: string | null
+  subscription_auto_sync: boolean
+  subscription_synced_at: string | null
+  subscription_sync_error: string
+  subscription_daily_remaining_usd?: number | null
+  subscription_balance: number | null
+  total_balance: number | null
+  balance_known: boolean
+}
+
 export const balanceCenterAPI = {
+  async assets() {
+    return (await apiClient.get<BalanceCenterAsset[]>(`${base}/assets`)).data
+  },
+  async saveAsset(asset: BalanceCenterAsset) {
+    await apiClient.put(`${base}/assets/${asset.site_id}`, asset)
+  },
+  async syncSubscription(siteID: number) {
+    return (await apiClient.post<BalanceCenterAsset>(`${base}/assets/${siteID}/sync`)).data
+  },
   async overview() {
     return (await apiClient.get<BalanceCenterOverviewItem[]>(`${base}/overview`)).data
   },

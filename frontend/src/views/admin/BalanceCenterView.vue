@@ -31,6 +31,9 @@
         </div>
       </section>
 
+      <!-- 现金校正和订阅资产独立维护，原充值录入流程保持不变。 -->
+      <BalanceCenterAssets />
+
       <nav class="border-b border-gray-200 dark:border-dark-700" role="tablist" :aria-label="t('admin.balanceCenter.title')">
         <div class="flex gap-6">
           <button
@@ -202,6 +205,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import BalanceCenterAssets from '@/components/admin/balance/BalanceCenterAssets.vue'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 
@@ -316,7 +320,10 @@ async function saveAlertSettings() {
   settingsSaving.value = true
   try {
     const updated = await adminAPI.balanceCenter.updateSettings({
+      // 邮件开启时同步打开采集，避免只保存可见开关而保留隐藏禁用状态。
       ...alertSettings,
+      enabled: alertSettings.enabled || alertSettings.email_enabled,
+      event_probe_enabled: alertSettings.event_probe_enabled || alertSettings.email_enabled,
       low_balance_threshold: threshold
     })
     Object.assign(alertSettings, updated)

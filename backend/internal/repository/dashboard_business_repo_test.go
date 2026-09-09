@@ -31,7 +31,7 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 	summaryColumns = append(summaryColumns, totalColumns...)
 	summaryColumns = append(summaryColumns, rangeColumns...)
 	mock.ExpectQuery(`(?s)SELECT.*balance_center_recharge_events.*FROM dashboard_business_daily`).
-		WithArgs(start, end).
+		WithArgs("2026-08-01", "2026-08-15", start, end).
 		WillReturnRows(sqlmock.NewRows(summaryColumns).AddRow(
 			8932.97, 321.45, 678.9,
 			100.0, int64(20), int64(100), int64(50), int64(10), int64(5), 8.0, 12.0, 3.0, 2.0, 0.5, 4.0, 0.7,
@@ -39,11 +39,16 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 			1234.56, 300.5, 660.25, time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC),
 		))
 	mock.ExpectQuery(`(?s)FROM dashboard_business_daily`).
-		WithArgs(start, end).
+		WithArgs("2026-08-01", "2026-08-15").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"bucket_date", "recharge_amount", "total_requests", "total_tokens",
 			"actual_cost", "actual_cost_excluding_admin", "account_cost", "account_cost_excluding_admin", "upstream_cost", "upstream_cost_excluding_admin",
 		}).AddRow(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC), 10.0, int64(2), int64(30), 2.0, 1.5, 0.6, 0.5, 0.8, 0.6))
+	// 新实账只读取版本化余额边界，旧日汇总仍保留为估算参考。
+	mock.ExpectQuery(`(?s)WITH current_assets.*dashboard_business_asset_daily`).
+		WithArgs("2026-08-01", "2026-08-14", sqlmock.AnyArg(), start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"cash", "subscription", "total", "known", "unknown", "opening", "closing", "opened_at", "closed_at", "same_sites", "exact_boundaries"}).
+			AddRow(600.0, 78.9, 678.9, 678.9, 0, 700.0, 660.25, start, end, true, true))
 	mock.ExpectClose()
 
 	summary, err := repo.GetDashboardBusinessSummary(context.Background(), start, end)
@@ -66,6 +71,9 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 	require.Equal(t, float64(3.3), summary.Lifetime.UpstreamCostExcludingAdmin)
 	require.Equal(t, float64(2), summary.Range.UpstreamCost)
 	require.Equal(t, float64(1.7), summary.Range.UpstreamCostExcludingAdmin)
+	require.Equal(t, "available", summary.Ledger.RangeStatus)
+	require.InDelta(t, 1274.31, *summary.Ledger.RangeConsumption, 0.0001)
+	require.InDelta(t, -1269.31, *summary.Ledger.RangeProfit, 0.0001)
 	require.Len(t, summary.Daily, 1)
 	require.Equal(t, float64(0.8), summary.Daily[0].UpstreamCost)
 	require.Equal(t, float64(0.6), summary.Daily[0].UpstreamCostExcludingAdmin)

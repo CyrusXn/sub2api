@@ -443,6 +443,8 @@ func (s *UpstreamBillingProbeService) RunDue(ctx context.Context) error {
 	s.cycleMu.Lock()
 	defer s.cycleMu.Unlock()
 
+	// 订阅到期与请求活跃度无关，按自身开关定期同步，不依赖某个模型账号被探测。
+	s.syncDueBalanceCenterSubscriptions(ctx)
 	s.consumeBalanceCenterDueEvents(ctx)
 
 	settings, err := s.getSettings(ctx)

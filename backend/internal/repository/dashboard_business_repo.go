@@ -49,7 +49,8 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 						MIN((extra #>> '{upstream_billing_probe,balance,amount}')::double precision) AS site_balance
 					FROM accounts
 					WHERE deleted_at IS NULL
-					  AND extra #>> '{upstream_billing_probe,status}' = 'success'
+					  -- 余额有独立成功状态，倍率失败不代表余额无效。
+					  AND extra #>> '{upstream_billing_probe,balance,status}' = 'ok'
 					  AND extra #>> '{upstream_billing_probe,balance,amount}' IS NOT NULL
 					  -- 只用单反斜杠：raw string 里写 \\. 会被 Postgres 解释为"匹配一个反斜杠"，
 					  -- 从而把所有带小数点的余额全部过滤掉，这里必须是转义小数点。
@@ -86,26 +87,26 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			COALESCE((
 				SELECT SUM(amount)
 				FROM balance_center_recharge_events
-				WHERE occurred_at >= $1 AND occurred_at < $2
+				WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz
 			), 0),
 			(
 				SELECT b.user_balance_total
 				FROM dashboard_business_daily b
-				WHERE b.bucket_date >= $1::date AND b.bucket_date < $2::date AND b.balance_captured_at IS NOT NULL
+				WHERE b.bucket_date = $2::date - 1 AND b.balance_captured_at IS NOT NULL
 				ORDER BY b.bucket_date DESC
 				LIMIT 1
 			),
 			(
 				SELECT b.upstream_balance_total
 				FROM dashboard_business_daily b
-				WHERE b.bucket_date >= $1::date AND b.bucket_date < $2::date AND b.balance_captured_at IS NOT NULL
+				WHERE b.bucket_date = $2::date - 1 AND b.balance_captured_at IS NOT NULL
 				ORDER BY b.bucket_date DESC
 				LIMIT 1
 			),
 			(
 				SELECT b.bucket_date
 				FROM dashboard_business_daily b
-				WHERE b.bucket_date >= $1::date AND b.bucket_date < $2::date AND b.balance_captured_at IS NOT NULL
+				WHERE b.bucket_date = $2::date - 1 AND b.balance_captured_at IS NOT NULL
 				ORDER BY b.bucket_date DESC
 				LIMIT 1
 			)
@@ -153,7 +154,9 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 		&rangeUpstreamBalance,
 		&rangeBalanceSnapshotDate,
 	}
-	if err := scanSingleRow(ctx, r.sql, query, []any{start, end}, values...); err != nil {
+	// 日桶与充值事件使用独立参数，避免 PostgreSQL 将同一参数推断成 date 后丢失北京时间偏移。
+	startDate, endDate := start.Format("2006-01-02"), end.Format("2006-01-02")
+	if err := scanSingleRow(ctx, r.sql, query, []any{startDate, endDate, start, end}, values...); err != nil {
 		return nil, err
 	}
 	result.Lifetime.TotalTokens = result.Lifetime.InputTokens + result.Lifetime.OutputTokens + result.Lifetime.CacheCreationTokens + result.Lifetime.CacheReadTokens
@@ -186,7 +189,7 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 		FROM dashboard_business_daily
 		WHERE bucket_date >= $1::date AND bucket_date < $2::date
 		ORDER BY bucket_date ASC
-	`, start, end)
+	`, startDate, endDate)
 	if err != nil {
 		return nil, err
 	}
@@ -210,6 +213,13 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 		result.Daily = append(result.Daily, point)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 先释放明细游标，实账查询可在单连接事务中安全继续。
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := r.populateBusinessLedger(ctx, start, end, result); err != nil {
 		return nil, err
 	}
 	return result, nil

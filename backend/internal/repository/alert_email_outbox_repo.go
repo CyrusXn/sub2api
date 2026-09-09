@@ -72,6 +72,8 @@ WITH anchor AS (
     FROM alert_email_outbox AS queued
     JOIN anchor ON anchor.recipient_email = queued.recipient_email
     WHERE queued.status = 'pending'
+      -- 同批候选也必须到达重试时间，避免反复认领未到期或暂停的旧邮件。
+      AND queued.available_at <= $1
       AND queued.created_at <= anchor.aggregate_until
       AND (queued.claimed_at IS NULL OR queued.claimed_at < $1 - ($2 * INTERVAL '1 second'))
     ORDER BY queued.created_at ASC, queued.id ASC

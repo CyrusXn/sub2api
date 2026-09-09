@@ -72,7 +72,26 @@ export interface DashboardBusinessDailyPoint {
   upstream_cost_excluding_admin: number
 }
 
+// 实账余额未知时保持 null，禁止在展示层补成零或裁剪消费。
+export interface DashboardBusinessLedger {
+  cash_balance: number | null
+  subscription_balance: number | null
+  total_balance: number | null
+  known_balance_subtotal: number
+  unknown_sites: number
+  lifetime_consumption_estimate: number | null
+  lifetime_profit_estimate: number | null
+  opening_balance: number | null
+  closing_balance: number | null
+  opening_captured_at: string | null
+  closing_captured_at: string | null
+  range_consumption: number | null
+  range_profit: number | null
+  range_status: 'available' | 'missing_boundary' | 'site_scope_changed' | 'inexact_boundary'
+}
+
 export interface DashboardBusinessSummary {
+  ledger?: DashboardBusinessLedger
   // 直接来自全部上游充值记录，不随查询日期范围变化。
   upstream_recharge_total: number
   // 用户余额只统计有效充值用户，排除管理员体验额度。
@@ -81,7 +100,7 @@ export interface DashboardBusinessSummary {
   upstream_balance_total: number
   // 按充值事件时间过滤后的区间上游充值。
   range_upstream_recharge_total: number
-  // 区间内最后一天的余额快照；null 表示该区间还没有采集到快照。
+  // 所选结束日的旧版余额快照；实账使用 ledger，不复用旧上游余额。
   range_user_balance_total: number | null
   range_upstream_balance_total: number | null
   // 上述余额快照对应的自然日。

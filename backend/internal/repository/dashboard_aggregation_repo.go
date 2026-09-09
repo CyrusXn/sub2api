@@ -162,6 +162,10 @@ func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context,
 		if err := r.snapshotBusinessDailyBalances(ctx); err != nil {
 			return err
 		}
+		// 实账单独版本化，避免历史旧余额混入新口径。
+		if err := r.snapshotBusinessAssetLedger(ctx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -778,7 +782,8 @@ func (r *dashboardAggregationRepository) snapshotBusinessDailyBalances(ctx conte
 						MIN((extra #>> '{upstream_billing_probe,balance,amount}')::double precision) AS site_balance
 					FROM accounts
 					WHERE deleted_at IS NULL
-					  AND extra #>> '{upstream_billing_probe,status}' = 'success'
+					  -- 余额有独立成功状态，倍率失败不代表余额无效。
+					  AND extra #>> '{upstream_billing_probe,balance,status}' = 'ok'
 					  AND extra #>> '{upstream_billing_probe,balance,amount}' IS NOT NULL
 					  -- 只用单反斜杠：raw string 里写 \\. 会被 Postgres 解释为"匹配一个反斜杠"，
 					  -- 从而把所有带小数点的余额全部过滤掉，这里必须是转义小数点。

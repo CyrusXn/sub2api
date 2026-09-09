@@ -38,6 +38,8 @@ type DashboardBusinessDailyPoint struct {
 }
 
 type DashboardBusinessSummary struct {
+	// Ledger 与请求费用估算分开，缺少真实余额边界时成本、收益均为 nil。
+	Ledger DashboardBusinessLedger `json:"ledger"`
 	// UpstreamRechargeTotal 直接汇总充值记录，不受经营历史日期范围影响。
 	UpstreamRechargeTotal float64 `json:"upstream_recharge_total"`
 	// UserBalanceTotal 仅统计有效充值用户当前余额，排除 admin 体验额度。
@@ -46,15 +48,34 @@ type DashboardBusinessSummary struct {
 	UpstreamBalanceTotal float64 `json:"upstream_balance_total"`
 	// RangeUpstreamRechargeTotal 按充值事件发生时间过滤后的区间上游充值。
 	RangeUpstreamRechargeTotal float64 `json:"range_upstream_recharge_total"`
-	// RangeUserBalanceTotal 取区间内最后一天的用户总余额快照；nil 表示该区间尚未采集到快照。
+	// RangeUserBalanceTotal 取所选结束日的用户总余额快照；nil 表示结束日尚未采集到快照。
 	RangeUserBalanceTotal *float64 `json:"range_user_balance_total"`
-	// RangeUpstreamBalanceTotal 取区间内最后一天的上游总余额快照；nil 表示该区间尚未采集到快照。
+	// RangeUpstreamBalanceTotal 兼容旧客户端的结束日旧版上游余额快照（实账使用 Ledger）；nil 表示结束日尚未采集到快照。
 	RangeUpstreamBalanceTotal *float64 `json:"range_upstream_balance_total"`
 	// RangeBalanceSnapshotDate 上述两个余额快照对应的自然日，便于前端说明"截至某日"。
 	RangeBalanceSnapshotDate *time.Time                    `json:"range_balance_snapshot_date"`
 	Lifetime                 DashboardBusinessTotals       `json:"lifetime"`
 	Range                    DashboardBusinessTotals       `json:"range"`
 	Daily                    []DashboardBusinessDailyPoint `json:"daily"`
+}
+
+// DashboardBusinessLedger 按人民币 1:1 记录现金与订阅剩余资产，不重复计入订阅购买价。
+type DashboardBusinessLedger struct {
+	CashBalance          *float64 `json:"cash_balance"`
+	SubscriptionBalance  *float64 `json:"subscription_balance"`
+	TotalBalance         *float64 `json:"total_balance"`
+	KnownBalanceSubtotal float64  `json:"known_balance_subtotal"`
+	UnknownSites         int64    `json:"unknown_sites"`
+	// 累计仅是录入起点余额为零的账本估值，不声称核验过起点资产。
+	LifetimeConsumptionEstimate *float64   `json:"lifetime_consumption_estimate"`
+	LifetimeProfitEstimate      *float64   `json:"lifetime_profit_estimate"`
+	OpeningBalance              *float64   `json:"opening_balance"`
+	ClosingBalance              *float64   `json:"closing_balance"`
+	OpeningCapturedAt           *time.Time `json:"opening_captured_at"`
+	ClosingCapturedAt           *time.Time `json:"closing_captured_at"`
+	RangeConsumption            *float64   `json:"range_consumption"`
+	RangeProfit                 *float64   `json:"range_profit"`
+	RangeStatus                 string     `json:"range_status"`
 }
 
 type DashboardLowBalanceAccount struct {

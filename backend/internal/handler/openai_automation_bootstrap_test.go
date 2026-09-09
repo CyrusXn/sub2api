@@ -86,8 +86,8 @@ func TestNormalizeCodexAutomationBootstrapRejectsUnsafeShapes(t *testing.T) {
 			body: []byte(`{"model":"gpt-5","previous_response_id":"resp-1","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":` + mustJSON(t, validOutput) + `}]}`),
 		},
 		{
-			name: "real call context",
-			body: []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":` + mustJSON(t, validOutput) + `},{"type":"function_call","call_id":"call-1"}]}`),
+			name: "ambiguous call context",
+			body: []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":` + mustJSON(t, validOutput) + `},{"type":"function_call"}]}`),
 		},
 		{
 			name: "mismatched memory id",
@@ -125,6 +125,20 @@ func TestNormalizeCodexAutomationBootstrapRejectsUnsafeShapes(t *testing.T) {
 			require.Equal(t, tt.body, got)
 		})
 	}
+}
+
+// 定时任务第二轮会同时回放启动上下文和已配对的工具历史，启动上下文仍应被规范化。
+func TestNormalizeCodexAutomationBootstrapWithHistoricalToolContext(t *testing.T) {
+	output := codexAutomationBootstrap("wiki", "2026-09-09T01:01:04.124Z (1788915664124)", automationBootstrapPrompt)
+	body := []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":` + mustJSON(t, output) + `},{"type":"custom_tool_call","call_id":"call-1","name":"exec","input":"pwd"},{"type":"custom_tool_call_output","call_id":"call-1","output":"done"}]}`)
+
+	got, changed := normalizeCodexAutomationBootstrap(body)
+	require.True(t, changed)
+	require.Equal(t, "message", gjson.GetBytes(got, "input.0.type").String())
+	require.Equal(t, "user", gjson.GetBytes(got, "input.0.role").String())
+	require.Equal(t, output, gjson.GetBytes(got, "input.0.content.0.text").String())
+	require.Equal(t, "custom_tool_call", gjson.GetBytes(got, "input.1.type").String())
+	require.Equal(t, "call-1", gjson.GetBytes(got, "input.2.call_id").String())
 }
 
 func TestNormalizeCodexAutomationBootstrapRejectsUnsafeHeartbeatShapes(t *testing.T) {

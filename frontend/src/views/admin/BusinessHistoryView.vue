@@ -23,6 +23,23 @@
         {{ t('admin.businessHistory.loadFailed') }}
       </p>
 
+      <!-- 实账口径与旧请求估算并列说明，不能用缺失快照补零制造精确收益。 -->
+      <section class="card space-y-3 p-5 text-sm">
+        <p class="font-medium text-gray-900 dark:text-white">{{ t('admin.businessHistory.ledgerDescription') }}</p>
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <p>{{ t('admin.businessHistory.lifetimeRecharge') }}<strong class="ml-2">{{ formatMoney(summary?.upstream_recharge_total) }}</strong></p>
+          <p>{{ t('admin.businessHistory.currentCash') }}<strong class="ml-2">{{ formatMoney(summary?.ledger?.cash_balance) }}</strong></p>
+          <p>{{ t('admin.businessHistory.currentSubscription') }}<strong class="ml-2">{{ formatMoney(summary?.ledger?.subscription_balance) }}</strong></p>
+          <p>{{ t('admin.businessHistory.lifetimeConsumptionEstimate') }}<strong data-test="ledger-lifetime-consumption" class="ml-2">{{ formatMoney(summary?.ledger?.lifetime_consumption_estimate) }}</strong></p>
+          <p>{{ t('admin.businessHistory.lifetimeUserCharges') }}<strong class="ml-2">{{ formatMoney(summary?.lifetime.actual_cost) }}</strong></p>
+          <p>{{ t('admin.businessHistory.lifetimeProfitEstimate') }}<strong class="ml-2">{{ formatMoney(summary?.ledger?.lifetime_profit_estimate) }}</strong></p>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.zeroOpeningEstimate') }}</p>
+        <p v-if="summary?.ledger" class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.assetCompleteness', { amount: formatMoney(summary.ledger.known_balance_subtotal), count: summary.ledger.unknown_sites }) }}</p>
+        <!-- 顶部累计口径不依赖区间边界，日期筛选仅控制请求统计及每日明细。 -->
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.currentTotalsScope') }}</p>
+      </section>
+
       <section class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="经营指标">
         <article class="card p-5">
           <div class="flex items-center gap-3">
@@ -56,9 +73,9 @@
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.totalConsumption') }}</p>
               <p data-test="range-consumption" class="mt-1 flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
-                <span>{{ formatMoney(summary?.range.actual_cost) }}</span>
+                <span>{{ formatMoney(summary?.lifetime.actual_cost) }}</span>
                 <span class="text-gray-300 dark:text-dark-500">/</span>
-                <span class="text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.range.actual_cost_excluding_admin) }}</span>
+                <span class="text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.lifetime.actual_cost_excluding_admin) }}</span>
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.allAccounts') }} / {{ t('admin.businessHistory.excludingAdmin') }}</p>
             </div>
@@ -91,7 +108,7 @@
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeTotal') }}</p>
               <p data-test="upstream-recharge-total" class="mt-1 text-2xl font-bold text-red-600 dark:text-red-400">
-                {{ formatMoney(summary?.range_upstream_recharge_total) }}
+                {{ formatMoney(summary?.upstream_recharge_total) }}
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeDescription') }}</p>
             </div>
@@ -103,9 +120,9 @@
             <div class="rounded-lg bg-sky-100 p-2 dark:bg-sky-900/30"><Icon name="database" size="md" class="text-sky-600 dark:text-sky-400" /></div>
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceTotal') }}</p>
-              <p data-test="upstream-balance-total" class="mt-1 text-2xl font-bold text-sky-600 dark:text-sky-400">{{ formatMoney(summary?.range_upstream_balance_total) }}</p>
+              <p data-test="upstream-balance-total" class="mt-1 text-2xl font-bold text-sky-600 dark:text-sky-400">{{ formatMoney(summary?.ledger?.total_balance) }}</p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
-              <p data-test="upstream-balance-snapshot-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ balanceSnapshotHint }}</p>
+              <p data-test="upstream-balance-snapshot-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.currentBalanceHint') }}</p>
             </div>
           </div>
         </article>
@@ -117,6 +134,7 @@
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamTotalConsumption') }}</p>
               <p data-test="upstream-total-consumption" class="mt-1 text-2xl font-bold text-orange-600 dark:text-orange-400">{{ formatMoney(upstreamTotalConsumption) }}</p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamTotalConsumptionFormula') }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.requestCostReference') }} {{ formatMoney(summary?.range.upstream_cost) }}</p>
             </div>
           </div>
         </article>
@@ -128,10 +146,9 @@
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.totalProfit') }}</p>
               <p data-test="total-profit" class="mt-1 flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
                 <span>{{ formatMoney(totalProfitAllAccounts) }}</span>
-                <span class="text-gray-300 dark:text-dark-500">/</span>
-                <span class="text-violet-600 dark:text-violet-400">{{ formatMoney(totalProfitUsers) }}</span>
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.totalProfitFormula') }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.requestProfitReference') }} {{ formatMoney(requestProfitAllAccounts) }} / {{ formatMoney(totalProfitUsers) }}</p>
             </div>
           </div>
         </article>
@@ -155,6 +172,7 @@
 
       <section class="space-y-3">
         <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.businessHistory.dailyDetails') }}</h2>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.requestEstimateNotice') }}</p>
         <div class="overflow-x-auto border-y border-gray-200 dark:border-dark-700">
           <table class="w-full min-w-[1350px] text-sm">
             <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-dark-800 dark:text-gray-400">
@@ -235,11 +253,17 @@ const selectedMetricClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-g
 const normalMetricClass = 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-gray-200'
 
 const daily = computed(() => [...(summary.value?.daily ?? [])].sort((a, b) => a.bucket_date.localeCompare(b.bucket_date)))
-// 上游总消费改用区间内上游计价成本：余额是即时值，无法还原任意区间的期初余额，
-// 因此原来的“上游总充值 - 上游总余额”无法按日期查询，也和每日收益趋势对不上。
-const upstreamTotalConsumption = computed(() => summary.value?.range.upstream_cost ?? null)
-// 总收益展示“全部账号 / 排除 admin”两个口径，与每日收益趋势的两条线口径一致。
+// 暂按用户确认的累计公式计算，不能混用区间充值与当前余额。
+const upstreamTotalConsumption = computed(() => {
+  if (!summary.value || summary.value.ledger?.total_balance == null) return null
+  return summary.value.upstream_recharge_total - summary.value.ledger.total_balance
+})
 const totalProfitAllAccounts = computed(() => {
+  if (!summary.value || upstreamTotalConsumption.value == null) return null
+  return summary.value.lifetime.actual_cost - upstreamTotalConsumption.value
+})
+// 请求估算无法精确分摊实账成本，只在参考文案下保留两个旧口径。
+const requestProfitAllAccounts = computed(() => {
   if (!summary.value) return null
   return summary.value.range.actual_cost - summary.value.range.upstream_cost
 })
@@ -247,14 +271,14 @@ const totalProfitUsers = computed(() => {
   if (!summary.value) return null
   return summary.value.range.actual_cost_excluding_admin - summary.value.range.upstream_cost_excluding_admin
 })
-// 余额快照按日采集，所选区间可能一天都没有采集到，此时提示“暂无快照”而不是展示误导性的 $0.00。
+// 余额快照按日采集，所选结束日可能未采集到，此时提示“暂无快照”而不是展示误导性的零余额。
 const balanceSnapshotHint = computed(() => {
   if (!summary.value) return ''
   const snapshotDate = summary.value.range_balance_snapshot_date
   if (!snapshotDate) return t('admin.businessHistory.balanceSnapshotEmpty')
   return t('admin.businessHistory.balanceSnapshotAsOf', { date: formatDate(snapshotDate) })
 })
-// 消费与收益都用美元刻度，请求数和 Token 各自单独格式化。
+// 金额按确认的人民币 1:1 口径展示，不作美元汇率换算。
 const isMoneyTrend = computed(() => trendMetric.value === 'consumption' || trendMetric.value === 'profit')
 
 const METRIC_COLORS: Record<TrendMetric, string> = {
@@ -353,7 +377,7 @@ const chartOptions = computed(() => ({
       },
       ticks: {
         callback: (raw: string | number) => isMoneyTrend.value
-          ? `$${Number(raw).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+          ? `¥${Number(raw).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
           : trendMetric.value === 'tokens'
             ? formatTokens(Number(raw))
             : formatNumber(Number(raw))
@@ -386,7 +410,7 @@ function formatTokens(value: number | null | undefined): string {
 
 function formatMoney(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(Number(value))) return '--'
-  return `$${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 async function loadSummary() {

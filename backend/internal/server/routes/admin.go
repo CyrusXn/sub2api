@@ -146,6 +146,10 @@ func registerBalanceCenterRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	balanceCenter := admin.Group("/balance-center")
 	{
 		balanceCenter.GET("/overview", h.Admin.BalanceCenter.Overview)
+		// 资产校正与订阅查询仅开放给管理员，保持充值记录独立。
+		balanceCenter.GET("/assets", h.Admin.BalanceCenter.Assets)
+		balanceCenter.PUT("/assets/:id", h.Admin.BalanceCenter.SaveAsset)
+		balanceCenter.POST("/assets/:id/sync", h.Admin.BalanceCenter.SyncSubscription)
 		balanceCenter.GET("/sites", h.Admin.BalanceCenter.Sites)
 		balanceCenter.POST("/sites", h.Admin.BalanceCenter.CreateSite)
 		balanceCenter.PATCH("/sites/:id", h.Admin.BalanceCenter.RenameSite)

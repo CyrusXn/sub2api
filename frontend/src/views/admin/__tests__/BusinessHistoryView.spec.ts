@@ -22,6 +22,15 @@ vi.mock('vue-chartjs', () => ({
 }))
 
 const response = {
+  // 实账样例故意与请求估算不同，防止卡片退回估算口径。
+  ledger: {
+    cash_balance: 600, subscription_balance: 78.9, total_balance: 678.9,
+    known_balance_subtotal: 678.9, unknown_sites: 0,
+    lifetime_consumption_estimate: 8254.07, lifetime_profit_estimate: -8174.07,
+    opening_balance: 700, closing_balance: 660.25,
+    opening_captured_at: '2026-07-08T15:59:00Z', closing_captured_at: '2026-08-17T02:00:00Z',
+    range_consumption: 1274.31, range_profit: -1254.31, range_status: 'available'
+  },
   upstream_recharge_total: 8932.97,
   user_balance_total: 321.45,
   upstream_balance_total: 678.9,
@@ -95,17 +104,17 @@ describe('BusinessHistoryView', () => {
     expect(getBusinessSummary).toHaveBeenCalledWith({ start_date: '2026-07-09', end_date: '2026-08-17' })
     expect(wrapper.get('[data-test="range-requests"]').text()).toContain('123')
     expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
-    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$20.00')
-    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('$18.00')
-    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('$120.00')
-    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('$300.50')
-    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('$1,234.56')
-    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('$660.25')
-    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('$8.00')
-    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$12.00')
-    expect(wrapper.get('[data-test="total-profit"]').text()).toContain('$11.00')
+    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥80.00')
+    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥70.00')
+    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥120.00')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥300.50')
+    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('¥8,932.97')
+    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('¥678.90')
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥8,254.07')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥-8,174.07')
+    expect(wrapper.get('[data-test="ledger-lifetime-consumption"]').text()).toBe('¥8,254.07')
     expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotAsOf')
-    expect(wrapper.get('[data-test="upstream-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotAsOf')
+    expect(wrapper.get('[data-test="upstream-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.currentBalanceHint')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
   })
@@ -160,18 +169,21 @@ describe('BusinessHistoryView', () => {
     expect((chart.props('data') as any).labels).toEqual(['2026-08-16', '2026-08-17'])
   })
 
-  it('区间内没有余额快照时展示占位符与暂无快照提示', async () => {
+  it('历史边界缺失不阻止累计公式，当前余额仍参与计算', async () => {
     getBusinessSummary.mockResolvedValue({
       ...response,
       range_user_balance_total: null,
       range_upstream_balance_total: null,
-      range_balance_snapshot_date: null
+      range_balance_snapshot_date: null,
+      ledger: { ...response.ledger, opening_balance: null, closing_balance: null, range_consumption: null, range_profit: null, range_status: 'missing_boundary' }
     })
     const wrapper = mountView()
     await flushPromises()
 
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥8,254.07')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥-8,174.07')
     expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('--')
-    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('--')
+    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('¥678.90')
     expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotEmpty')
   })
 

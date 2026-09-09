@@ -1628,14 +1628,16 @@ func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
 	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
 	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
 	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
-	return normalizeCodexCallOutputBootstrap(body, isCodexDelegationCandidate, true)
+	return normalizeCodexCallOutputBootstrap(body, isCodexDelegationCandidate, true, true)
 }
 
 func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
-	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
+	// 定时任务第二轮会回放已配对的工具历史；只放开带明确 ID 的历史项，
+	// 仍拒绝 previous_response_id，避免把服务端续链误判为自动化启动输入。
+	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false, true)
 }
 
-func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool) ([]byte, bool) {
+func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowPreviousResponseID, allowHistoricalContext bool) ([]byte, bool) {
 	if !hasUniqueJSONMembers(body) {
 		return body, false
 	}
@@ -1647,7 +1649,7 @@ func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]
 	}
 	if previousResponseID, exists := request["previous_response_id"]; exists {
 		value, ok := previousResponseID.(string)
-		if !ok || (!allowHistoricalContext && strings.TrimSpace(value) != "") {
+		if !ok || (!allowPreviousResponseID && strings.TrimSpace(value) != "") {
 			return body, false
 		}
 	}
@@ -1656,10 +1658,9 @@ func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]
 		return body, false
 	}
 
-	// Responses built-ins follow the *_call / *_call_output naming convention,
-	// so classify by the wire type shape instead of maintaining an incomplete
-	// allowlist. Delegation may coexist with historical anchors only when their
-	// IDs make them unambiguous; automation retains the bootstrap-only boundary.
+	// Responses 内置工具遵循 *_call / *_call_output 命名，因此按线协议形态分类，
+	// 避免维护容易遗漏的白名单。启动输入仅能与带明确 ID 的历史锚点共存，
+	// previous_response_id 是否允许则由独立开关控制。
 	for _, raw := range input {
 		item, ok := raw.(map[string]any)
 		if !ok {

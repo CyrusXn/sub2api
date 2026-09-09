@@ -137,7 +137,9 @@ describe('BalanceCenterView', () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.get('[data-test="recharge-time-now"]').trigger('click')
-    expect((wrapper.get('[data-test="recharge-time"]').element as HTMLInputElement).value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.000)?$/)
+    // datetime-local 会省略值为 00 的秒；核对实际时间，避免整分钟随机失败。
+    const value = (wrapper.get('[data-test="recharge-time"]').element as HTMLInputElement).value
+    expect(Math.abs(Date.now() - new Date(value).getTime())).toBeLessThan(2000)
   })
 
   it('切换到充值记录时才加载汇总并隐藏新增充值', async () => {
