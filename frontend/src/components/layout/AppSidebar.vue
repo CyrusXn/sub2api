@@ -741,7 +741,6 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/ai-image', label: t('nav.aiImage'), icon: AIImageIcon },
-    { path: '/model-factory', label: t('nav.modelFactory'), icon: CubeIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
@@ -801,6 +800,8 @@ const customMenuItemsForAdmin = computed(() => {
 const adminNavItems = computed((): NavItem[] => {
   const baseItems: NavItem[] = [
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
+    // 调整期间仅在管理菜单展示模型工厂。
+    { path: '/admin/model-factory', label: t('nav.modelFactory'), icon: CubeIcon },
     { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon, featureFlag: flagOpsMonitoring },
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
@@ -902,8 +903,8 @@ function closeMobile() {
 }
 
 function handleMenuItemClick(itemPath: string) {
-  if (itemPath === '/model-factory' && route.path === itemPath) {
-    // 当前菜单再次点击也触发刷新，确保用户看到最新账号模型集合。
+  if (itemPath === '/admin/model-factory' && route.path === itemPath) {
+    // 管理菜单再次点击也触发刷新，保留模型集合的更新行为。
     window.dispatchEvent(new CustomEvent('model-factory-refresh'))
   }
   if (mobileOpen.value) {

@@ -11,6 +11,7 @@ export interface ModelFactoryGroup {
 export interface ModelFactoryResponse { groups: ModelFactoryGroup[] }
 
 export async function getModelFactory(options?: { signal?: AbortSignal }): Promise<ModelFactoryResponse> {
-  const { data } = await apiClient.get<ModelFactoryResponse>('/model-factory', { signal: options?.signal })
+  // 与管理端权限边界保持一致，禁止继续调用用户接口。
+  const { data } = await apiClient.get<ModelFactoryResponse>('/admin/model-factory', { signal: options?.signal })
   return data
 }

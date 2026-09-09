@@ -37,6 +37,9 @@ func RegisterAdminRoutes(
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
+		// 模型工厂尚在调整，必须通过管理员认证后才能读取。
+		admin.GET("/model-factory", h.ModelFactory.Get)
+
 		// 用户管理
 		registerUserManagementRoutes(admin, h)
 

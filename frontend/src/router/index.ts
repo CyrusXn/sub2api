@@ -177,12 +177,13 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/model-factory',
+    // 模型工厂尚在调整，只允许管理员进入。
+    path: '/admin/model-factory',
     name: 'ModelFactory',
     component: () => import('@/views/ModelFactoryView.vue'),
     meta: {
       requiresAuth: true,
-      requiresAdmin: false,
+      requiresAdmin: true,
       title: 'Model Factory',
       titleKey: 'modelFactory.title'
     }
