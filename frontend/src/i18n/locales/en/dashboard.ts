@@ -8,8 +8,6 @@ export default {
     todayCost: 'Today Cost',
     todayTokens: 'Today Tokens',
     totalTokens: 'Total Tokens',
-    upstreamTotalTokens: 'Upstream Total Tokens',
-    originalTokenCount: 'Original token count',
     cacheToday: 'Cache (Today)',
     performance: 'Performance',
     avgResponse: 'Avg Response',
@@ -290,6 +288,9 @@ export default {
 
   // Usage
   usage: {
+    // 定制用量列沿用原始 Token 与上游 Token 的独立口径。
+    upstreamTotalTokens: 'Upstream Total Tokens',
+    originalTokenCount: 'Original token count',
     title: 'Usage Records',
     description: 'View and analyze your API usage history',
     costDetails: 'Cost Breakdown',

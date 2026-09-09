@@ -57,6 +57,9 @@ coverage/
 # Local config
 config.yaml
 config.local.yaml
+# 本机连接凭据与发布归档只用于运维，不进入镜像构建上下文。
+*.local
+.release-console/
 
 # Logs
 *.log

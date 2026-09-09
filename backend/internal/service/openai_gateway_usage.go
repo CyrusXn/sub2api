@@ -486,7 +486,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 				CacheCreationTokens: usageLog.CacheCreationTokens,
 				CacheReadTokens:     usageLog.CacheReadTokens,
 				ImageOutputTokens:   usageLog.ImageOutputTokens,
-			}, cost.TotalCost,
+			}, cost.TotalCost, pricingAt,
 		)
 	}
 

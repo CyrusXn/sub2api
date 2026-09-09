@@ -1,6 +1,8 @@
 // 管理端面向中国客户，即使切换到英文语言包也保持该功能中文展示。
 export default {
   businessHistory: {
+    // 路由描述与经营历史页面使用同一语义。
+    description: '每日经营指标与充值历史',
     title: '经营历史',
     startDate: '开始日期',
     endDate: '结束日期',

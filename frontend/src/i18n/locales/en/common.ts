@@ -12,6 +12,12 @@ export default {
     delete: 'Delete',
     edit: 'Edit',
     create: 'Create',
+    apply: 'Apply',
+    clear: 'Clear',
+    creating: 'Creating...',
+    required: 'Required',
+    sending: 'Sending...',
+    tryAgain: 'Please try again',
     update: 'Update',
     confirm: 'Confirm',
     reset: 'Reset',
@@ -247,6 +253,8 @@ export default {
     passwordMinLength: 'Password must be at least 6 characters',
     loginFailed: 'Login failed. Please check your credentials and try again.',
     errors: {
+      // 与服务端登录错误码保持一致。
+      INVALID_CREDENTIALS: 'Invalid email or password',
       USER_NOT_ACTIVE: 'Account has been disabled.',
       EMAIL_EXISTS: 'This account is already registered.',
       INVALID_EMAIL: 'Please enter a valid email address.',
