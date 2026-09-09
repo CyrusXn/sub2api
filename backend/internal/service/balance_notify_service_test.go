@@ -218,63 +218,10 @@ func TestBuildQuotaDimsFromState_UsesStateValues(t *testing.T) {
 	require.Equal(t, 10000.0, dims[2].limit)
 }
 
-// ---------- collectBalanceNotifyRecipients ----------
-
-func TestCollectBalanceNotifyRecipients_Empty(t *testing.T) {
+// 用户余额提醒只能发送到注册邮箱；额外通知地址不参与。
+func TestCollectBalanceNotifyRecipients_OnlyOwner(t *testing.T) {
 	s := &BalanceNotifyService{}
-	u := &User{BalanceNotifyExtraEmails: nil}
-	require.Empty(t, s.collectBalanceNotifyRecipients(u))
-}
-
-func TestCollectBalanceNotifyRecipients_FiltersDisabledAndUnverified(t *testing.T) {
-	s := &BalanceNotifyService{}
-	u := &User{
-		BalanceNotifyExtraEmails: []NotifyEmailEntry{
-			{Email: "a@example.com", Verified: true, Disabled: false},
-			{Email: "b@example.com", Verified: true, Disabled: true},   // disabled
-			{Email: "c@example.com", Verified: false, Disabled: false}, // unverified
-			{Email: "d@example.com", Verified: true, Disabled: false},
-		},
-	}
-	got := s.collectBalanceNotifyRecipients(u)
-	require.Equal(t, []string{"a@example.com", "d@example.com"}, got)
-}
-
-func TestCollectBalanceNotifyRecipients_DeduplicatesCaseInsensitive(t *testing.T) {
-	s := &BalanceNotifyService{}
-	u := &User{
-		BalanceNotifyExtraEmails: []NotifyEmailEntry{
-			{Email: "User@Example.com", Verified: true},
-			{Email: "user@example.com", Verified: true},
-			{Email: "USER@EXAMPLE.COM", Verified: true},
-		},
-	}
-	got := s.collectBalanceNotifyRecipients(u)
-	require.Len(t, got, 1)
-	// The original casing of the first entry is preserved.
-	require.Equal(t, "User@Example.com", got[0])
-}
-
-func TestCollectBalanceNotifyRecipients_SkipsEmpty(t *testing.T) {
-	s := &BalanceNotifyService{}
-	u := &User{
-		BalanceNotifyExtraEmails: []NotifyEmailEntry{
-			{Email: "  ", Verified: true},
-			{Email: "", Verified: true},
-			{Email: "valid@example.com", Verified: true},
-		},
-	}
-	got := s.collectBalanceNotifyRecipients(u)
-	require.Equal(t, []string{"valid@example.com"}, got)
-}
-
-func TestCollectBalanceNotifyRecipients_TrimsWhitespace(t *testing.T) {
-	s := &BalanceNotifyService{}
-	u := &User{
-		BalanceNotifyExtraEmails: []NotifyEmailEntry{
-			{Email: "  trimmed@example.com  ", Verified: true},
-		},
-	}
-	got := s.collectBalanceNotifyRecipients(u)
-	require.Equal(t, []string{"trimmed@example.com"}, got)
+	require.Empty(t, s.collectBalanceNotifyRecipients(nil))
+	require.Empty(t, s.collectBalanceNotifyRecipients(&User{BalanceNotifyExtraEmails: []NotifyEmailEntry{{Email: "admin@example.com", Verified: true}}}))
+	require.Equal(t, []string{"owner@example.com"}, s.collectBalanceNotifyRecipients(&User{Email: " owner@example.com ", BalanceNotifyExtraEmails: []NotifyEmailEntry{{Email: "admin@example.com", Verified: true}}}))
 }

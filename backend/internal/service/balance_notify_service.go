@@ -487,7 +487,7 @@ func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, u
 }
 
 // NotifyUserInsufficientBalance 在请求因用户自身余额不足而被拒绝时通知该用户。
-// 同一用户三分钟内的连续重试合并为一封，避免客户端自动重试造成邮件轰炸。
+// 三分钟冷却只减少重复处理；持久发送状态保证余额未补充期间只发一次。
 func (s *BalanceNotifyService) NotifyUserInsufficientBalance(_ context.Context, user *User, currentBalance float64) {
 	if s == nil || user == nil || strings.TrimSpace(user.Email) == "" {
 		return
@@ -534,6 +534,13 @@ func (s *BalanceNotifyService) NotifyUserInsufficientBalance(_ context.Context, 
 }
 
 func (s *BalanceNotifyService) sendInsufficientBalanceEmail(ctx context.Context, userID int64, userName, userEmail string, balance float64, siteName, rechargeURL string) bool {
+	// 用户余额不足只通知本人，与每日低余额提醒共用持久记录。
+	return s.sendUserBalanceEmailOnce(ctx, userID, userEmail, userName, balance, 0, func(email, name string, current float64) bool {
+		return s.sendInsufficientBalanceEmailBody(ctx, userID, name, email, current, siteName, rechargeURL)
+	})
+}
+
+func (s *BalanceNotifyService) sendInsufficientBalanceEmailBody(ctx context.Context, userID int64, userName, userEmail string, balance float64, siteName, rechargeURL string) bool {
 	displayName := userName
 	if strings.TrimSpace(displayName) == "" {
 		displayName = userEmail
@@ -716,7 +723,7 @@ func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user
 	siteName := s.getSiteName(ctx)
 	recipients := s.collectBalanceNotifyRecipients(user)
 	slog.Info("CheckBalanceAfterDeduction: sending notification",
-		"user_id", user.ID, "recipients", recipients, "new_balance", newBalance, "threshold", threshold)
+		"user_id", user.ID, "recipient_count", len(recipients), "new_balance", newBalance, "threshold", threshold)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -939,10 +946,12 @@ func filterVerifiedEmails(entries []NotifyEmailEntry) []string {
 	return recipients
 }
 
-// collectBalanceNotifyRecipients returns verified, non-disabled email recipients.
-// Only emails with verified=true and disabled=false are included.
+// 用户余额仅通知注册邮箱，不转发给管理员或额外通知地址。
 func (s *BalanceNotifyService) collectBalanceNotifyRecipients(user *User) []string {
-	return filterVerifiedEmails(user.BalanceNotifyExtraEmails)
+	if user == nil || strings.TrimSpace(user.Email) == "" {
+		return nil
+	}
+	return []string{strings.TrimSpace(user.Email)}
 }
 
 // sendEmails sends an email to all recipients with shared timeout and error logging.
@@ -971,6 +980,21 @@ func (s *BalanceNotifyService) sendEmails(recipients []string, subject, body str
 
 // sendBalanceLowEmails sends balance low notification to all recipients.
 func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID int64, userName, userEmail string, balance, threshold float64, siteName, rechargeURL string) bool {
+	// 不向额外邮箱或管理员转发用户余额；充值前的各类余额提醒合并为一次。
+	ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+	defer cancel()
+	return s.sendUserBalanceEmailOnce(ctx, userID, userEmail, userName, balance, threshold, func(email, name string, current float64) bool {
+		return s.sendBalanceLowEmailsToOwner([]string{email}, userID, name, email, current, threshold, siteName, rechargeURL)
+	})
+}
+
+func (s *BalanceNotifyService) sendBalanceLowEmailsToOwner(recipients []string, userID int64, userName, userEmail string, balance, threshold float64, siteName, rechargeURL string) bool {
+	// 持久状态已按补款周期去重，模板层不能再用同一天的旧记录吞掉新周期提醒。
+	reminderKey := balanceReminderDay(s.currentTime())
+	if s.leaderLockDB != nil {
+		reminderKey = uuid.NewString()
+	}
+
 	displayName := userName
 	if displayName == "" {
 		displayName = userEmail
@@ -988,7 +1012,7 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 				UserID:         userID,
 				SourceType:     "balance_low",
 				SourceID:       firstNonEmpty(strconv.FormatInt(userID, 10), userEmail),
-				ReminderKey:    balanceReminderDay(s.currentTime()),
+				ReminderKey:    reminderKey,
 				Variables: map[string]string{
 					"current_balance": fmt.Sprintf("%.2f", balance),
 					"threshold":       fmt.Sprintf("%.2f", threshold),
@@ -1159,7 +1183,8 @@ const insufficientBalanceEmailTemplate = `<!DOCTYPE html>
             <div class="balance">$%.2f</div>
             <div class="info">
                 <p>本次请求因账户余额不足未能完成。</p>
-                <p>请充值后重新发起请求。</p>
+                <p>请登录您的账户补充余额，然后重新发起请求。</p>
+                <p>余额未补充期间，本提醒只发送一次，无需持续重试。</p>
             </div>
             %s
         </div>

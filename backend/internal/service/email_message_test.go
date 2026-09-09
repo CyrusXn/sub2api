@@ -49,6 +49,9 @@ func TestBuildSMTPMessageProducesStandardsCompliantMIME(t *testing.T) {
 	require.NoError(t, err)
 	require.Regexp(t, regexp.MustCompile(`^<[0-9a-f]{32}@example\.com>$`), parsed.Header.Get("Message-ID"))
 	require.Equal(t, "1.0", parsed.Header.Get("MIME-Version"))
+	// 自动通知应阻止支持标准的邮箱产生自动回复。
+	require.Equal(t, "auto-generated", parsed.Header.Get("Auto-Submitted"))
+	require.Equal(t, "All", parsed.Header.Get("X-Auto-Response-Suppress"))
 	require.Equal(t, "quoted-printable", parsed.Header.Get("Content-Transfer-Encoding"))
 
 	mediaType, params, err := mime.ParseMediaType(parsed.Header.Get("Content-Type"))

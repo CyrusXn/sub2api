@@ -175,3 +175,13 @@ func (c *emailCache) GetNotifyCodeUserRate(ctx context.Context, userID int64) (i
 	}
 	return count, nil
 }
+
+// 邮件内容摘要不暴露收件人或正文；五分钟内只允许一个发送者。
+func (c *emailCache) AcquireEmailDelivery(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
+	return c.rdb.SetNX(ctx, "email:delivery:"+key, owner, ttl).Result()
+}
+
+// 失败仅释放自己的预留，防止迟到请求删除新的发送记录。
+func (c *emailCache) ReleaseEmailDelivery(ctx context.Context, key, owner string) error {
+	return c.rdb.Eval(ctx, `if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end`, []string{"email:delivery:" + key}, owner).Err()
+}

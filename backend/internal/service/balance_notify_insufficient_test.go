@@ -4,6 +4,9 @@ package service
 
 import (
 	"context"
+	"io"
+	"mime/quotedprintable"
+	"net/mail"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,7 +101,12 @@ func TestNotifyUserInsufficientBalanceUsesThreeMinuteCooldown(t *testing.T) {
 	service.NotifyUserInsufficientBalance(ctx, user, user.Balance)
 	require.Eventually(t, func() bool { return smtpServer.messageCount() == 2 }, time.Second, 10*time.Millisecond)
 
-	body := strings.ToLower(smtpServer.lastMessage())
+	// 检查解码后的正文，不能把 MIME 传输编码当作中文明文。
+	parsed, err := mail.ReadMessage(strings.NewReader(smtpServer.lastMessage()))
+	require.NoError(t, err)
+	decoded, err := io.ReadAll(quotedprintable.NewReader(parsed.Body))
+	require.NoError(t, err)
+	body := strings.ToLower(string(decoded))
 	require.Contains(t, body, "余额不足")
 	require.Contains(t, body, "立即充值")
 	require.NotContains(t, body, "<img")

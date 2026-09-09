@@ -187,10 +187,36 @@ const smtpDialTimeout = 10 * time.Second
 const smtpIOTimeout = 20 * time.Second
 
 // SendEmailWithConfig 使用指定配置发送邮件
-func (s *EmailService) SendEmailWithConfig(config *SMTPConfig, to, subject, body string) error {
+func (s *EmailService) SendEmailWithConfig(config *SMTPConfig, to, subject, body string) (err error) {
 	message, err := buildSMTPMessage(config, to, subject, body)
 	if err != nil {
 		return err
+	}
+
+	// 相同内容只预留一次；缓存异常停止本次发送，避免跨实例重复投递。
+	if guard, ok := s.cache.(emailDeliveryGuard); ok {
+		key := emailContentFingerprint(to, subject, body)
+		// 令牌只使用随机 Message-ID，不保存邮件内容。
+		owner, tokenErr := generateEmailMessageID(message.envelopeFrom, config.Host)
+		if tokenErr != nil {
+			return tokenErr
+		}
+		reserveCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		acquired, reserveErr := guard.AcquireEmailDelivery(reserveCtx, key, owner, emailContentDedupWindow)
+		cancel()
+		if reserveErr != nil {
+			return fmt.Errorf("邮件去重状态不可用: %w", reserveErr)
+		}
+		if !acquired {
+			return nil
+		}
+		defer func() {
+			if err != nil {
+				releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer releaseCancel()
+				_ = guard.ReleaseEmailDelivery(releaseCtx, key, owner)
+			}
+		}()
 	}
 
 	client, err := s.connectSMTP(config)
