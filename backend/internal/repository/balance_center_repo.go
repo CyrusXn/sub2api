@@ -170,14 +170,15 @@ func (r *balanceCenterRepository) SaveAlertState(
 	if decision != nil && strings.TrimSpace(decision.Type) != "" {
 		alertType = decision.Type
 	}
+	// CASE 的时间参数必须显式声明类型，避免 PostgreSQL 按文本推断而阻断后续邮件入队。
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO balance_center_alert_states (
     identity_key, site_id, account_id, low_balance_active, multiplier_baseline,
     last_success_snapshot_id, low_balance_notified_at, multiplier_notified_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
-    CASE WHEN $7::text = 'low_balance' THEN $8 ELSE NULL END,
-    CASE WHEN $7::text = 'multiplier_changed' THEN $8 ELSE NULL END
+    CASE WHEN $7::text = 'low_balance' THEN $8::timestamptz ELSE NULL END,
+    CASE WHEN $7::text = 'multiplier_changed' THEN $8::timestamptz ELSE NULL END
 )
 ON CONFLICT (identity_key) DO UPDATE SET
     site_id = EXCLUDED.site_id,
@@ -185,8 +186,8 @@ ON CONFLICT (identity_key) DO UPDATE SET
     low_balance_active = EXCLUDED.low_balance_active,
     multiplier_baseline = EXCLUDED.multiplier_baseline,
     last_success_snapshot_id = EXCLUDED.last_success_snapshot_id,
-    low_balance_notified_at = CASE WHEN $7::text = 'low_balance' THEN $8 ELSE balance_center_alert_states.low_balance_notified_at END,
-    multiplier_notified_at = CASE WHEN $7::text = 'multiplier_changed' THEN $8 ELSE balance_center_alert_states.multiplier_notified_at END,
+    low_balance_notified_at = CASE WHEN $7::text = 'low_balance' THEN $8::timestamptz ELSE balance_center_alert_states.low_balance_notified_at END,
+    multiplier_notified_at = CASE WHEN $7::text = 'multiplier_changed' THEN $8::timestamptz ELSE balance_center_alert_states.multiplier_notified_at END,
     updated_at = NOW()`,
 		identityKey, siteID, accountID, state.LowBalanceActive, state.MultiplierBaseline,
 		snapshotID, alertType, now,

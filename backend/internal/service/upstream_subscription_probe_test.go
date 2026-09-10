@@ -78,8 +78,11 @@ func TestFishSubscriptionAlertThreshold(t *testing.T) {
 		enabled, reason string
 		want            int
 	}{
-		{"低于阈值", float64Ptr(0.99), "true", "", 1},
-		{"等于阈值", float64Ptr(1), "true", "", 0},
+		// 覆盖新旧阈值之间及严格小于边界，确保提前提醒且不扩大到等于 3 美元。
+		{"低于阈值", float64Ptr(2.99), "true", "", 1},
+		{"原阈值", float64Ptr(1), "true", "", 1},
+		{"等于阈值", float64Ptr(3), "true", "", 0},
+		{"高于阈值", float64Ptr(3.01), "true", "", 0},
 		{"缺失额度", nil, "true", "", 0},
 		{"关闭邮件", float64Ptr(0), "false", "", 0},
 		{"同步失败", float64Ptr(0), "true", "查询失败", 0},
@@ -94,6 +97,7 @@ func TestFishSubscriptionAlertThreshold(t *testing.T) {
 			if tc.want > 0 {
 				require.Equal(t, now, r.messages[0].AvailableAt)
 				require.Contains(t, r.messages[0].BodyHTML, "手动重置")
+				require.Contains(t, r.messages[0].BodyHTML, "提醒阈值：低于 $3")
 				require.Equal(t, "balance_center_subscription", r.messages[0].SourceType)
 			}
 		})

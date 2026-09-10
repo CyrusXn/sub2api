@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// 提前到日剩余额度低于 3 美元时提醒，判断与邮件文案共用阈值以免不一致。
+const balanceCenterSubscriptionLowQuotaUSD = 3.0
+
 // BalanceCenterAsset 将现金资产与已经计入充值的订阅剩余价值分开，避免重复算账。
 type BalanceCenterAsset struct {
 	SiteID                        int64      `json:"site_id"`
@@ -104,7 +107,7 @@ func (s *BalanceCenterService) SaveSubscriptionObservation(ctx context.Context, 
 		return err
 	}
 	var messages []AlertEmailOutboxInput
-	if reason == "" && o.RemainingUSD != nil && *o.RemainingUSD < 1 && o.WindowKey != "" && settings.EmailEnabled {
+	if reason == "" && o.RemainingUSD != nil && *o.RemainingUSD < balanceCenterSubscriptionLowQuotaUSD && o.WindowKey != "" && settings.EmailEnabled {
 		recipients, err := s.balanceCenterAlertRecipients(ctx)
 		if err != nil {
 			return err
@@ -114,7 +117,7 @@ func (s *BalanceCenterService) SaveSubscriptionObservation(ctx context.Context, 
 				SourceType: "balance_center_subscription", SourceID: fmt.Sprint(siteID), SourceKey: fmt.Sprintf("site:%d:%s", siteID, o.WindowKey),
 				AlertType: "subscription_quota_low", Recipient: recipient,
 				Subject:   "[余额中心]鱼鱼订阅额度不足，请及时重置",
-				BodyHTML:  fmt.Sprintf(`<h2>鱼鱼订阅额度不足</h2><p>当前日剩余额度：$%.4f；提醒阈值：低于 $1。</p><p>请前往 <a href="https://sub.anzhiyu.com/subscriptions">鱼鱼订阅页</a>手动重置。每次手动重置会扣减 1 天有效期，本系统不会自动重置。</p><p>检测时间：%s</p>`, *o.RemainingUSD, html.EscapeString(observed.Format(time.RFC3339))),
+				BodyHTML:  fmt.Sprintf(`<h2>鱼鱼订阅额度不足</h2><p>当前日剩余额度：$%.4f；提醒阈值：低于 $%.0f。</p><p>请前往 <a href="https://sub.anzhiyu.com/subscriptions">鱼鱼订阅页</a>手动重置。每次手动重置会扣减 1 天有效期，本系统不会自动重置。</p><p>检测时间：%s</p>`, *o.RemainingUSD, balanceCenterSubscriptionLowQuotaUSD, html.EscapeString(observed.Format(time.RFC3339))),
 				CreatedAt: observed, AvailableAt: observed,
 			})
 		}
