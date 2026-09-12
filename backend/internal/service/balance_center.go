@@ -88,6 +88,7 @@ type BalanceCenterSnapshot struct {
 	ID               int64           `json:"id"`
 	SiteID           int64           `json:"site_id"`
 	AccountID        *int64          `json:"account_id,omitempty"`
+	AccountName      string          `json:"account_name,omitempty"`
 	LegacyKeyID      *int64          `json:"legacy_key_id,omitempty"`
 	SiteName         string          `json:"site_name"`
 	NormalizedDomain string          `json:"normalized_domain"`
@@ -285,23 +286,36 @@ func balanceCenterAlertIdentityKey(snapshot *BalanceCenterSnapshot) string {
 }
 
 func buildBalanceCenterAlertEmail(snapshot *BalanceCenterSnapshot, decision BalanceCenterAlertDecision) (string, string) {
-	title := "倍率变化告警"
-	if decision.Type == BalanceCenterAlertLowBalance {
-		title = "低余额告警"
-	}
 	value := func(input *float64) string {
 		if input == nil {
 			return "-"
 		}
 		return strconv.FormatFloat(*input, 'f', -1, 64)
 	}
-	subject := "[余额中心]" + title + " - " + snapshot.SiteName
-	body := fmt.Sprintf(`<h2>%s</h2><p>站点：%s</p><p>账号：%s</p><p>域名：%s</p><p>原值：%s</p><p>新值：%s</p><p>原始余额：%s</p><p>折算余额：%s</p><p>阈值：%s</p><p>折算系数：%s</p><p>币种：%s</p><p>探测时间：%s</p>`,
-		html.EscapeString(title), html.EscapeString(snapshot.SiteName), html.EscapeString(balanceCenterAccountLabel(snapshot.AccountID)),
-		html.EscapeString(snapshot.NormalizedDomain), value(decision.OldValue), value(decision.NewValue), value(snapshot.Balance), value(snapshot.ConvertedBalance), value(decision.Threshold),
-		strconv.FormatFloat(snapshot.ConversionScale, 'f', -1, 64), html.EscapeString(snapshot.Currency), snapshot.ProbedAt.UTC().Format(time.RFC3339),
-	)
-	return subject, body
+	siteName := strings.TrimSpace(snapshot.SiteName)
+	if decision.Type == BalanceCenterAlertLowBalance {
+		return fmt.Sprintf("%s-余额低于%s元", siteName, value(decision.Threshold)),
+			fmt.Sprintf("%s余额：%s元", html.EscapeString(siteName), value(snapshot.ConvertedBalance))
+	}
+
+	direction := "上涨"
+	if decision.OldValue != nil && decision.NewValue != nil && *decision.NewValue < *decision.OldValue {
+		direction = "下降"
+	}
+	accountName := balanceCenterAlertAccountLabel(snapshot)
+	return fmt.Sprintf("%s-%s账号-倍率%s", siteName, accountName, direction),
+		fmt.Sprintf("%s %s账号倍率%s，%s->%s", html.EscapeString(siteName), html.EscapeString(accountName), direction, value(decision.OldValue), value(decision.NewValue))
+}
+
+func balanceCenterAlertAccountLabel(snapshot *BalanceCenterSnapshot) string {
+	accountName := strings.TrimSpace(snapshot.AccountName)
+	if siteName := strings.TrimSpace(snapshot.SiteName); siteName != "" {
+		accountName = strings.TrimSpace(strings.TrimPrefix(accountName, "【"+siteName+"】"))
+	}
+	if accountName != "" {
+		return accountName
+	}
+	return balanceCenterAccountLabel(snapshot.AccountID)
 }
 
 func balanceCenterAccountLabel(accountID *int64) string {

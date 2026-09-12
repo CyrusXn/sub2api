@@ -2147,6 +2147,7 @@ func buildBalanceCenterProbeSnapshot(account *Account, snapshot *UpstreamBilling
 	}
 	result := &BalanceCenterSnapshot{
 		AccountID:        &accountID,
+		AccountName:      strings.TrimSpace(account.Name),
 		SiteName:         siteName,
 		NormalizedDomain: normalizedDomain,
 		BaseURL:          baseURL,

@@ -633,6 +633,7 @@ func TestBuildBalanceCenterProbeSnapshotUsesBracketedSiteName(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "鱼鱼", result.SiteName)
+	require.Equal(t, "【鱼鱼】008 bugteam", result.AccountName)
 }
 
 func TestUpstreamBillingProbeIgnoresBalanceCenterPersistenceFailure(t *testing.T) {

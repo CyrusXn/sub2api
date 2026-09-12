@@ -166,6 +166,81 @@ func TestEvaluateBalanceCenterAlertsReturnsLowBalanceAndMultiplierChangeTogether
 	require.Equal(t, 0.1, *next.MultiplierBaseline, "邮件接受前不得推进任何通知基线")
 }
 
+func TestBuildBalanceCenterAlertEmailUsesDynamicMultiplierDirection(t *testing.T) {
+	accountID := int64(935)
+	snapshot := &BalanceCenterSnapshot{
+		SiteName:    "派大星",
+		AccountName: "【派大星】heavy",
+		AccountID:   &accountID,
+	}
+
+	tests := []struct {
+		name        string
+		oldValue    float64
+		newValue    float64
+		wantSubject string
+		wantBody    string
+	}{
+		{
+			name:        "倍率上涨",
+			oldValue:    0.01,
+			newValue:    0.02,
+			wantSubject: "派大星-heavy账号-倍率上涨",
+			wantBody:    "派大星 heavy账号倍率上涨，0.01->0.02",
+		},
+		{
+			name:        "倍率下降",
+			oldValue:    0.02,
+			newValue:    0.01,
+			wantSubject: "派大星-heavy账号-倍率下降",
+			wantBody:    "派大星 heavy账号倍率下降，0.02->0.01",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subject, body := buildBalanceCenterAlertEmail(snapshot, BalanceCenterAlertDecision{
+				Type:     BalanceCenterAlertMultiplierChanged,
+				OldValue: float64Ptr(tt.oldValue),
+				NewValue: float64Ptr(tt.newValue),
+			})
+
+			require.Equal(t, tt.wantSubject, subject)
+			require.Equal(t, tt.wantBody, body)
+		})
+	}
+}
+
+func TestBuildBalanceCenterAlertEmailUsesDynamicLowBalanceValues(t *testing.T) {
+	snapshot := &BalanceCenterSnapshot{
+		SiteName:         "派大星",
+		ConvertedBalance: float64Ptr(3.25),
+	}
+
+	subject, body := buildBalanceCenterAlertEmail(snapshot, BalanceCenterAlertDecision{
+		Type:      BalanceCenterAlertLowBalance,
+		NewValue:  float64Ptr(3.25),
+		Threshold: float64Ptr(5),
+	})
+
+	require.Equal(t, "派大星-余额低于5元", subject)
+	require.Equal(t, "派大星余额：3.25元", body)
+}
+
+func TestBuildBalanceCenterAlertEmailFallsBackToAccountID(t *testing.T) {
+	accountID := int64(935)
+	snapshot := &BalanceCenterSnapshot{SiteName: "派大星", AccountID: &accountID}
+
+	subject, body := buildBalanceCenterAlertEmail(snapshot, BalanceCenterAlertDecision{
+		Type:     BalanceCenterAlertMultiplierChanged,
+		OldValue: float64Ptr(0.01),
+		NewValue: float64Ptr(0.02),
+	})
+
+	require.Equal(t, "派大星-935账号-倍率上涨", subject)
+	require.Equal(t, "派大星 935账号倍率上涨，0.01->0.02", body)
+}
+
 func TestBalanceCenterServiceProcessesAlertsAndRetriesFailedSMTP(t *testing.T) {
 	settings := &balanceCenterSettingRepoStub{values: map[string]string{
 		SettingKeyBalanceCenterEnabled:             "true",
@@ -195,7 +270,7 @@ func TestBalanceCenterServiceProcessesAlertsAndRetriesFailedSMTP(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, email.sends, 1, "首次倍率只建基线，低余额立即发送")
-	require.Contains(t, email.sends[0], "[余额中心]低余额告警")
+	require.Contains(t, email.sends[0], "HBY-余额低于5元|HBY余额：4元")
 	require.True(t, repo.state.LowBalanceActive)
 	require.Equal(t, 0.1, *repo.state.MultiplierBaseline)
 	require.Equal(t, BalanceCenterAlertDeliveryAccepted, repo.deliveries[0].Status)
