@@ -2442,6 +2442,7 @@ var upstreamBillingProbeOfficialAPIDomains = []string{
 	"kimi.com",
 	"bigmodel.cn",
 	"deepseek.com",
+	"opencode.ai",
 }
 
 func upstreamBillingProbeTargetIsOfficialAPI(baseURL string) bool {

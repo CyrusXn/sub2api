@@ -185,7 +185,7 @@ func sanitizeUpdateGroupRequestForSimpleMode(req *UpdateGroupRequest) {
 type CreateGroupRequest struct {
 	Name           string  `json:"name" binding:"required"`
 	Description    string  `json:"description"`
-	Platform       string  `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok kimi zhipu deepseek minimax composite"`
+	Platform       string  `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok kimi zhipu deepseek minimax opencode_go composite"`
 	RateMultiplier float64 `json:"rate_multiplier"`
 	// AdminUsageMultiplier 仅管理端可配置，并参与配置生效后新请求的真实结算。
 	AdminUsageMultiplier      *float64                      `json:"admin_usage_multiplier"`
@@ -261,7 +261,7 @@ type CreateGroupRequest struct {
 type UpdateGroupRequest struct {
 	Name           string   `json:"name"`
 	Description    *string  `json:"description"`
-	Platform       string   `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok kimi zhipu deepseek minimax composite"`
+	Platform       string   `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok kimi zhipu deepseek minimax opencode_go composite"`
 	RateMultiplier *float64 `json:"rate_multiplier"`
 	// AdminUsageMultiplier 仅管理端可配置；nil 表示本次不修改。
 	AdminUsageMultiplier      *float64                       `json:"admin_usage_multiplier"`
@@ -337,7 +337,7 @@ type UpdateGroupRequest struct {
 type CompositeRouteRequest struct {
 	PublicModel    string `json:"public_model" binding:"required"`
 	MatchType      string `json:"match_type" binding:"omitempty,oneof=exact prefix"`
-	TargetPlatform string `json:"target_platform" binding:"required,oneof=anthropic openai gemini antigravity grok kimi zhipu deepseek minimax"`
+	TargetPlatform string `json:"target_platform" binding:"required,oneof=anthropic openai gemini antigravity grok kimi zhipu deepseek minimax opencode_go"`
 	UpstreamModel  string `json:"upstream_model"`
 	Endpoint       string `json:"endpoint" binding:"omitempty,oneof=any messages count_tokens responses chat_completions embeddings images gemini"`
 	Priority       int    `json:"priority"`

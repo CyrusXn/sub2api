@@ -60,10 +60,12 @@ describe('ProfilePasswordForm', () => {
     expect(wrapper.find('.input-error-text').exists()).toBe(false)
   })
 
-  it('shows API failures as toast messages', async () => {
-    changePasswordMock.mockRejectedValue({
-      response: { data: { detail: 'backend failure' } }
-    })
+  it.each([
+    [{ status: 400, code: 'PASSWORD_INCORRECT', message: 'current password is incorrect' }, '操作失败，请稍后重试。'],
+    [{ response: { data: { detail: 'backend failure' } } }, '操作失败，请稍后重试。'],
+    [{}, '操作失败，请稍后重试。'],
+  ])('shows API failure %j as a toast', async (error, expectedMessage) => {
+    changePasswordMock.mockRejectedValue(error)
 
     const wrapper = mount(ProfilePasswordForm)
 
@@ -73,7 +75,7 @@ describe('ProfilePasswordForm', () => {
     await wrapper.get('form').trigger('submit.prevent')
 
     expect(changePasswordMock).toHaveBeenCalledWith('old-password', 'new-password')
-    expect(showErrorMock).toHaveBeenCalledWith('backend failure')
+    expect(showErrorMock).toHaveBeenLastCalledWith(expectedMessage)
     expect(wrapper.find('.input-error-text').exists()).toBe(false)
   })
 })

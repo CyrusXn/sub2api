@@ -108,8 +108,8 @@ const mountView = () => mount(AccountsView, {
         template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
       },
       DataTable: {
-        props: ['data'],
-        template: '<div data-test="data-table"><div v-for="row in data" :key="row.id"><slot name="cell-select" :row="row" /></div></div>'
+        props: ['data', 'rowKey', 'selectedKeys'],
+        template: '<div data-test="data-table"><div v-for="row in data" :key="row[rowKey]"><input type="checkbox" :checked="selectedKeys.includes(row[rowKey])" /></div></div>'
       },
       Pagination: true,
       ConfirmDialog: true,
