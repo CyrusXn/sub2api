@@ -38,6 +38,13 @@ func clientRequestedUsageFields(c *gin.Context, mapping service.ChannelMappingRe
 	return mapping.ToUsageFields(clientRequestedModel(c, fallbackModel), upstreamModel)
 }
 
+func openAIResponsesUsageFields(c *gin.Context, mapping service.ChannelMappingResult, effectiveModel, upstreamModel string, rewritten bool) service.ChannelUsageFields {
+	if rewritten {
+		return mapping.ToUsageFields(effectiveModel, upstreamModel)
+	}
+	return clientRequestedUsageFields(c, mapping, effectiveModel, upstreamModel)
+}
+
 func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {
 	if svc == nil || c == nil || c.Request == nil {
 		return nil

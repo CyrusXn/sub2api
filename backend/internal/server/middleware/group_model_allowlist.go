@@ -50,17 +50,19 @@ func GroupModelAllowlist() gin.HandlerFunc {
 		// models 收集该请求全部可被下游解析器绑定到的模型值（路径参数/查询参数
 		// 单值；请求体候选集含重复键与大小写变体），逐一校验，任一未命中即拒绝。
 		var models []string
+		var requestBody []byte
 		if model := groupModelAllowlistModelFromParams(c); model != "" {
 			models = []string{model}
 		} else {
 			switch c.Request.Method {
 			case http.MethodPost, http.MethodPut, http.MethodPatch:
-				candidates, done := groupModelAllowlistModelsFromBody(c)
+				candidates, body, done := groupModelAllowlistModelsFromBody(c)
 				if !done {
 					// 请求体读取失败（如超限 413）已写出响应。
 					return
 				}
 				models = candidates
+				requestBody = body
 			}
 			if len(models) == 0 {
 				// Grok Realtime 升级请求把模型固定在查询参数里。
@@ -81,12 +83,27 @@ func GroupModelAllowlist() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if isResponsesHTTPRoute(c) && service.ShouldDeferOpenAICodexSubagentModelAllowlist(c, requestBody, models) {
+			c.Next()
+			return
+		}
 
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 		MarkIngressRejected(c, IngressRejectModelNotAllowed)
 		groupModelAllowlistErrorWriter(c)(c, http.StatusNotFound, fmt.Sprintf("Model %q is not available for this group", blocked))
 		c.Abort()
 	}
+}
+
+func isResponsesHTTPRoute(c *gin.Context) bool {
+	if c.Request == nil || c.Request.Method != http.MethodPost {
+		return false
+	}
+	switch c.FullPath() {
+	case "/v1/responses", "/responses", "/backend-api/codex/responses":
+		return true
+	}
+	return false
 }
 
 // isResponsesWebSocketRoute 判断当前请求是否命中 OpenAI Responses WebSocket
@@ -110,7 +127,7 @@ func isResponsesWebSocketRoute(c *gin.Context) bool {
 // 下游同时存在 gjson（首个、大小写敏感）、encoding/json 绑定（末值、大小写
 // 不敏感）与 multipart 表单（首/末字段）三类解析器，这里返回「任一解析器可能
 // 绑定到的全部模型值」，调用方必须逐一校验，任一未命中即拒绝。
-func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, bool) {
+func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, []byte, bool) {
 	body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -122,10 +139,10 @@ func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, bool) {
 		}
 		c.JSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
 		c.Abort()
-		return nil, false
+		return nil, nil, false
 	}
 	requestmodel.ResetRequestBody(c.Request, body)
-	return requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), body), true
+	return requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), body), body, true
 }
 
 // groupModelAllowlistModelFromParams 从路由参数提取模型名：Gemini 原生 URL 的

@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -138,6 +139,22 @@ func TestOpenAIForwardSucceededForScheduling(t *testing.T) {
 		OpenAIWSMode:          true,
 		UpstreamTerminalEvent: "response.failed",
 	}))
+}
+
+func TestOpenAIResponsesUsageFieldsUseEffectiveModelAfterSubagentRewrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), service.CompositeRouteDecision{
+		Matched: true, PublicModel: "codex-auto-review", TargetPlatform: service.PlatformOpenAI,
+	}))
+	mapping := service.ChannelMappingResult{BillingModelSource: service.BillingModelSourceRequested}
+
+	rewritten := openAIResponsesUsageFields(c, mapping, "gpt-5.6-sol", "gpt-5.6-sol", true)
+	require.Equal(t, "gpt-5.6-sol", rewritten.OriginalModel)
+
+	ordinary := openAIResponsesUsageFields(c, mapping, "gpt-5.6-sol", "gpt-5.6-sol", false)
+	require.Equal(t, "codex-auto-review", ordinary.OriginalModel)
 }
 
 func TestOpenAIResponsesRequiredCapability(t *testing.T) {
@@ -1530,6 +1547,42 @@ func TestOpenAIResponsesWebSocket_PassthroughTracksModelPerTurn(t *testing.T) {
 		"each turn must be billed with its own channel-mapped model")
 }
 
+func TestOpenAIResponsesWebSocket_SubagentModelInheritanceBeforeRouting(t *testing.T) {
+	cache := &openAICodexThreadModelHandlerCache{models: map[string]string{
+		"1801:parent-thread": "gpt-5.6-sol",
+	}}
+	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload:  `{"type":"response.create","model":"gpt-5.6-luna","stream":false}`,
+		secondPayload: `{"type":"response.create","model":"gpt-5.6-luna","stream":false}`,
+		headers: http.Header{
+			"X-Openai-Subagent":        []string{"collab_spawn"},
+			"X-Codex-Parent-Thread-Id": []string{"parent-thread"},
+		},
+		gatewayCache: cache,
+	})
+
+	require.Len(t, got.upstreamPayloads, 2)
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(got.upstreamPayloads[0], "model").String())
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(got.upstreamPayloads[1], "model").String())
+	require.Len(t, got.logs, 2)
+	require.Equal(t, "gpt-5.6-sol", got.logs[0].RequestedModel)
+	require.Equal(t, "gpt-5.6-sol", got.logs[1].RequestedModel)
+}
+
+func TestOpenAIResponsesWebSocket_ParentModelCacheTracksLaterTurns(t *testing.T) {
+	cache := &openAICodexThreadModelHandlerCache{}
+	runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload:  `{"type":"response.create","model":"gpt-5.6-sol","stream":false}`,
+		secondPayload: `{"type":"response.create","model":"gpt-5.6-terra","stream":false}`,
+		headers: http.Header{
+			"X-Codex-Turn-Metadata": []string{`{"thread_id":"parent-thread"}`},
+		},
+		gatewayCache: cache,
+	})
+
+	require.Equal(t, "gpt-5.6-terra", cache.models["1801:parent-thread"])
+}
+
 func TestOpenAIResponsesWebSocket_ChannelMappedTargetSelectsAccountWithoutRequestedAlias(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload:  `{"type":"response.create","model":"public-alias","stream":false}`,
@@ -1922,6 +1975,8 @@ type openAIResponsesWSUsageLogCase struct {
 	midPayload                string
 	secondPayload             string
 	userAgent                 *string
+	headers                   http.Header
+	gatewayCache              service.GatewayCache
 	ingressMode               string
 	channelMapping            map[string]string
 	billingModelSource        string
@@ -1933,6 +1988,75 @@ type openAIResponsesWSUsageLogCase struct {
 	firstFrameCloseExpected bool
 	// secondTurnCloseExpected：第二个 turn 被拒（连接被 1008 关闭）。
 	secondTurnCloseExpected bool
+}
+
+type openAICodexThreadModelHandlerCache struct {
+	models   map[string]string
+	sessions map[string]int64
+}
+
+func (c *openAICodexThreadModelHandlerCache) threadModelKey(apiKeyID int64, threadID string) string {
+	return fmt.Sprintf("%d:%s", apiKeyID, threadID)
+}
+
+func (c *openAICodexThreadModelHandlerCache) SetOpenAICodexThreadModel(_ context.Context, apiKeyID int64, threadID, model string, _ time.Duration) error {
+	if c.models == nil {
+		c.models = make(map[string]string)
+	}
+	c.models[c.threadModelKey(apiKeyID, threadID)] = model
+	return nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) GetOpenAICodexThreadModel(_ context.Context, apiKeyID int64, threadID string) (string, error) {
+	return c.models[c.threadModelKey(apiKeyID, threadID)], nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) GetSessionAccountID(_ context.Context, _ int64, sessionHash string) (int64, error) {
+	if accountID := c.sessions[sessionHash]; accountID > 0 {
+		return accountID, nil
+	}
+	return 0, service.ErrStickySessionNotFound
+}
+
+func (c *openAICodexThreadModelHandlerCache) SetSessionAccountID(_ context.Context, _ int64, sessionHash string, accountID int64, _ time.Duration) error {
+	if c.sessions == nil {
+		c.sessions = make(map[string]int64)
+	}
+	c.sessions[sessionHash] = accountID
+	return nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	return nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) DeleteSessionAccountID(_ context.Context, _ int64, sessionHash string) error {
+	delete(c.sessions, sessionHash)
+	return nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) SetGrokVideoPendingBilling(context.Context, string, []byte, time.Duration) error {
+	return nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) GetGrokVideoPendingBilling(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) ClaimGrokVideoBilled(context.Context, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) ReleaseGrokVideoBilled(context.Context, string) error {
+	return nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) SetReasoningContent(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
+func (c *openAICodexThreadModelHandlerCache) GetReasoningContent(context.Context, string) (string, error) {
+	return "", service.ErrReasoningContentNotFound
 }
 
 type openAIResponsesWSUsageLogResult struct {
@@ -1977,6 +2101,30 @@ type openAIHTTPPassthroughFailoverUpstream struct {
 	service.HTTPUpstream
 	mu         sync.Mutex
 	accountIDs []int64
+}
+
+type openAICodexModelCaptureUpstream struct {
+	service.HTTPUpstream
+	body []byte
+}
+
+func (u *openAICodexModelCaptureUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	u.body = body
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"resp_inherited","object":"response","model":"gpt-5.6-sol","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`,
+		)),
+	}, nil
+}
+
+func (u *openAICodexModelCaptureUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
 func (u *openAIHTTPPassthroughFailoverUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
@@ -2169,6 +2317,99 @@ func (s *openAIWSUsageHandlerChannelRepoStub) GetGroupPlatforms(ctx context.Cont
 		}
 	}
 	return out, nil
+}
+
+func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(4204)
+	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: service.Account{
+		ID: 9914, Name: "openai-http-inheritance", Platform: service.PlatformOpenAI,
+		Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
+		Extra:       map[string]any{"openai_passthrough": true},
+	}}
+	cache := &openAICodexThreadModelHandlerCache{models: map[string]string{
+		"1804:parent-thread": "gpt-5.6-terra",
+	}}
+	upstream := &openAICodexModelCaptureUpstream{}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Default.RateMultiplier = 1
+	cfg.Security.URLAllowlist.Enabled = false
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+	gatewaySvc := service.NewOpenAIGatewayService(
+		accountRepo, nil, nil, nil, nil, nil, cache, cfg, nil, nil,
+		service.NewBillingService(cfg, nil), nil, billingCacheSvc, upstream,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+	)
+	h := NewOpenAIGatewayHandler(
+		gatewaySvc,
+		service.NewConcurrencyService(nil),
+		billingCacheSvc,
+		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		nil, nil, nil, nil, cfg,
+	)
+
+	for _, tc := range []struct {
+		name             string
+		requestModel     string
+		requestBody      string
+		parentID         string
+		allowlistEnabled bool
+		allowedModel     string
+		wantStatus       int
+		wantUpstream     string
+	}{
+		{
+			name: "parent model wins", requestModel: "gpt-5.6-luna", parentID: "parent-thread",
+			allowlistEnabled: true, allowedModel: "gpt-5.6-terra", wantStatus: http.StatusOK, wantUpstream: "gpt-5.6-terra",
+		},
+		{
+			name: "fallback is checked against allowlist", requestModel: "codex-auto-review", parentID: "unknown",
+			allowlistEnabled: true, allowedModel: "gpt-5.6-terra", wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "fallback is routed", requestModel: "codex-auto-review", parentID: "unknown",
+			allowlistEnabled: true, allowedModel: "gpt-5.6-sol", wantStatus: http.StatusOK, wantUpstream: "gpt-5.6-sol",
+		},
+		{
+			name: "conflicting model fields are rejected", requestModel: "codex-auto-review", parentID: "unknown",
+			requestBody: `{"model":"codex-auto-review","Model":"gpt-5.6-luna","input":"hello","stream":false}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream.body = nil
+			requestBody := tc.requestBody
+			if requestBody == "" {
+				requestBody = `{"model":"` + tc.requestModel + `","input":"hello","stream":false}`
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(requestBody))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Request.Header.Set("x-openai-subagent", "guardian")
+			c.Request.Header.Set("x-codex-parent-thread-id", tc.parentID)
+			c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{
+				ID: 1804, GroupID: &groupID,
+				User: &service.User{ID: 1704, Status: service.StatusActive},
+				Group: &service.Group{
+					ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive,
+					ModelAllowlist: service.GroupModelAllowlist{Enabled: tc.allowlistEnabled, Models: []string{tc.allowedModel}},
+				},
+			})
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1704, Concurrency: 0})
+
+			h.Responses(c)
+
+			require.Equal(t, tc.wantStatus, rec.Code)
+			if tc.wantUpstream == "" {
+				require.Empty(t, upstream.body)
+			} else {
+				require.Equal(t, tc.wantUpstream, gjson.GetBytes(upstream.body, "model").String())
+			}
+		})
+	}
 }
 
 func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(t *testing.T) {
@@ -2971,7 +3212,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		nil,
 		nil,
 		nil,
-		nil,
+		tc.gatewayCache,
 		cfg,
 		nil,
 		nil,
@@ -3022,7 +3263,10 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	handlerServer := httptest.NewServer(router)
 	defer handlerServer.Close()
 
-	headers := http.Header{}
+	headers := tc.headers.Clone()
+	if headers == nil {
+		headers = make(http.Header)
+	}
 	if tc.userAgent != nil {
 		headers.Set("User-Agent", *tc.userAgent)
 	}

@@ -415,6 +415,24 @@ func TestGroupModelAllowlistMarksRejectionReasons(t *testing.T) {
 	// 此处至少验证拒绝原因可从 context 读取（MarkIngressRejected 生效）。
 }
 
+func TestGroupModelAllowlistDefersTrustedCodexSubagentModelToResponsesHandler(t *testing.T) {
+	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(true, "gpt-5.6-sol"), "/v1")
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"codex-auto-review"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-openai-subagent", "guardian")
+	req.Header.Set("x-codex-parent-thread-id", "parent-thread")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("trusted Codex subagent must be checked after model rewrite, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("expected Responses handler to run once, got %v", *calls)
+	}
+}
+
 func TestGroupModelAllowlistNilGroupPasses(t *testing.T) {
 	router, calls := newGroupModelAllowlistTestRouter(&service.APIKey{}, "/v1")
 	w := doJSON(t, router, http.MethodPost, "/v1/messages", `{"model":"whatever"}`)

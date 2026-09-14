@@ -458,6 +458,32 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	clientModelCandidates := requestmodel.FromBodyCandidates("", "application/json", body)
+	clientReqModel := reqModel
+	rewrittenBody, effectiveModel, subagentKind, rewritten := h.gatewayService.ApplyOpenAICodexSubagentModelInheritance(
+		c.Request.Context(), c, apiKey.ID, body, reqModel,
+	)
+	if rewritten && conflictingOpenAIModelCandidate(clientModelCandidates) != "" {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "conflicting model fields are not allowed")
+		return
+	}
+	if subagentKind != "" {
+		reqLog = reqLog.With(zap.String("subagent_kind", subagentKind))
+	}
+	if rewritten {
+		body = rewrittenBody
+		reqModel = effectiveModel
+		reqLog.Info("openai.codex_subagent_model_rewritten",
+			zap.String("client_model", clientReqModel),
+			zap.String("effective_model", reqModel),
+		)
+	}
+	if blocked := blockedModelAllowlistCandidate(apiKey.Group, requestmodel.FromBodyCandidates("", "application/json", body)); blocked != "" {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+		middleware2.MarkIngressRejected(c, middleware2.IngressRejectModelNotAllowed)
+		h.errorResponse(c, http.StatusNotFound, "model_not_found", fmt.Sprintf("Model %q is not available for this group", blocked))
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -611,7 +637,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	c.Request = c.Request.WithContext(service.WithOpenAIGuardianParentAffinity(
-		c.Request.Context(), c, sessionHashBody, reqModel,
+		c.Request.Context(), c, sessionHashBody, clientReqModel,
 	))
 	requireCompact := legacyCompact
 
@@ -777,7 +803,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyHTTP = sessionHashBody
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyHTTP, openAIResponsesUsageFields(c, channelMapping, reqModel, "", rewritten), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -818,7 +844,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					APIKeyService:      h.apiKeyService,
 					QuotaPlatform:      quotaPlatform,
 					SessionID:          sessionID,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
+					ChannelUsageFields: openAIResponsesUsageFields(c, channelMapping, reqModel, res.UpstreamModel, rewritten),
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
 					NativeCompactionV2: nativeV2,
@@ -2366,7 +2392,30 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
-	// 分组级模型白名单：首帧校验客户端模型，不通过则关闭连接并标记运维原因。
+	firstModelCandidates := requestmodel.FromBodyCandidates("", "application/json", firstMessage)
+	clientReqModel := reqModel
+	var rewrittenSubagentModel bool
+	rewrittenMessage, effectiveModel, subagentKind, rewritten := h.gatewayService.ApplyOpenAICodexSubagentModelInheritance(
+		c.Request.Context(), c, apiKey.ID, firstMessage, reqModel,
+	)
+	if rewritten && conflictingOpenAIModelCandidate(firstModelCandidates) != "" {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "conflicting model fields are not allowed")
+		return
+	}
+	if subagentKind != "" {
+		reqLog = reqLog.With(zap.String("subagent_kind", subagentKind))
+	}
+	if rewritten {
+		firstMessage = rewrittenMessage
+		reqModel = effectiveModel
+		rewrittenSubagentModel = true
+		reqLog.Info("openai.codex_subagent_model_rewritten",
+			zap.String("client_model", clientReqModel),
+			zap.String("effective_model", reqModel),
+		)
+	}
+	// 分组级模型白名单：普通请求校验客户端模型；可信子智能体校验改写后的生效模型。
+	// 不通过则关闭连接并标记运维原因。
 	// 必须在 ensureCompositeTargetPlatform（合成路由改写）之前执行。
 	// 与 HTTP 准入一致：帧内重复 model 键/大小写变体可能被上游按末值绑定，
 	// 全部候选值逐一校验，任一未命中即拒绝。
@@ -2507,7 +2556,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
 	)
-	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
+	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, clientReqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
 	profitVetoCount := 0
@@ -2783,8 +2832,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if !gjson.ValidBytes(payload) {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
 				}
+				if rewrittenSubagentModel && conflictingOpenAIModelCandidate(requestmodel.FromBodyCandidates("", "application/json", payload)) != "" {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "conflicting model fields are not allowed", nil)
+				}
 				model := strings.TrimSpace(originalModel)
-				if model == "" {
+				if rewrittenSubagentModel {
+					model = reqModel
+				} else if model == "" {
 					model = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
 				}
 				if model == "" {
@@ -2795,7 +2849,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 则关闭整条连接，与推理强度 deny 一致。实际生效模型始终参与校验；
 				// 帧内重复 model 键/大小写变体/嵌套 session.model 额外逐一校验，
 				// 防止候选集非空时掩盖被轮换掉的禁用模型。
-				candidates := append([]string{model}, requestmodel.FromBodyCandidates("", "application/json", payload)...)
+				candidates := []string{model}
+				if !rewrittenSubagentModel {
+					candidates = append(candidates, requestmodel.FromBodyCandidates("", "application/json", payload)...)
+				}
 				if blocked := blockedModelAllowlistCandidate(apiKey.Group, candidates); blocked != "" {
 					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 					middleware2.MarkIngressRejected(c, middleware2.IngressRejectModelNotAllowed)
@@ -2805,11 +2862,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
 					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
+				if !rewrittenSubagentModel {
+					// 父线程可在同一 WS 连接中切换模型；只在本 turn 已通过准入后刷新，
+					// 避免后续子智能体继承首帧的旧模型。
+					h.gatewayService.ApplyOpenAICodexSubagentModelInheritance(ctx, c, apiKey.ID, payload, model)
+				}
 				return nil
 			},
 			MapRequestModel: func(turn int, originalModel string) (string, error) {
 				model := strings.TrimSpace(originalModel)
-				if model == "" {
+				if rewrittenSubagentModel {
+					model = reqModel
+				} else if model == "" {
 					model = reqModel
 				}
 				setOpsRequestContext(c, model, true)
@@ -2883,7 +2947,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				releaseTurnSlots()
 				turnRequestedModel := reqModel
 				turnUpstreamModel := ""
-				if result != nil && turn > 1 {
+				if result != nil && turn > 1 && !rewrittenSubagentModel {
 					if model := strings.TrimSpace(result.Model); model != "" {
 						turnRequestedModel = model
 					}
@@ -3730,6 +3794,21 @@ func blockedModelAllowlistCandidate(group *service.Group, candidates []string) s
 		if !group.ModelAllowlist.Allows(candidate) {
 			return candidate
 		}
+	}
+	return ""
+}
+
+func conflictingOpenAIModelCandidate(candidates []string) string {
+	model := ""
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if model != "" && model != candidate {
+			return candidate
+		}
+		model = candidate
 	}
 	return ""
 }

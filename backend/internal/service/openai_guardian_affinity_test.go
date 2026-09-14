@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,7 +12,193 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+type codexThreadModelTestCache struct {
+	GatewayCache
+	models map[string]string
+	ttls   map[string]time.Duration
+}
+
+func codexThreadModelTestKey(apiKeyID int64, threadID string) string {
+	return fmt.Sprintf("%d:%s", apiKeyID, threadID)
+}
+
+func (c *codexThreadModelTestCache) SetOpenAICodexThreadModel(_ context.Context, apiKeyID int64, threadID, model string, ttl time.Duration) error {
+	if c.models == nil {
+		c.models = make(map[string]string)
+	}
+	if c.ttls == nil {
+		c.ttls = make(map[string]time.Duration)
+	}
+	key := codexThreadModelTestKey(apiKeyID, threadID)
+	c.models[key] = model
+	c.ttls[key] = ttl
+	return nil
+}
+
+func (c *codexThreadModelTestCache) GetOpenAICodexThreadModel(_ context.Context, apiKeyID int64, threadID string) (string, error) {
+	return c.models[codexThreadModelTestKey(apiKeyID, threadID)], nil
+}
+
+func codexThreadModelGinContext(t *testing.T, path, subagent, parentID, metadata string) *gin.Context {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, path, nil)
+	if subagent != "" {
+		c.Request.Header.Set(openAISubagentHeader, subagent)
+	}
+	if parentID != "" {
+		c.Request.Header.Set(codexParentThreadIDHeader, parentID)
+	}
+	if metadata != "" {
+		c.Request.Header.Set(codexTurnMetadataHeader, metadata)
+	}
+	return c
+}
+
+func TestApplyOpenAICodexSubagentModelInheritance_MainThreadAndChildren(t *testing.T) {
+	cache := &codexThreadModelTestCache{}
+	svc := &OpenAIGatewayService{cache: cache, cfg: &config.Config{}}
+	parentID := "parent-thread"
+
+	parentCtx := codexThreadModelGinContext(t, "/openai/v1/responses", "", "", `{"thread_id":"parent-thread"}`)
+	parentBody := []byte(`{"model":"gpt-5.6-sol","client_metadata":{"thread_id":"parent-thread"}}`)
+	gotBody, gotModel, kind, inherited := svc.ApplyOpenAICodexSubagentModelInheritance(context.Background(), parentCtx, 101, parentBody, "gpt-5.6-sol")
+	require.False(t, inherited)
+	require.Empty(t, kind)
+	require.Equal(t, "gpt-5.6-sol", gotModel)
+	require.JSONEq(t, string(parentBody), string(gotBody))
+	require.Equal(t, "gpt-5.6-sol", cache.models[codexThreadModelTestKey(101, parentID)])
+	require.Equal(t, openaiStickySessionTTL, cache.ttls[codexThreadModelTestKey(101, parentID)])
+
+	unsupportedParentBody := []byte(`{"model":"gpt-5.6-luna","client_metadata":{"thread_id":"parent-thread"}}`)
+	svc.ApplyOpenAICodexSubagentModelInheritance(context.Background(), parentCtx, 101, unsupportedParentBody, "gpt-5.6-luna")
+	require.Equal(t, "gpt-5.6-sol", cache.models[codexThreadModelTestKey(101, parentID)], "不支持的模型不能覆盖父线程已记录的可用模型")
+
+	for _, tc := range []struct {
+		name     string
+		kind     string
+		model    string
+		body     []byte
+		context  *gin.Context
+		wantPath string
+	}{
+		{
+			name: "collab spawn HTTP", kind: "collab_spawn", model: "gpt-5.6-luna",
+			body:     []byte(`{"model":"gpt-5.6-luna"}`),
+			context:  codexThreadModelGinContext(t, "/openai/v1/responses", "collab_spawn", parentID, ""),
+			wantPath: "model",
+		},
+		{
+			name: "guardian websocket envelope", kind: "guardian", model: codexAutoReviewModel,
+			body:     []byte(`{"type":"response.create","response":{"model":"codex-auto-review","client_metadata":{"x-codex-turn-metadata":"{\"parent_thread_id\":\"parent-thread\",\"subagent_kind\":\"guardian\"}"}}}`),
+			context:  codexThreadModelGinContext(t, "/openai/v1/responses", "", "", ""),
+			wantPath: "response.model",
+		},
+		{
+			name: "review metadata", kind: "review", model: "gpt-5.6-luna",
+			body:     []byte(`{"model":"gpt-5.6-luna"}`),
+			context:  codexThreadModelGinContext(t, "/openai/v1/responses", "review", parentID, `{"parent_thread_id":"parent-thread","subagent_kind":"review"}`),
+			wantPath: "model",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			updated, effective, gotKind, changed := svc.ApplyOpenAICodexSubagentModelInheritance(context.Background(), tc.context, 101, tc.body, tc.model)
+			require.True(t, changed)
+			require.Equal(t, tc.kind, gotKind)
+			require.Equal(t, "gpt-5.6-sol", effective)
+			require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(updated, tc.wantPath).String())
+		})
+	}
+}
+
+func TestApplyOpenAICodexSubagentModelInheritance_DefaultsUnsupportedChildModelWhenParentUnavailable(t *testing.T) {
+	cache := &codexThreadModelTestCache{}
+	svc := &OpenAIGatewayService{cache: cache, cfg: &config.Config{}}
+
+	tests := []struct {
+		name   string
+		kind   string
+		parent string
+		model  string
+	}{
+		{name: "guardian cache miss", kind: "guardian", parent: "unknown", model: codexAutoReviewModel},
+		{name: "review missing parent", kind: "review", model: codexAutoReviewModel},
+		{name: "collab spawn cache miss", kind: "collab_spawn", parent: "unknown", model: "gpt-5.6-luna"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"` + tc.model + `"}`)
+			c := codexThreadModelGinContext(t, "/openai/v1/responses", tc.kind, tc.parent, "")
+			updated, effective, gotKind, changed := svc.ApplyOpenAICodexSubagentModelInheritance(
+				context.Background(), c, 101, body, tc.model,
+			)
+
+			require.True(t, changed)
+			require.Equal(t, tc.kind, gotKind)
+			require.Equal(t, "gpt-5.6-sol", effective)
+			require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(updated, "model").String())
+		})
+	}
+}
+
+func TestApplyOpenAICodexSubagentModelInheritance_DoesNotInheritUnsupportedParentModel(t *testing.T) {
+	cache := &codexThreadModelTestCache{models: map[string]string{
+		codexThreadModelTestKey(101, "parent-thread"): "gpt-5.6-luna",
+	}}
+	svc := &OpenAIGatewayService{cache: cache, cfg: &config.Config{}}
+	c := codexThreadModelGinContext(t, "/openai/v1/responses", "guardian", "parent-thread", "")
+	body := []byte(`{"model":"codex-auto-review"}`)
+
+	updated, effective, _, changed := svc.ApplyOpenAICodexSubagentModelInheritance(
+		context.Background(), c, 101, body, codexAutoReviewModel,
+	)
+
+	require.True(t, changed)
+	require.Equal(t, openAICodexSubagentFallbackModel, effective)
+	require.Equal(t, openAICodexSubagentFallbackModel, gjson.GetBytes(updated, "model").String())
+}
+
+func TestApplyOpenAICodexSubagentModelInheritance_FailsOpenWithoutTrustedLineage(t *testing.T) {
+	cache := &codexThreadModelTestCache{models: map[string]string{
+		codexThreadModelTestKey(101, "parent-thread"): "gpt-5.6-terra",
+	}}
+	svc := &OpenAIGatewayService{cache: cache, cfg: &config.Config{}}
+
+	tests := []struct {
+		name   string
+		path   string
+		kind   string
+		parent string
+		meta   string
+		body   []byte
+		apiKey int64
+		model  string
+	}{
+		{name: "conflicting parent", path: "/openai/v1/responses", kind: "guardian", parent: "parent-thread", meta: `{"parent_thread_id":"different","subagent_kind":"guardian"}`, body: []byte(`{"model":"codex-auto-review"}`), apiKey: 101, model: codexAutoReviewModel},
+		{name: "conflicting subagent", path: "/openai/v1/responses", kind: "guardian", parent: "parent-thread", meta: `{"parent_thread_id":"parent-thread","subagent_kind":"review"}`, body: []byte(`{"model":"codex-auto-review"}`), apiKey: 101, model: codexAutoReviewModel},
+		{name: "memory consolidation", path: "/openai/v1/responses", kind: "memory_consolidation", parent: "parent-thread", body: []byte(`{"model":"gpt-5.6-luna"}`), apiKey: 101, model: "gpt-5.6-luna"},
+		{name: "unknown subagent", path: "/openai/v1/responses", kind: "future_kind", parent: "parent-thread", body: []byte(`{"model":"gpt-5.6-luna"}`), apiKey: 101, model: "gpt-5.6-luna"},
+		{name: "supported child model", path: "/openai/v1/responses", kind: "collab_spawn", parent: "unknown", body: []byte(`{"model":"gpt-5.6-terra"}`), apiKey: 101, model: "gpt-5.6-terra"},
+		{name: "compact", path: "/openai/v1/responses/compact", body: []byte(`{"model":"gpt-5.6-luna","client_metadata":{"thread_id":"parent-thread"}}`), apiKey: 101, model: "gpt-5.6-luna"},
+		{name: "native user Luna", path: "/openai/v1/responses", body: []byte(`{"model":"gpt-5.6-luna"}`), apiKey: 101, model: "gpt-5.6-luna"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := codexThreadModelGinContext(t, tc.path, tc.kind, tc.parent, tc.meta)
+			updated, effective, _, changed := svc.ApplyOpenAICodexSubagentModelInheritance(context.Background(), c, tc.apiKey, tc.body, tc.model)
+			require.False(t, changed)
+			require.Equal(t, tc.model, effective)
+			require.JSONEq(t, string(tc.body), string(updated))
+		})
+	}
+}
 
 type guardianAffinityGroupRepo struct {
 	GroupRepository

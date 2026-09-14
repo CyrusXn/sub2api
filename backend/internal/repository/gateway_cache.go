@@ -16,6 +16,7 @@ import (
 
 const stickySessionPrefix = "sticky_session:"
 const openAIResponsesSessionWindowPrefix = "openai_responses_session_window:"
+const openAICodexThreadModelPrefix = "openai_codex_thread_model:"
 const liveCallPrefix = "live:call:"
 
 type gatewayCache struct {
@@ -35,6 +36,40 @@ func buildSessionKey(groupID int64, sessionHash string) string {
 func buildOpenAIResponsesSessionWindowKey(groupID int64, sessionHash string) string {
 	return fmt.Sprintf("%s%d:%s", openAIResponsesSessionWindowPrefix, groupID, sessionHash)
 }
+
+func buildOpenAICodexThreadModelKey(apiKeyID int64, threadID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(threadID)))
+	return fmt.Sprintf("%s%d:%s", openAICodexThreadModelPrefix, apiKeyID, hex.EncodeToString(sum[:]))
+}
+
+func (c *gatewayCache) SetOpenAICodexThreadModel(ctx context.Context, apiKeyID int64, threadID, model string, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	threadID = strings.TrimSpace(threadID)
+	model = strings.TrimSpace(model)
+	if apiKeyID <= 0 || threadID == "" || model == "" || ttl <= 0 {
+		return errors.New("invalid OpenAI Codex thread model")
+	}
+	return c.rdb.Set(ctx, buildOpenAICodexThreadModelKey(apiKeyID, threadID), model, ttl).Err()
+}
+
+func (c *gatewayCache) GetOpenAICodexThreadModel(ctx context.Context, apiKeyID int64, threadID string) (string, error) {
+	if c == nil || c.rdb == nil {
+		return "", errors.New("gateway cache unavailable")
+	}
+	threadID = strings.TrimSpace(threadID)
+	if apiKeyID <= 0 || threadID == "" {
+		return "", errors.New("invalid OpenAI Codex thread model key")
+	}
+	model, err := c.rdb.Get(ctx, buildOpenAICodexThreadModelKey(apiKeyID, threadID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return strings.TrimSpace(model), err
+}
+
+var _ service.OpenAICodexThreadModelCache = (*gatewayCache)(nil)
 
 func (c *gatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	key := buildSessionKey(groupID, sessionHash)
