@@ -20,7 +20,13 @@ func TestAPIKeyCacheSubscriber_BlocksUntilContextCancellation(t *testing.T) {
 	received := make(chan string, 1)
 	returned := make(chan error, 1)
 	go func() {
-		returned <- cache.SubscribeAuthCacheInvalidation(ctx, func(value string) { received <- value })
+		returned <- cache.SubscribeAuthCacheInvalidation(ctx, func(value string) {
+			// 重复探测消息无需积压，避免测试回调阻塞订阅协程的取消处理。
+			select {
+			case received <- value:
+			default:
+			}
+		})
 	}()
 
 	var value string
