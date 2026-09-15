@@ -59,7 +59,7 @@ func (r *alertEmailOutboxRepository) ClaimAlertEmailBatch(ctx context.Context, n
 	}
 	rows, err := r.db.QueryContext(ctx, `
 WITH anchor AS (
-    SELECT id, recipient_email, aggregate_until
+    SELECT id, source_type, recipient_email, aggregate_until
     FROM alert_email_outbox
     WHERE status = 'pending'
       AND available_at <= $1
@@ -72,6 +72,10 @@ WITH anchor AS (
     FROM alert_email_outbox AS queued
     JOIN anchor ON anchor.recipient_email = queued.recipient_email
     WHERE queued.status = 'pending'
+      -- 欢迎邮件逐用户独立投递，不与告警或其他用户的欢迎邮件聚合。
+      AND (queued.id = anchor.id OR (
+          anchor.source_type <> 'user_welcome' AND queued.source_type <> 'user_welcome'
+      ))
       -- 同批候选也必须到达重试时间，避免反复认领未到期或暂停的旧邮件。
       AND queued.available_at <= $1
       AND queued.created_at <= anchor.aggregate_until
