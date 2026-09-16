@@ -64,9 +64,9 @@ func TestPrepareUsageLogInsert_PersistsUpstreamCostSnapshots(t *testing.T) {
 		UpstreamGroupRateMultiplier: &rate,
 	})
 
-	// 列顺序：… upstream_cost_base, upstream_group_rate_multiplier, session_id, native_compaction_v2, created_at
-	require.Equal(t, &base, prepared.args[len(prepared.args)-5])
-	require.Equal(t, &rate, prepared.args[len(prepared.args)-4])
+	// 列顺序：… upstream_cost_base, upstream_group_rate_multiplier, upstream_request_id, session_id, native_compaction_v2, created_at
+	require.Equal(t, &base, prepared.args[len(prepared.args)-6])
+	require.Equal(t, &rate, prepared.args[len(prepared.args)-5])
 }
 
 // TestPrepareUsageLogInsert_SessionIDNullWhenAbsent proves an absent session id is

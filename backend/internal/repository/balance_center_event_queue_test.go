@@ -24,9 +24,13 @@ func TestBalanceCenterEventQueueMergesSameAccount(t *testing.T) {
 
 	due, err := queue.PopDue(ctx, first.Add(90*time.Second), 20)
 	require.NoError(t, err)
-	require.Equal(t, []int64{23}, due)
+	require.Equal(t, []int64{17, 23}, due)
 
 	due, err = queue.PopDue(ctx, first.Add(3*time.Minute), 20)
+	require.NoError(t, err)
+	require.Empty(t, due)
+	require.NoError(t, queue.Schedule(ctx, 17, first.Add(4*time.Minute)))
+	due, err = queue.PopDue(ctx, first.Add(4*time.Minute), 20)
 	require.NoError(t, err)
 	require.Equal(t, []int64{17}, due)
 }

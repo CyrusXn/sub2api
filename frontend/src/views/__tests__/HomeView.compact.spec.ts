@@ -56,13 +56,13 @@ function mountHome(settings: Record<string, unknown> = {}) {
 }
 
 function compactDestination(wrapper: ReturnType<typeof mountHome>) {
-  return wrapper.get('[data-testid="compact-home"]').findComponent(RouterLinkStub).props('to')
+  return wrapper.get('[data-testid="compact-home"] main').findComponent(RouterLinkStub).props('to')
 }
 
 function modelPlazaDestination(wrapper: ReturnType<typeof mountHome>) {
   return wrapper
     .findAllComponents(RouterLinkStub)
-    .find((link) => link.props('to') === '/model-plaza')
+    .find((link) => link.props('to') === '/model-factory')
     ?.props('to')
 }
 
@@ -138,17 +138,17 @@ describe('HomeView compact mode', () => {
       model_plaza_require_auth: false,
     })
 
-    expect(modelPlazaDestination(wrapper)).toBe('/model-plaza')
+    expect(modelPlazaDestination(wrapper)).toBe('/model-factory')
   })
 
-  it('hides the model plaza link from anonymous visitors when sign-in is required', () => {
+  it('keeps the public catalog visible when the legacy plaza requires sign-in', () => {
     const wrapper = mountHome({
       compact_home_enabled: true,
       model_plaza_enabled: true,
       model_plaza_require_auth: true,
     })
 
-    expect(modelPlazaDestination(wrapper)).toBeUndefined()
+    expect(modelPlazaDestination(wrapper)).toBe('/model-factory')
   })
 
   it('shows the model plaza link to authenticated visitors when sign-in is required', () => {
@@ -160,7 +160,7 @@ describe('HomeView compact mode', () => {
       model_plaza_require_auth: true,
     })
 
-    expect(modelPlazaDestination(wrapper)).toBe('/model-plaza')
+    expect(modelPlazaDestination(wrapper)).toBe('/model-factory')
   })
 
   it('shows the model plaza link in the default home header', () => {
@@ -169,16 +169,18 @@ describe('HomeView compact mode', () => {
       model_plaza_require_auth: false,
     })
 
-    expect(modelPlazaDestination(wrapper)).toBe('/model-plaza')
+    expect(modelPlazaDestination(wrapper)).toBe('/model-factory')
+    expect(wrapper.get('main').findAllComponents(RouterLinkStub).map(link => link.props('to')))
+      .toEqual(['/login', '/model-factory'])
   })
 
-  it('hides the model plaza link when the feature is disabled', () => {
+  it('keeps the public catalog visible when the legacy plaza is disabled', () => {
     const wrapper = mountHome({
       compact_home_enabled: true,
       model_plaza_enabled: false,
       model_plaza_require_auth: false,
     })
 
-    expect(modelPlazaDestination(wrapper)).toBeUndefined()
+    expect(modelPlazaDestination(wrapper)).toBe('/model-factory')
   })
 })

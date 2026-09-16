@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -118,16 +119,17 @@ type UpstreamBillingProbeSettings struct {
 // UpstreamBillingProbeSnapshot is persisted in accounts.extra. Data is kept as
 // a sanitized map so future response fields do not require a database change.
 type UpstreamBillingProbeSnapshot struct {
-	Status        string                          `json:"status"`
-	Data          map[string]any                  `json:"data,omitempty"`
-	Balance       *UpstreamAccountBalanceSnapshot `json:"balance,omitempty"`
-	ReceivedAt    *time.Time                      `json:"received_at,omitempty"`
-	FreshUntil    *time.Time                      `json:"fresh_until,omitempty"`
-	LastAttemptAt time.Time                       `json:"last_attempt_at"`
-	NextProbeAt   time.Time                       `json:"next_probe_at"`
-	FailureCount  int                             `json:"failure_count,omitempty"`
-	HTTPStatus    int                             `json:"http_status,omitempty"`
-	LastError     string                          `json:"last_error,omitempty"`
+	Subscription  *UpstreamSubscriptionRateObservation `json:"subscription,omitempty"`
+	Status        string                               `json:"status"`
+	Data          map[string]any                       `json:"data,omitempty"`
+	Balance       *UpstreamAccountBalanceSnapshot      `json:"balance,omitempty"`
+	ReceivedAt    *time.Time                           `json:"received_at,omitempty"`
+	FreshUntil    *time.Time                           `json:"fresh_until,omitempty"`
+	LastAttemptAt time.Time                            `json:"last_attempt_at"`
+	NextProbeAt   time.Time                            `json:"next_probe_at"`
+	FailureCount  int                                  `json:"failure_count,omitempty"`
+	HTTPStatus    int                                  `json:"http_status,omitempty"`
+	LastError     string                               `json:"last_error,omitempty"`
 	// SyncedRateMultiplier records the value this probe wrote into
 	// accounts.rate_multiplier. It is only set when the account opted into rate
 	// sync and the declared value passed the write-back range check, so the
@@ -2101,6 +2103,7 @@ func (s *UpstreamBillingProbeService) updateSnapshot(
 	if !ok {
 		return ErrUpstreamBillingProbeUnavailable
 	}
+	s.observeSubscriptionRate(ctx, account, snapshot)
 	if err := writer.UpdateUpstreamBillingProbeSnapshot(ctx, account, snapshot, rateMultiplier); err != nil {
 		return err
 	}
@@ -2146,18 +2149,19 @@ func buildBalanceCenterProbeSnapshot(account *Account, snapshot *UpstreamBilling
 		siteName = bracketed
 	}
 	result := &BalanceCenterSnapshot{
-		AccountID:        &accountID,
-		AccountName:      strings.TrimSpace(account.Name),
-		SiteName:         siteName,
-		NormalizedDomain: normalizedDomain,
-		BaseURL:          baseURL,
-		Source:           "sub2api_probe",
-		SourceKey:        fmt.Sprintf("sub2api_probe:%d:%d", account.ID, snapshot.LastAttemptAt.UnixNano()),
-		Status:           snapshot.Status,
-		ConversionScale:  balanceCenterProbeConversionScale(account),
-		Reason:           snapshot.LastError,
-		ProbedAt:         snapshot.LastAttemptAt,
-		LastUsedAt:       account.LastUsedAt,
+		RechargeKeyFingerprint: fmt.Sprintf("%x", md5.Sum([]byte(account.GetCredential("api_key")))),
+		AccountID:              &accountID,
+		AccountName:            strings.TrimSpace(account.Name),
+		SiteName:               siteName,
+		NormalizedDomain:       normalizedDomain,
+		BaseURL:                baseURL,
+		Source:                 "sub2api_probe",
+		SourceKey:              fmt.Sprintf("sub2api_probe:%d:%d", account.ID, snapshot.LastAttemptAt.UnixNano()),
+		Status:                 snapshot.Status,
+		ConversionScale:        balanceCenterProbeConversionScale(account),
+		Reason:                 snapshot.LastError,
+		ProbedAt:               snapshot.LastAttemptAt,
+		LastUsedAt:             account.LastUsedAt,
 	}
 	if result.SiteName == "" {
 		result.SiteName = normalizedDomain

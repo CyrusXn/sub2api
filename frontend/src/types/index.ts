@@ -1059,6 +1059,16 @@ export interface UpstreamBillingData {
 export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed'
 
 export interface UpstreamBillingProbeSnapshot {
+  subscription?: {
+    key_fingerprint: string
+    subscription_id: number
+    rate: number
+    remaining_usd?: number
+    expires_at: string
+    observed_at: string
+    fresh_until: string
+    error?: string
+  }
   status: UpstreamBillingProbeStatus
   data?: UpstreamBillingData
   manual_rate_multiplier?: number

@@ -37,7 +37,7 @@ func RegisterAdminRoutes(
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
-		// 模型工厂尚在调整，必须通过管理员认证后才能读取。
+		// 保留旧管理端接口，用户端通过独立的已登录路由读取同一公开目录。
 		admin.GET("/model-factory", h.ModelFactory.Get)
 
 		// 用户管理

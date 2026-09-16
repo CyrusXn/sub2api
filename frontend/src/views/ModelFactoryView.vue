@@ -1,5 +1,5 @@
 <template>
-  <AppLayout>
+  <AppLayout v-if="authStore.isAuthenticated">
     <ModelPlazaContent
       :response="data"
       :loading="loading"
@@ -9,44 +9,42 @@
       description-key="modelFactory.description"
     />
   </AppLayout>
+  <div v-else class="min-h-screen bg-gray-50 dark:bg-dark-950">
+    <PlazaNavBar />
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <ModelPlazaContent
+        :response="data"
+        :loading="loading"
+        :error="loadFailed"
+        hide-anonymous-hint
+        title-key="modelFactory.title"
+        description-key="modelFactory.description"
+      />
+    </main>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PlazaNavBar from '@/components/modelPlaza/PlazaNavBar.vue'
+import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
 import ModelPlazaContent from '@/components/modelPlaza/ModelPlazaContent.vue'
 import { getModelFactory } from '@/api/modelFactory'
 import type { ModelPlazaResponse } from '@/api/modelPlaza'
 
 const data = ref<ModelPlazaResponse | null>(null)
+const authStore = useAuthStore()
+const appStore = useAppStore()
 const loading = ref(true)
 const loadFailed = ref(false)
 
 async function loadModelFactory() {
-  // 模型工厂每次进入页面都重新拉取，确保展示当前分组账号的最新模型集合。
+  loading.value = true
+  loadFailed.value = false
   try {
-    const result = await getModelFactory()
-    // 复用模型广场成熟的筛选与展示表格，模型工厂只提供账号模型名称和分组倍率。
-    data.value = {
-      description: '',
-      groups: result.groups.map((group) => ({
-        id: group.id,
-        name: group.name,
-        description: '',
-        platform: group.platform,
-        subscription_type: 'standard',
-        rate_multiplier: group.rate_multiplier,
-        peak_rate_enabled: false,
-        peak_start: '',
-        peak_end: '',
-        peak_rate_multiplier: 1,
-        is_exclusive: false,
-        image_rate_independent: false,
-        image_rate_multiplier: 1,
-        long_context_pricing_enabled: false,
-        models: group.models.map((name) => ({ name, platform: group.platform, pricing: null, official_pricing: null }))
-      }))
-    }
+    data.value = await getModelFactory()
   } catch {
     loadFailed.value = true
   } finally {
@@ -55,6 +53,7 @@ async function loadModelFactory() {
 }
 
 onMounted(() => {
+  void appStore.fetchPublicSettings()
   void loadModelFactory()
   window.addEventListener('model-factory-refresh', loadModelFactory)
 })

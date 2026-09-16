@@ -5,9 +5,12 @@ import zhBusinessHistory from '@/i18n/locales/zh/admin/businessHistory'
 import enBusinessHistory from '@/i18n/locales/en/admin/businessHistory'
 
 const getBusinessSummary = vi.hoisted(() => vi.fn())
+const assets = vi.hoisted(() => vi.fn())
+const rechargeSummary = vi.hoisted(() => vi.fn())
 const notifications = vi.hoisted(() => ({ showError: vi.fn() }))
 
 vi.mock('@/api/admin', () => ({ adminAPI: { dashboard: { getBusinessSummary } } }))
+vi.mock('@/api/admin/balanceCenter', () => ({ balanceCenterAPI: { assets, rechargeSummary } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => notifications }))
 vi.mock('vue-i18n', async () => ({
   ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
@@ -22,6 +25,10 @@ vi.mock('vue-chartjs', () => ({
 }))
 
 const response = {
+  profit_history: [
+    { bucket_date: '2026-08-16', cumulative_profit: 13081.93, daily_profit: null, captured_at: '2026-08-16T15:59:30Z', status: 'snapshot' },
+    { bucket_date: '2026-08-17', cumulative_profit: 13581.93, daily_profit: 500, captured_at: '2026-08-17T02:00:00Z', status: 'current' }
+  ],
   // 实账样例故意与请求估算不同，防止卡片退回估算口径。
   ledger: {
     cash_balance: 600, subscription_balance: 78.9, total_balance: 678.9,
@@ -81,7 +88,8 @@ const mountView = () => mount(BusinessHistoryView, {
     stubs: {
       AppLayout: { template: '<div><slot /></div>' },
       Icon: true,
-      LoadingSpinner: true
+      LoadingSpinner: true,
+      BaseDialog: { props: ['show', 'title'], template: '<div v-if="show" data-test="details-dialog"><h2>{{ title }}</h2><slot /></div>' }
     }
   }
 })
@@ -93,6 +101,8 @@ describe('BusinessHistoryView', () => {
     getBusinessSummary.mockReset()
     getBusinessSummary.mockResolvedValue(response)
     notifications.showError.mockReset()
+    assets.mockReset()
+    rechargeSummary.mockReset()
   })
 
   afterEach(() => vi.useRealTimers())
@@ -156,17 +166,54 @@ describe('BusinessHistoryView', () => {
     expect(getBusinessSummary).toHaveBeenLastCalledWith({ start_date: '2026-08-01', end_date: '2026-08-10' })
   })
 
-  it('按日期升序展示每日汇总并向趋势图传递同一顺序', async () => {
+  it('每日明细倒序、趋势图升序，累计收益读取全部历史账本口径', async () => {
     const wrapper = mountView()
     await flushPromises()
 
     const rows = wrapper.findAll('[data-test="history-daily-row"]')
     expect(rows).toHaveLength(2)
-    expect(rows[0].text()).toContain('2026-08-16')
-    expect(rows[1].text()).toContain('2026-08-17')
+    expect(rows[0].text()).toContain('2026-08-17')
+    expect(rows[1].text()).toContain('2026-08-16')
+    expect(rows[0].get('[data-test="history-cumulative-profit"]').text()).toBe('¥13,581.93')
+    expect(rows[1].get('[data-test="history-cumulative-profit"]').text()).toBe('¥13,081.93')
 
     const chart = wrapper.findComponent({ name: 'Line' })
     expect((chart.props('data') as any).labels).toEqual(['2026-08-16', '2026-08-17'])
+  })
+
+  it('余额弹窗显示每站现金与订阅合计，未知资产不能计为零', async () => {
+    assets.mockResolvedValue([
+      { site_id: 1, site_name: '站点甲', domain: 'a.example.com', cash_balance: 10, subscription_balance: 20, total_balance: 30, balance_known: true },
+      { site_id: 2, site_name: '站点乙', domain: 'b.example.com', cash_balance: 5, subscription_balance: null, total_balance: null, balance_known: false }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="open-balance-details"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-test="balance-detail-row"]')).toHaveLength(2)
+    expect(wrapper.get('[data-test="balance-detail-total"]').text()).toBe('--')
+  })
+
+  it('充值弹窗不带日期筛选，按站点列出充值记录', async () => {
+    rechargeSummary.mockResolvedValue({ total_amount: 80, sites: [{ site_id: 1, site_name: '站点甲', total_amount: 80, items: [{ id: 1, occurred_at: '2026-08-16T01:00:00Z', amount: 80, record_type: 'recharge', note: '余额增量自动识别' }] }] })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="open-recharge-details"]').trigger('click')
+    await flushPromises()
+    expect(rechargeSummary).toHaveBeenCalledWith({})
+    expect(wrapper.get('[data-test="recharge-detail-row"]').text()).toContain('¥80.00')
+    expect(wrapper.get('[data-test="details-dialog"]').text()).toContain('站点甲')
+  })
+
+  it('总收益弹窗倒序展示当天与截至当天累计，缺失快照显示空值', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="open-profit-details"]').trigger('click')
+    const rows = wrapper.findAll('[data-test="profit-detail-row"]')
+    expect(rows[0].text()).toContain('2026-08-17')
+    expect(rows[0].text()).toContain('¥500.00')
+    expect(rows[0].text()).toContain('¥13,581.93')
+    expect(rows[1].text()).toContain('--')
   })
 
   it('历史边界缺失不阻止累计公式，当前余额仍参与计算', async () => {

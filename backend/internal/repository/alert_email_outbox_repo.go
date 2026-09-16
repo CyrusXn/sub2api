@@ -72,9 +72,10 @@ WITH anchor AS (
     FROM alert_email_outbox AS queued
     JOIN anchor ON anchor.recipient_email = queued.recipient_email
     WHERE queued.status = 'pending'
-      -- 欢迎邮件逐用户独立投递，不与告警或其他用户的欢迎邮件聚合。
+      -- 欢迎及充值成功邮件独立投递，保留对应用户或站点的原始主题。
       AND (queued.id = anchor.id OR (
-          anchor.source_type <> 'user_welcome' AND queued.source_type <> 'user_welcome'
+          anchor.source_type NOT IN ('user_welcome', 'balance_center_recharge')
+          AND queued.source_type NOT IN ('user_welcome', 'balance_center_recharge')
       ))
       -- 同批候选也必须到达重试时间，避免反复认领未到期或暂停的旧邮件。
       AND queued.available_at <= $1

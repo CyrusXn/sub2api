@@ -3,6 +3,7 @@
  * Handles system settings management for administrators
  */
 
+import type { AdminQuickAction } from "@/utils/adminQuickActions";
 import { apiClient } from "../client";
 import type {
   CustomEndpoint,
@@ -488,6 +489,7 @@ export interface SystemSettings {
   table_default_page_size: number;
   table_page_size_options: number[];
   backend_mode_enabled: boolean;
+  admin_quick_actions?: AdminQuickAction[];
   custom_menu_items: CustomMenuItem[];
   custom_endpoints: CustomEndpoint[];
   // SMTP settings
@@ -832,6 +834,7 @@ export interface UpdateSettingsRequest {
   table_default_page_size?: number;
   table_page_size_options?: number[];
   backend_mode_enabled?: boolean;
+  admin_quick_actions?: AdminQuickAction[];
   custom_menu_items?: CustomMenuItem[];
   custom_endpoints?: CustomEndpoint[];
   smtp_host?: string;

@@ -657,6 +657,8 @@ export default {
 
   // Model Plaza (public group/model pricing showcase)
   modelPlaza: {
+    platformGroupCount: '{count} groups',
+    groupModelCount: '{count} models',
     title: 'Model Plaza',
     description: 'Browse available models and pricing by group',
     loading: 'Loading...',
@@ -718,7 +720,7 @@ export default {
     }
   },
   modelFactory: {
-    title: 'Model Factory',
+    title: 'Model Plaza',
     description: 'See the models currently supported across all accounts in each group.',
   },
 

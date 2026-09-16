@@ -49,6 +49,8 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 		WithArgs("2026-08-01", "2026-08-14", sqlmock.AnyArg(), start, end).
 		WillReturnRows(sqlmock.NewRows([]string{"cash", "subscription", "total", "known", "unknown", "opening", "closing", "opened_at", "closed_at", "same_sites", "exact_boundaries"}).
 			AddRow(600.0, 78.9, 678.9, 678.9, 0, 700.0, 660.25, start, end, true, true))
+	mock.ExpectQuery(`(?s)WITH calendar.*dashboard_business_asset_daily.*ORDER BY day DESC`).
+		WillReturnRows(sqlmock.NewRows([]string{"day", "profit", "daily_profit", "captured_at"}))
 	mock.ExpectClose()
 
 	summary, err := repo.GetDashboardBusinessSummary(context.Background(), start, end)

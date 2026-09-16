@@ -102,7 +102,7 @@
           </div>
         </article>
 
-        <article class="card p-5">
+        <button type="button" data-test="open-recharge-details" class="card p-5 text-left transition hover:ring-2 hover:ring-primary-400 focus-visible:ring-2 focus-visible:ring-primary-500" @click="openDetails('recharge')">
           <div class="flex items-start gap-3">
             <div class="rounded-lg bg-red-100 p-2 dark:bg-red-900/30"><Icon name="dollar" size="md" class="text-red-600 dark:text-red-400" /></div>
             <div class="min-w-0 flex-1">
@@ -113,9 +113,9 @@
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeDescription') }}</p>
             </div>
           </div>
-        </article>
+        </button>
 
-        <article class="card p-5">
+        <button type="button" data-test="open-balance-details" class="card p-5 text-left transition hover:ring-2 hover:ring-primary-400 focus-visible:ring-2 focus-visible:ring-primary-500" @click="openDetails('balance')">
           <div class="flex items-start gap-3">
             <div class="rounded-lg bg-sky-100 p-2 dark:bg-sky-900/30"><Icon name="database" size="md" class="text-sky-600 dark:text-sky-400" /></div>
             <div class="min-w-0 flex-1">
@@ -125,7 +125,7 @@
               <p data-test="upstream-balance-snapshot-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.currentBalanceHint') }}</p>
             </div>
           </div>
-        </article>
+        </button>
 
         <article class="card p-5">
           <div class="flex items-start gap-3">
@@ -139,7 +139,7 @@
           </div>
         </article>
 
-        <article class="card p-5">
+        <button type="button" data-test="open-profit-details" class="card p-5 text-left transition hover:ring-2 hover:ring-primary-400 focus-visible:ring-2 focus-visible:ring-primary-500" @click="openDetails('profit')">
           <div class="flex items-start gap-3">
             <div class="rounded-lg bg-violet-100 p-2 dark:bg-violet-900/30"><Icon name="bolt" size="md" class="text-violet-600 dark:text-violet-400" /></div>
             <div class="min-w-0 flex-1">
@@ -151,7 +151,7 @@
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.requestProfitReference') }} {{ formatMoney(requestProfitAllAccounts) }} / {{ formatMoney(totalProfitUsers) }}</p>
             </div>
           </div>
-        </article>
+        </button>
       </section>
 
       <section class="card p-4">
@@ -174,23 +174,24 @@
         <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.businessHistory.dailyDetails') }}</h2>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.requestEstimateNotice') }}</p>
         <div class="overflow-x-auto border-y border-gray-200 dark:border-dark-700">
-          <table class="w-full min-w-[1350px] text-sm">
-            <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-dark-800 dark:text-gray-400">
+          <table class="w-full min-w-[1400px] text-base tabular-nums">
+            <thead class="whitespace-nowrap bg-gray-50 text-left text-sm font-medium text-gray-500 dark:bg-dark-800 dark:text-gray-400">
               <tr>
                 <th class="px-3 py-2">{{ t('admin.businessHistory.date') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.totalRequests') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.totalTokens') }}</th>
-                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.totalConsumption') }}</th>
-                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.excludingAdmin') }}</th>
-                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.upstreamConsumption') }}</th>
-                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.upstreamExcludingAdmin') }}</th>
-                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.profitLegendAll') }}</th>
-                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.profitLegendExcludingAdmin') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.chargesAllShort') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.chargesUsersShort') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.costAllShort') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.costUsersShort') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.profitAllShort') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.profitUsersShort') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.cumulativeProfit') }}</th>
                 <th class="px-3 py-2 text-right">{{ t('admin.businessHistory.effectiveRecharge') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-              <tr v-for="point in daily" :key="point.bucket_date" data-test="history-daily-row" class="text-gray-700 dark:text-gray-200">
+              <tr v-for="point in dailyDescending" :key="point.bucket_date" data-test="history-daily-row" class="text-gray-700 dark:text-gray-200">
                 <td class="whitespace-nowrap px-3 py-3 font-medium">{{ formatDate(point.bucket_date) }}</td>
                 <td class="px-3 py-3 text-right">{{ formatNumber(point.total_requests) }}</td>
                 <td class="px-3 py-3 text-right">{{ formatTokens(point.total_tokens) }}</td>
@@ -200,14 +201,57 @@
                 <td class="px-3 py-3 text-right text-red-600 dark:text-red-400">{{ formatMoney(point.upstream_cost_excluding_admin) }}</td>
                 <td class="px-3 py-3 text-right font-medium" :class="profitClass(dailyProfit(point, false))" data-test="history-daily-profit-all">{{ formatMoney(dailyProfit(point, false)) }}</td>
                 <td class="px-3 py-3 text-right font-medium" :class="profitClass(dailyProfit(point, true))" data-test="history-daily-profit-users">{{ formatMoney(dailyProfit(point, true)) }}</td>
+                <td class="px-3 py-3 text-right font-medium" data-test="history-cumulative-profit" :title="profitSnapshotHint(profitByDate.get(formatDate(point.bucket_date)))">{{ formatMoney(profitByDate.get(formatDate(point.bucket_date))?.cumulative_profit) }}</td>
                 <td class="px-3 py-3 text-right">{{ formatMoney(point.recharge_amount) }}</td>
               </tr>
-              <tr v-if="!loading && daily.length === 0"><td colspan="10" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.noData') }}</td></tr>
+              <tr v-if="!loading && daily.length === 0"><td colspan="11" class="px-3 py-10 text-center text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.noData') }}</td></tr>
             </tbody>
           </table>
         </div>
       </section>
+      <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.cumulativeNotice') }}</p>
     </div>
+    <BaseDialog :show="detailKind !== null" :title="detailTitle" width="wide" @close="detailKind = null">
+      <div v-if="detailsLoading" class="flex justify-center p-8"><LoadingSpinner /></div>
+      <div v-else-if="detailsError" class="space-y-3 text-sm text-red-600">
+        <p>{{ t('admin.businessHistory.loadFailed') }}</p>
+        <button type="button" class="btn btn-secondary" @click="detailKind && openDetails(detailKind)">{{ t('common.refresh') }}</button>
+      </div>
+      <template v-else-if="detailKind === 'balance'">
+        <p class="mb-4 text-sm text-gray-500">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
+        <div class="overflow-x-auto">
+          <table class="w-full whitespace-nowrap text-sm tabular-nums">
+            <thead><tr class="border-b text-left"><th class="p-3">{{ t('admin.businessHistory.site') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.cash') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.subscription') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.balance') }}</th></tr></thead>
+            <tbody><tr v-for="asset in balanceAssets" :key="asset.site_id" class="border-b dark:border-dark-700" data-test="balance-detail-row"><td class="p-3">{{ asset.site_name }}<small class="block text-gray-500">{{ asset.domain }}</small></td><td class="p-3 text-right">{{ formatMoney(asset.cash_balance) }}</td><td class="p-3 text-right">{{ formatMoney(asset.subscription_balance) }}</td><td class="p-3 text-right font-semibold">{{ formatMoney(asset.total_balance) }}</td></tr></tbody>
+            <tfoot><tr><th class="p-3 text-left" colspan="3">{{ t('admin.businessHistory.total') }}</th><td class="p-3 text-right font-bold" data-test="balance-detail-total">{{ formatMoney(detailBalanceTotal) }}</td></tr></tfoot>
+          </table>
+        </div>
+        <p v-if="!balanceAssets.length" class="p-4 text-center text-gray-500">{{ t('admin.businessHistory.noData') }}</p>
+      </template>
+      <template v-else-if="detailKind === 'recharge'">
+        <p class="mb-4 font-semibold">{{ t('admin.businessHistory.total') }}：{{ formatMoney(rechargeDetails?.total_amount) }}</p>
+        <details v-for="site in rechargeDetails?.sites" :key="site.site_id ?? site.site_name" class="mb-3 rounded-lg border p-3 dark:border-dark-700" open>
+          <summary class="cursor-pointer font-medium">{{ site.site_name }} <span class="ml-3 tabular-nums">{{ formatMoney(site.total_amount) }}</span></summary>
+          <ul class="mt-2 divide-y dark:divide-dark-700">
+            <li v-for="event in site.items" :key="event.id ?? event.source_key" class="flex flex-wrap items-center justify-between gap-2 py-3 text-sm" data-test="recharge-detail-row">
+              <div><span>{{ formatTimestamp(event.occurred_at) }}</span><span class="ml-2 text-gray-500">{{ event.record_type === 'subscription' ? t('admin.businessHistory.subscriptionPurchase') : t('admin.businessHistory.recharge') }}</span><p v-if="event.note" class="mt-1 break-all text-xs text-gray-500">{{ event.note }}</p></div>
+              <strong class="tabular-nums">{{ formatMoney(event.amount) }}</strong>
+            </li>
+          </ul>
+        </details>
+        <p v-if="!rechargeDetails?.sites.length" class="p-4 text-center text-gray-500">{{ t('admin.businessHistory.noData') }}</p>
+      </template>
+      <template v-else-if="detailKind === 'profit'">
+        <p class="mb-4 text-sm text-gray-500">{{ t('admin.businessHistory.cumulativeNotice') }}</p>
+        <div class="overflow-x-auto">
+          <table class="w-full whitespace-nowrap text-base tabular-nums">
+            <thead><tr class="border-b text-left text-sm"><th class="p-3">{{ t('admin.businessHistory.date') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.dailyProfit') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.cumulativeProfit') }}</th></tr></thead>
+            <tbody><tr v-for="point in profitHistory" :key="point.bucket_date" class="border-b dark:border-dark-700" data-test="profit-detail-row"><td class="p-3">{{ point.bucket_date }}<small class="block text-xs text-gray-500">{{ profitSnapshotHint(point) }}</small></td><td class="p-3 text-right">{{ formatMoney(point.daily_profit) }}</td><td class="p-3 text-right font-semibold">{{ formatMoney(point.cumulative_profit) }}</td></tr></tbody>
+          </table>
+        </div>
+        <p v-if="!profitHistory.length" class="p-4 text-center text-gray-500">{{ t('admin.businessHistory.noProfitHistory') }}</p>
+      </template>
+    </BaseDialog>
   </AppLayout>
 </template>
 
@@ -226,7 +270,9 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { adminAPI } from '@/api/admin'
-import type { DashboardBusinessDailyPoint, DashboardBusinessSummary } from '@/api/admin/dashboard'
+import type { DashboardBusinessDailyPoint, DashboardBusinessProfitPoint, DashboardBusinessSummary } from '@/api/admin/dashboard'
+import { balanceCenterAPI, type BalanceCenterAsset, type BalanceCenterRechargeSummary } from '@/api/admin/balanceCenter'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -253,6 +299,48 @@ const selectedMetricClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-g
 const normalMetricClass = 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-gray-200'
 
 const daily = computed(() => [...(summary.value?.daily ?? [])].sort((a, b) => a.bucket_date.localeCompare(b.bucket_date)))
+const dailyDescending = computed(() => [...daily.value].reverse())
+const profitHistory = computed(() => [...(summary.value?.profit_history ?? [])].sort((a, b) => b.bucket_date.localeCompare(a.bucket_date)))
+const profitByDate = computed(() => new Map(profitHistory.value.map(point => [point.bucket_date, point])))
+type DetailKind = 'balance' | 'recharge' | 'profit'
+const detailKind = ref<DetailKind | null>(null)
+const detailsLoading = ref(false)
+const detailsError = ref(false)
+const balanceAssets = ref<BalanceCenterAsset[]>([])
+const rechargeDetails = ref<BalanceCenterRechargeSummary | null>(null)
+const detailTitle = computed(() => t(`admin.businessHistory.${detailKind.value === 'balance' ? 'balanceDetails' : detailKind.value === 'recharge' ? 'rechargeDetails' : 'profitDetails'}`))
+const detailBalanceTotal = computed(() => balanceAssets.value.length && balanceAssets.value.every(asset => asset.balance_known && asset.total_balance != null)
+  ? balanceAssets.value.reduce((sum, asset) => sum + asset.total_balance!, 0) : null)
+let detailsRequest = 0
+
+async function openDetails(kind: DetailKind) {
+  const request = ++detailsRequest
+  detailKind.value = kind
+  detailsError.value = false
+  detailsLoading.value = kind !== 'profit'
+  try {
+    if (kind === 'balance') {
+      const assets = await balanceCenterAPI.assets()
+      if (request === detailsRequest) balanceAssets.value = assets
+    } else if (kind === 'recharge') {
+      const recharges = await balanceCenterAPI.rechargeSummary({})
+      if (request === detailsRequest) rechargeDetails.value = recharges
+    }
+  } catch {
+    if (request === detailsRequest) detailsError.value = true
+  } finally {
+    if (request === detailsRequest) detailsLoading.value = false
+  }
+}
+
+function formatTimestamp(value: string): string {
+  return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
+}
+
+function profitSnapshotHint(point?: DashboardBusinessProfitPoint): string {
+  if (!point || point.status === 'missing_snapshot') return t('admin.businessHistory.missingProfitSnapshot')
+  return point.status === 'current' ? t('admin.businessHistory.asOfNow') : t('admin.businessHistory.snapshotTime', { time: point.captured_at ? formatTimestamp(point.captured_at) : '--' })
+}
 // 暂按用户确认的累计公式计算，不能混用区间充值与当前余额。
 const upstreamTotalConsumption = computed(() => {
   if (!summary.value || summary.value.ledger?.total_balance == null) return null

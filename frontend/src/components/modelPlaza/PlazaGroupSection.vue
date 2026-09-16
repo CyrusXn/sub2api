@@ -1,11 +1,13 @@
 <template>
-  <section
-    class="overflow-hidden rounded-2xl border bg-white shadow-card dark:bg-dark-800/50"
+  <details
+    open
+    class="group/plaza overflow-hidden rounded-2xl border bg-white shadow-card dark:bg-dark-800/50"
     :class="[platformBorderStrongClass(group.platform)]"
   >
     <!-- 分组头部:名称/平台/倍率徽章/专属/订阅徽章 + 描述 -->
-    <header class="border-b border-gray-100 px-5 py-4 dark:border-dark-700/60">
+    <summary class="cursor-pointer list-none px-5 py-4 [&::-webkit-details-marker]:hidden">
       <div class="flex flex-wrap items-center gap-2">
+        <Icon name="chevronRight" size="sm" class="shrink-0 text-gray-400 transition-transform group-open/plaza:rotate-90" />
         <GroupBadge
           :name="group.name"
           :platform="group.platform as GroupPlatform"
@@ -18,6 +20,7 @@
           :peak-rate-multiplier="group.peak_rate_multiplier"
           always-show-rate
         />
+        <span class="text-xs text-gray-500">{{ t('modelPlaza.groupModelCount', { count: group.models.length }) }}</span>
         <span
           v-if="group.is_exclusive"
           class="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
@@ -49,10 +52,10 @@
         <Icon name="infoCircle" size="xs" class="h-3 w-3" />
         {{ longContextNote }}
       </p>
-    </header>
+    </summary>
 
     <!-- 模型价格表:整行(含 hover 底色/分区底色)顶到卡片边缘,左右留白由表格首列/末列的 padding 提供 -->
-    <div>
+    <div class="border-t border-gray-100 dark:border-dark-700/60">
       <PlazaModelPricingTable
         v-if="group.models.length > 0"
         :models="group.models"
@@ -68,7 +71,7 @@
         {{ t('modelPlaza.detail.noModels') }}
       </p>
     </div>
-  </section>
+  </details>
 </template>
 
 <script setup lang="ts">

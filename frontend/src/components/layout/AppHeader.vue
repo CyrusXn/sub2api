@@ -1,8 +1,8 @@
 <template>
   <header class="glass sticky top-0 z-30 border-b border-gray-200/50 dark:border-dark-700/50">
-    <div class="flex h-16 items-center justify-between gap-2 px-2 sm:px-4 md:px-6">
+    <div class="flex min-h-16 flex-wrap items-center justify-between gap-x-2 px-2 sm:px-4 md:px-6 xl:h-16 xl:flex-nowrap">
       <!-- Left: Mobile Menu Toggle + Page Title -->
-      <div class="flex shrink-0 items-center gap-2 sm:gap-4">
+      <div class="flex min-h-16 shrink-0 items-center gap-2 sm:gap-4">
         <button
           @click="toggleMobileSidebar"
           class="btn-ghost btn-icon lg:hidden"
@@ -21,8 +21,8 @@
         </div>
       </div>
 
-      <!-- 管理员实时性能在 xl 及以上始终显示，指标区可自行换行避免被挤出。 -->
-      <div v-if="authStore.isAdmin" class="hidden min-w-0 flex-1 items-center justify-center xl:flex">
+      <!-- 窄屏独占工具栏下方一行，复用同一指标组件避免重复请求。 -->
+      <div v-if="authStore.isAdmin" class="order-last flex w-full min-w-0 items-center justify-center border-t border-gray-200/50 py-2 dark:border-dark-700/50 xl:order-none xl:w-auto xl:flex-1 xl:border-0 xl:py-0">
         <AdminRealtimeStatus @refresh-dashboard-metrics="handleAdminMetricsRefresh" />
       </div>
 

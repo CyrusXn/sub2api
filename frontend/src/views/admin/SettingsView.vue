@@ -6249,6 +6249,21 @@
 
         <!-- Tab: General -->
         <div v-show="activeTab === 'general'" class="space-y-6">
+          <section class="card p-6" aria-labelledby="quick-actions-title">
+            <h2 id="quick-actions-title" class="text-lg font-semibold text-gray-900 dark:text-white">常用功能</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">仅管理员可见，保存后同步到仪表盘快捷操作和可拖动悬浮按钮。支持站内路径（如 /admin/users）或 HTTP(S) 地址。</p>
+            <div class="mt-4 space-y-3">
+              <div v-for="(item, index) in form.admin_quick_actions" :key="index" class="flex flex-wrap items-center gap-2">
+                <input v-model="item.name" type="text" maxlength="50" class="input min-w-0 flex-1" :aria-label="`常用功能 ${index + 1} 名称`" placeholder="菜单名称" />
+                <input v-model="item.url" type="text" maxlength="2048" class="input min-w-0 basis-full sm:basis-1/2" :aria-label="`常用功能 ${index + 1} URL`" placeholder="/admin/users" />
+                <button type="button" class="btn btn-secondary" :aria-label="`删除常用功能 ${index + 1}`" @click="form.admin_quick_actions.splice(index, 1)">删除</button>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="btn btn-secondary" :disabled="form.admin_quick_actions.length >= 20" @click="form.admin_quick_actions.push({ name: '', url: '' })">添加常用功能</button>
+                <button type="button" class="btn btn-secondary" @click="form.admin_quick_actions = defaultAdminQuickActions()">恢复默认</button>
+              </div>
+            </div>
+          </section>
           <!-- Site Settings -->
           <div class="card">
             <div
@@ -8887,6 +8902,7 @@ import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSi
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
+import { defaultAdminQuickActions, isSafeQuickActionURL, normalizeAdminQuickActions } from "@/utils/adminQuickActions";
 import { normalizeVisibleMethod } from "@/components/payment/paymentFlow";
 import {
   isRegistrationEmailSuffixDomainValid,
@@ -9542,6 +9558,7 @@ type SettingsForm = Omit<
   | "wechat_connect_mp_enabled"
   | "wechat_connect_mobile_enabled"
 > & {
+  admin_quick_actions: ReturnType<typeof defaultAdminQuickActions>;
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
   channel_monitor_hide_throughput: boolean;
   channel_monitor_show_quota: boolean;
@@ -9659,6 +9676,7 @@ const form = reactive<SettingsForm>({
   payment_alipay_mobile_precreate_deep_link: false,
   table_default_page_size: tablePageSizeDefault,
   table_page_size_options: [10, 20, 50, 100],
+  admin_quick_actions: defaultAdminQuickActions(),
   custom_menu_items: [] as Array<{
     id: string;
     label: string;
@@ -10841,6 +10859,7 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.admin_quick_actions = normalizeAdminQuickActions(settings.admin_quick_actions);
     syncCaptchaProviderSelection();
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
       form.claude_oauth_system_prompt_blocks =
@@ -11094,6 +11113,10 @@ const siteBillingModeHint = computed(() =>
 async function saveSettings() {
   saving.value = true;
   try {
+    if (form.admin_quick_actions.length > 20 || form.admin_quick_actions.some(item => !item.name.trim() || Array.from(item.name.trim()).length > 50 || !isSafeQuickActionURL(item.url))) {
+      appStore.showError("请填写常用功能名称（最多 50 字）及有效的站内路径或 HTTP(S) 地址，最多 20 项");
+      return;
+    }
     const normalizedTableDefaultPageSize = Math.floor(
       Number(form.table_default_page_size),
     );
@@ -11290,6 +11313,7 @@ async function saveSettings() {
       hide_ccs_import_button: form.hide_ccs_import_button,
       table_default_page_size: form.table_default_page_size,
       table_page_size_options: form.table_page_size_options,
+      admin_quick_actions: form.admin_quick_actions.map(item => ({ name: item.name.trim(), url: item.url.trim() })),
       custom_menu_items: form.custom_menu_items,
       custom_endpoints: form.custom_endpoints,
       frontend_url: form.frontend_url,
@@ -11607,6 +11631,7 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    adminSettingsStore.adminQuickActions = normalizeAdminQuickActions(updated.admin_quick_actions);
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);
     form.account_scheduling_thresholds = normalizeAccountSchedulingThresholdsMap(

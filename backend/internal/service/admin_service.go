@@ -461,6 +461,7 @@ type UpdateAccountInput struct {
 	// UpstreamBillingManualRateMultiplierSet 区分字段缺失和显式 null。
 	UpstreamBillingManualRateMultiplierSet bool
 	UpstreamBillingManualRateMultiplier    *float64
+	UpstreamSubscriptionRate               *UpstreamSubscriptionRateConfig
 	SkipMixedChannelCheck                  bool // 跳过混合渠道检查（用户已确认风险）
 }
 

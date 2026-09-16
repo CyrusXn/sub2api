@@ -2926,6 +2926,9 @@ func (o openAILegacyUpstreamRateOrder) compare(a, b *Account) int {
 }
 
 func openAIFreshUpstreamBillingRate(account *Account, now time.Time) (float64, bool) {
+	if rate, ok := account.SubscriptionRateMultiplier(now); ok {
+		return rate, true
+	}
 	if !isUpstreamBillingProbeAccount(account) {
 		return 0, false
 	}

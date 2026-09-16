@@ -3,6 +3,8 @@
     <!-- Background Decoration -->
     <div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
 
+    <AdminQuickActions v-if="isAdmin" />
+
     <!-- Sidebar -->
     <AppSidebar />
 
@@ -31,6 +33,7 @@ import { useOnboardingTour } from '@/composables/useOnboardingTour'
 import { useOnboardingStore } from '@/stores/onboarding'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import AdminQuickActions from './AdminQuickActions.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()

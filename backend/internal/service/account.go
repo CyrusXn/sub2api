@@ -162,6 +162,9 @@ func (a *Account) IsSyntheticUITest() bool {
 // - 负数属于非法数据，出于安全考虑按 1.0 处理
 func (a *Account) BillingRateMultiplier() float64 {
 	base := a.BaseRateMultiplier()
+	if subscriptionRate, ok := a.SubscriptionRateMultiplier(time.Now()); ok {
+		base = subscriptionRate
+	}
 	admin := a.AdminUsageRateMultiplier()
 	return base * admin
 }

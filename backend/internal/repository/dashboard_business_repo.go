@@ -222,6 +222,9 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	if err := r.populateBusinessLedger(ctx, start, end, result); err != nil {
 		return nil, err
 	}
+	if err := r.populateBusinessProfitHistory(ctx, result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

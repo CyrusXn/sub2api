@@ -177,14 +177,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    // 模型工厂尚在调整，只允许管理员进入。
     path: '/admin/model-factory',
+    redirect: '/model-factory'
+  },
+  {
+    path: '/model-factory',
     name: 'ModelFactory',
     component: () => import('@/views/ModelFactoryView.vue'),
     meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Model Factory',
+      requiresAuth: false,
+      title: 'Model Plaza',
       titleKey: 'modelFactory.title'
     }
   },
@@ -827,6 +829,7 @@ const BACKEND_MODE_CALLBACK_PATHS = [
 const BACKEND_MODE_PENDING_AUTH_PATHS = ['/register']
 
 function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: boolean): boolean {
+  if (path === '/model-factory') return true
   if (BACKEND_MODE_ALLOWED_PATHS.some((allowedPath) => path === allowedPath || path.startsWith(allowedPath))) {
     return true
   }

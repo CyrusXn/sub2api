@@ -745,6 +745,26 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
+  it("常用功能回显并保存菜单名称和 URL，拒绝脚本地址", async () => {
+    getSettings.mockResolvedValue({ ...baseSettingsResponse, admin_quick_actions: [{ name: "账号", url: "/admin/accounts" }] });
+    const wrapper = mountView();
+    await flushPromises();
+    const name = wrapper.get('input[aria-label="常用功能 1 名称"]');
+    const url = wrapper.get('input[aria-label="常用功能 1 URL"]');
+    expect((url.element as HTMLInputElement).value).toBe("/admin/accounts");
+    await name.setValue(" 用户管理 ");
+    await url.setValue("javascript:alert(1)");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalled();
+    await url.setValue(" /admin/users ");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ admin_quick_actions: [{ name: "用户管理", url: "/admin/users" }] }));
+    wrapper.unmount();
+  });
+
   it("submits the compact home page toggle", async () => {
     const wrapper = mountView();
     await flushPromises();

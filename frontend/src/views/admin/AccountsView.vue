@@ -363,7 +363,8 @@
           </template>
           <template #cell-rate_multiplier="{ row }">
             <span class="inline-flex items-center gap-1 text-sm font-mono text-gray-700 dark:text-gray-300">
-              <span>{{ formatMultiplier(row.rate_multiplier ?? 1) }}x</span>
+              <span>{{ formatMultiplier(upstreamSubscriptionRate(row, upstreamBillingNow) ?? row.rate_multiplier ?? 1) }}x</span>
+              <span v-if="upstreamSubscriptionRate(row, upstreamBillingNow) != null" class="text-xs text-emerald-600" :title="`现金倍率：${row.rate_multiplier ?? 1}x`">订阅</span>
               <span
                 v-if="row.extra?.upstream_billing_rate_sync_enabled === true"
                 class="inline-flex cursor-help text-emerald-600 dark:text-emerald-400"
@@ -627,6 +628,8 @@ const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
 const bulkEditTarget = ref<AccountBulkEditTarget | null>(null)
 const showTempUnsched = ref(false)
+import { upstreamSubscriptionRate } from '@/utils/upstreamSubscriptionRate'
+
 const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)

@@ -9,6 +9,10 @@
         <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
           {{ t('auth.signUpToStart', { siteName }) }}
         </p>
+        <router-link to="/model-factory" class="btn btn-secondary mt-4 gap-2">
+          <Icon name="grid" size="md" />
+          {{ t('modelFactory.title') }}
+        </router-link>
       </div>
 
       <!-- Registration Disabled Message -->

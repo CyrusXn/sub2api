@@ -20,6 +20,9 @@ func RegisterModelPlazaRoutes(
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
+	// 账号模型目录仅展示公开分组，游客可访问，按 IP 限流。
+	v1.GET("/model-factory", panelRateLimiter.PublicIP(), h.ModelFactory.Get)
+
 	plaza := v1.Group("/model-plaza")
 	plaza.Use(panelRateLimiter.PublicIP())
 	plaza.Use(gin.HandlerFunc(optionalJWT))

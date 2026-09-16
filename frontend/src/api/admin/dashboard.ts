@@ -91,6 +91,7 @@ export interface DashboardBusinessLedger {
 }
 
 export interface DashboardBusinessSummary {
+  profit_history?: DashboardBusinessProfitPoint[]
   ledger?: DashboardBusinessLedger
   // 直接来自全部上游充值记录，不随查询日期范围变化。
   upstream_recharge_total: number
@@ -108,6 +109,14 @@ export interface DashboardBusinessSummary {
   lifetime: DashboardBusinessTotals
   range: DashboardBusinessTotals
   daily: DashboardBusinessDailyPoint[]
+}
+
+export interface DashboardBusinessProfitPoint {
+  bucket_date: string
+  daily_profit: number | null
+  cumulative_profit: number | null
+  captured_at: string | null
+  status: 'current' | 'snapshot' | 'missing_snapshot'
 }
 
 export interface DashboardLowBalanceAccount {

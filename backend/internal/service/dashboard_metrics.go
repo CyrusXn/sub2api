@@ -53,10 +53,20 @@ type DashboardBusinessSummary struct {
 	// RangeUpstreamBalanceTotal 兼容旧客户端的结束日旧版上游余额快照（实账使用 Ledger）；nil 表示结束日尚未采集到快照。
 	RangeUpstreamBalanceTotal *float64 `json:"range_upstream_balance_total"`
 	// RangeBalanceSnapshotDate 上述两个余额快照对应的自然日，便于前端说明"截至某日"。
-	RangeBalanceSnapshotDate *time.Time                    `json:"range_balance_snapshot_date"`
-	Lifetime                 DashboardBusinessTotals       `json:"lifetime"`
-	Range                    DashboardBusinessTotals       `json:"range"`
-	Daily                    []DashboardBusinessDailyPoint `json:"daily"`
+	RangeBalanceSnapshotDate *time.Time                     `json:"range_balance_snapshot_date"`
+	Lifetime                 DashboardBusinessTotals        `json:"lifetime"`
+	Range                    DashboardBusinessTotals        `json:"range"`
+	Daily                    []DashboardBusinessDailyPoint  `json:"daily"`
+	ProfitHistory            []DashboardBusinessProfitPoint `json:"profit_history"`
+}
+
+// 累计采用与顶部一致的资产账本口径；缺少当日资产快照时不倒推历史余额。
+type DashboardBusinessProfitPoint struct {
+	BucketDate       string     `json:"bucket_date"`
+	DailyProfit      *float64   `json:"daily_profit"`
+	CumulativeProfit *float64   `json:"cumulative_profit"`
+	CapturedAt       *time.Time `json:"captured_at"`
+	Status           string     `json:"status"`
 }
 
 // DashboardBusinessLedger 按人民币 1:1 记录现金与订阅剩余资产，不重复计入订阅购买价。

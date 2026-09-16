@@ -15,7 +15,7 @@
 
     <!-- 未登录提示 -->
     <p
-      v-if="!isAuthenticated"
+      v-if="!isAuthenticated && !hideAnonymousHint"
       class="flex items-center gap-1.5 text-xs text-gray-400 dark:text-dark-500"
     >
       <Icon name="infoCircle" size="xs" class="h-3.5 w-3.5" />
@@ -48,9 +48,18 @@
         @update:search="searchQuery = $event"
       />
 
-      <!-- 分组分节的模型清单(默认按生效倍率升序) -->
+      <!-- 平台与分组分别折叠，组内保留各分组自己的倍率和价格。 -->
       <div v-if="filteredGroups.length > 0" class="space-y-5">
-        <PlazaGroupSection v-for="g in filteredGroups" :key="g.id" :group="g" />
+        <details v-for="section in platformSections" :key="section.platform" open class="group/platform rounded-2xl border border-gray-200 bg-gray-50/60 dark:border-dark-700 dark:bg-dark-900/30">
+          <summary class="flex cursor-pointer list-none items-center gap-3 px-5 py-4 font-semibold text-gray-900 dark:text-white [&::-webkit-details-marker]:hidden">
+            <Icon name="chevronRight" size="sm" class="shrink-0 transition-transform group-open/platform:rotate-90" />
+            <span>{{ platformLabel(section.platform) }}</span>
+            <span class="text-xs font-normal text-gray-500">{{ t('modelPlaza.platformGroupCount', { count: section.groups.length }) }}</span>
+          </summary>
+          <div class="space-y-3 px-2 pb-2 sm:px-4 sm:pb-4">
+            <PlazaGroupSection v-for="g in section.groups" :key="g.id" :group="g" />
+          </div>
+        </details>
       </div>
       <div
         v-else
@@ -72,6 +81,7 @@ import PlazaFilterBar from './PlazaFilterBar.vue'
 import PlazaGroupSection from './PlazaGroupSection.vue'
 import type { ModelPlazaGroup, ModelPlazaResponse } from '@/api/modelPlaza'
 import { useAuthStore } from '@/stores/auth'
+import { platformLabel } from '@/utils/platformColors'
 
 const props = defineProps<{
   response: ModelPlazaResponse | null
@@ -79,7 +89,9 @@ const props = defineProps<{
   error?: boolean
   /** 后台内嵌形态(AppLayout 内):隐藏页头。 */
   embedded?: boolean
-  /** 允许模型工厂复用广场组件而只替换页面标题。 */
+  /** 公开目录不展示登录后专属定价提示。 */
+  hideAnonymousHint?: boolean
+  /** 管理端可使用单独的页面说明。 */
   titleKey?: string
   descriptionKey?: string
 }>()
@@ -155,6 +167,16 @@ const filteredGroups = computed(() => {
   return [...groups].sort(
     (a, b) => effectiveRate(a) - effectiveRate(b) || a.name.localeCompare(b.name)
   )
+})
+
+const platformSections = computed(() => {
+  const sections = new Map<string, ModelPlazaGroup[]>()
+  for (const group of filteredGroups.value) {
+    const groups = sections.get(group.platform) ?? []
+    groups.push(group)
+    sections.set(group.platform, groups)
+  }
+  return [...sections].sort(([a], [b]) => a.localeCompare(b)).map(([platform, groups]) => ({ platform, groups }))
 })
 </script>
 

@@ -85,26 +85,29 @@ type BalanceCenterAlertDeliveryInput struct {
 }
 
 type BalanceCenterSnapshot struct {
-	ID               int64           `json:"id"`
-	SiteID           int64           `json:"site_id"`
-	AccountID        *int64          `json:"account_id,omitempty"`
-	AccountName      string          `json:"account_name,omitempty"`
-	LegacyKeyID      *int64          `json:"legacy_key_id,omitempty"`
-	SiteName         string          `json:"site_name"`
-	NormalizedDomain string          `json:"normalized_domain"`
-	BaseURL          string          `json:"base_url"`
-	Source           string          `json:"source"`
-	SourceKey        string          `json:"source_key"`
-	Status           string          `json:"status"`
-	Balance          *float64        `json:"balance,omitempty"`
-	ConvertedBalance *float64        `json:"converted_balance,omitempty"`
-	RateMultiplier   *float64        `json:"rate_multiplier,omitempty"`
-	ConversionScale  float64         `json:"conversion_scale"`
-	Currency         string          `json:"currency"`
-	Reason           string          `json:"reason"`
-	ProbedAt         time.Time       `json:"probed_at"`
-	LastUsedAt       *time.Time      `json:"last_used_at,omitempty"`
-	Payload          json.RawMessage `json:"payload,omitempty"`
+	ID                     int64           `json:"id"`
+	SiteID                 int64           `json:"site_id"`
+	AccountID              *int64          `json:"account_id,omitempty"`
+	AccountName            string          `json:"account_name,omitempty"`
+	LegacyKeyID            *int64          `json:"legacy_key_id,omitempty"`
+	SiteName               string          `json:"site_name"`
+	NormalizedDomain       string          `json:"normalized_domain"`
+	BaseURL                string          `json:"base_url"`
+	Source                 string          `json:"source"`
+	SourceKey              string          `json:"source_key"`
+	Status                 string          `json:"status"`
+	Balance                *float64        `json:"balance,omitempty"`
+	ConvertedBalance       *float64        `json:"converted_balance,omitempty"`
+	RateMultiplier         *float64        `json:"rate_multiplier,omitempty"`
+	ConversionScale        float64         `json:"conversion_scale"`
+	Currency               string          `json:"currency"`
+	Reason                 string          `json:"reason"`
+	ProbedAt               time.Time       `json:"probed_at"`
+	LastUsedAt             *time.Time      `json:"last_used_at,omitempty"`
+	Payload                json.RawMessage `json:"payload,omitempty"`
+	RechargeRecipients     []string        `json:"-"`
+	RechargeSkip           bool            `json:"-"`
+	RechargeKeyFingerprint string          `json:"-"`
 }
 
 type BalanceCenterRepository interface {
@@ -153,9 +156,24 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 	if !settings.Enabled {
 		return nil, nil
 	}
+	var recipientErr error
+	if snapshot != nil {
+		// 充值流水和通知由仓储在同一事务写入，避免入账成功但通知丢失。
+		copy := *snapshot
+		copy.RechargeRecipients = nil
+		if settings.EmailEnabled {
+			copy.RechargeRecipients, recipientErr = s.balanceCenterAlertRecipients(ctx)
+			// 配置临时不可读时仍保存余额，但保留充值基线供下次重试，避免漏掉通知。
+			copy.RechargeSkip = recipientErr != nil
+		}
+		snapshot = &copy
+	}
 	persisted, err := s.repository.PersistSnapshot(ctx, snapshot)
 	if err != nil || persisted == nil {
 		return persisted, err
+	}
+	if recipientErr != nil {
+		return persisted, recipientErr
 	}
 	// 倍率失败不应阻断独立成功的余额告警；完全没有成功余额的失败快照仍只做留痕。
 	if persisted.Status != "ok" && persisted.ConvertedBalance == nil {
@@ -294,8 +312,12 @@ func buildBalanceCenterAlertEmail(snapshot *BalanceCenterSnapshot, decision Bala
 	}
 	siteName := strings.TrimSpace(snapshot.SiteName)
 	if decision.Type == BalanceCenterAlertLowBalance {
+		body := fmt.Sprintf("%s余额：%s元", html.EscapeString(siteName), value(snapshot.ConvertedBalance))
+		if !snapshot.ProbedAt.IsZero() {
+			body += fmt.Sprintf("<br>采集时间：%s（北京时间）。以上为触发提醒时的余额，当前余额请查看余额中心。", snapshot.ProbedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"))
+		}
 		return fmt.Sprintf("%s-余额低于%s元", siteName, value(decision.Threshold)),
-			fmt.Sprintf("%s余额：%s元", html.EscapeString(siteName), value(snapshot.ConvertedBalance))
+			body
 	}
 
 	direction := "上涨"

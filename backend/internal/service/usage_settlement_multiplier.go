@@ -40,6 +40,12 @@ func resolveUpstreamCostRateMultiplier(account *Account, requestedAt time.Time) 
 	if account == nil {
 		return 1
 	}
+	if requestedAt.IsZero() {
+		requestedAt = time.Now()
+	}
+	if rate, ok := account.SubscriptionRateMultiplier(requestedAt); ok {
+		return rate
+	}
 
 	fallback := account.BaseRateMultiplier()
 	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)

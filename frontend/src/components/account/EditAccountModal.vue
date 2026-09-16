@@ -2025,6 +2025,21 @@
         </p>
       </div>
 
+      <div v-if="isFishSubscriptionAccount" class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-600" data-testid="fish-subscription-rate">
+        <label class="flex items-center justify-between gap-3">
+          <span class="input-label mb-0">使用订阅倍率</span>
+          <Toggle v-model="subscriptionRate.enabled" aria-label="使用订阅倍率" />
+        </label>
+        <p class="input-hint">开关需与此 API Key 在鱼鱼的实际扣费设置一致；请按该 Key 所属分组填写倍率，不按现金倍率推断。订阅到期、额度耗尽或状态未知时回退现金倍率。</p>
+        <div v-if="subscriptionRate.enabled" class="grid grid-cols-2 gap-3">
+          <label class="input-label">订阅 ID<input v-model.number="subscriptionRate.subscription_id" type="number" min="1" step="1" class="input mt-1" /></label>
+          <label class="input-label">套餐实付（元）<input v-model.number="subscriptionRate.price" type="number" min="0.000001" step="any" class="input mt-1" /></label>
+          <label class="input-label">套餐总额度（美元）<input v-model.number="subscriptionRate.quota_usd" type="number" min="0.000001" step="any" class="input mt-1" /></label>
+          <label class="input-label">此 Key 的订阅分组倍率<input v-model.number="subscriptionRate.group_multiplier" type="number" min="0.000001" step="any" class="input mt-1" /></label>
+          <p class="col-span-2 input-hint">订阅实际倍率：{{ subscriptionCalculatedRate }}x。808 ÷ 30000 × 4 = 0.10773333；余额和现金倍率保持独立。保存后开启自动探测，成功核实订阅后用于成本与低倍率优先调度。</p>
+        </div>
+      </div>
+
       <OllamaCloudUsageSettings
         v-if="account?.ollama_cloud_usage?.eligible"
         :account="account"
@@ -3490,6 +3505,15 @@ const autoResetCredit5hThreshold = ref(100)
 const autoResetCredit7dThreshold = ref(100)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
+const subscriptionRate = reactive({ enabled: false, subscription_id: 0, price: 808, quota_usd: 30000, group_multiplier: 1 })
+const isFishSubscriptionAccount = computed(() => {
+  if (props.account?.type !== 'apikey') return false
+  try { return new URL(String(props.account.credentials?.base_url || '')).hostname === 'sub.anzhiyu.com' } catch { return false }
+})
+const subscriptionCalculatedRate = computed(() => {
+  const rate = subscriptionRate.price / subscriptionRate.quota_usd * subscriptionRate.group_multiplier
+  return Number.isFinite(rate) && rate > 0 ? rate.toFixed(8) : '—'
+})
 // 手动倍率只作为失败快照的兜底值，不从历史自动倍率隐式回填。
 const upstreamBillingManualRateMultiplier = ref<number | ''>('')
 const upstreamBillingSnapshot = computed(() => props.account?.extra?.upstream_billing_probe)
@@ -4043,6 +4067,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   mixedScheduling.value = false
   allowOverages.value = false
 	const extra = newAccount.extra as Record<string, unknown> | undefined
+	const savedSubscriptionRate = extra?.upstream_subscription_rate as Partial<typeof subscriptionRate> | undefined
+	Object.assign(subscriptionRate, { enabled: false, subscription_id: 0, price: 808, quota_usd: 30000, group_multiplier: 1 }, savedSubscriptionRate || {})
 	mixedScheduling.value = extra?.mixed_scheduling === true
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
@@ -4992,7 +5018,16 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
   try {
     let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
     updatedAccount = await persistGrokMediaEligibility(accountID, updatedAccount)
-    appStore.showSuccess(t('admin.accounts.accountUpdated'))
+    let subscriptionProbeFailed = false
+    if (isFishSubscriptionAccount.value && subscriptionRate.enabled) {
+      try {
+        const result = await adminAPI.accounts.probeUpstreamBilling(accountID)
+        if (result.snapshot) updatedAccount.extra = { ...updatedAccount.extra, upstream_billing_probe: result.snapshot }
+        subscriptionProbeFailed = !result.snapshot?.subscription || Boolean(result.snapshot.subscription.error)
+      } catch { subscriptionProbeFailed = true }
+    }
+    if (subscriptionProbeFailed) appStore.showInfo('账号已保存，订阅状态尚未核实，暂用现金倍率；请检查鱼鱼登录信息后重新探测。')
+    else appStore.showSuccess(t('admin.accounts.accountUpdated'))
     emit('updated', updatedAccount)
     handleClose()
   } catch (error: any) {
@@ -5030,6 +5065,14 @@ const handleSubmit = async () => {
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
+    if (isFishSubscriptionAccount.value) {
+      if (subscriptionRate.enabled && (!Number.isInteger(subscriptionRate.subscription_id) || subscriptionRate.subscription_id <= 0 || [subscriptionRate.price, subscriptionRate.quota_usd, subscriptionRate.group_multiplier].some(value => !Number.isFinite(value) || value <= 0))) {
+        appStore.showError('请填写有效的订阅 ID、套餐价格、总额度和分组倍率')
+        return
+      }
+      updatePayload.upstream_subscription_rate = { ...subscriptionRate }
+      if (subscriptionRate.enabled) upstreamBillingAutoProbeEnabled.value = true
+    }
     // 通过独立更新字段交给后端原子修改快照，避免覆盖并发探测结果。
     if (upstreamBillingManualRateEditable.value) {
       const manualRateMultiplier = upstreamBillingManualRateMultiplier.value

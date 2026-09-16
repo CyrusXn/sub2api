@@ -292,7 +292,21 @@
               {{ t('admin.dashboard.quickActions') }}
             </h2>
           </div>
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div class="flex flex-wrap gap-3">
+            <template v-for="(item, index) in adminSettingsStore.adminQuickActions" :key="index">
+              <RouterLink v-if="item.url.startsWith('/')" :to="item.url" class="flex max-w-full items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm font-medium text-gray-900 hover:bg-primary-50 dark:bg-dark-800/50 dark:text-white dark:hover:bg-dark-700">
+                <component :is="adminMenuIcon(item.url)" v-if="adminMenuIcon(item.url)" class="h-5 w-5 shrink-0 text-primary-500" />
+                <Icon v-else name="link" size="md" class="shrink-0 text-primary-500" />
+                <span class="break-words">{{ item.name }}</span>
+                <Icon name="chevronRight" size="sm" class="ml-auto text-gray-400" />
+              </RouterLink>
+              <a v-else :href="item.url" target="_blank" rel="noopener noreferrer" class="flex max-w-full items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm font-medium text-gray-900 hover:bg-primary-50 dark:bg-dark-800/50 dark:text-white dark:hover:bg-dark-700">
+                <component :is="adminMenuIcon(item.url)" v-if="adminMenuIcon(item.url)" class="h-5 w-5 shrink-0 text-primary-500" />
+                <Icon v-else name="link" size="md" class="shrink-0 text-primary-500" />
+                <span class="break-words">{{ item.name }}</span>
+                <Icon name="chevronRight" size="sm" class="ml-auto text-gray-400" />
+              </a>
+            </template>
             <button
               v-if="canUseBatchImage"
               type="button"
@@ -311,24 +325,6 @@
                 </span>
               </span>
               <Icon name="chevronRight" size="sm" class="text-gray-400 group-hover:text-sky-500" />
-            </button>
-            <button
-              type="button"
-              class="group flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-emerald-50 dark:bg-dark-800/50 dark:hover:bg-emerald-900/20"
-              @click="router.push('/admin/groups')"
-            >
-              <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
-                <Icon name="grid" size="md" :stroke-width="2" />
-              </span>
-              <span class="min-w-0 flex-1">
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                  {{ t('admin.dashboard.groupPricing') }}
-                </span>
-                <span class="block text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.groupPricingDesc') }}
-                </span>
-              </span>
-              <Icon name="chevronRight" size="sm" class="text-gray-400 group-hover:text-emerald-500" />
             </button>
           </div>
         </div>
@@ -414,6 +410,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import { useAdminSettingsStore } from '@/stores/adminSettings'
 import { useAdminRealtimeMetricsStore } from '@/stores/adminRealtimeMetrics'
 
 const { t } = useI18n()
@@ -428,6 +425,7 @@ import type {
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { adminMenuIcon } from '@/components/icons/adminMenuIcons'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
@@ -459,6 +457,7 @@ ChartJS.register(
 )
 
 const appStore = useAppStore()
+const adminSettingsStore = useAdminSettingsStore()
 const realtimeMetricsStore = useAdminRealtimeMetricsStore()
 const router = useRouter()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { adminAPI } from '@/api'
+import { defaultAdminQuickActions, normalizeAdminQuickActions } from '@/utils/adminQuickActions'
 import type { CustomMenuItem } from '@/types'
 
 export const useAdminSettingsStore = defineStore('adminSettings', () => {
@@ -50,6 +51,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   const opsQueryModeDefault = ref(readCachedString('ops_query_mode_default_cached', 'auto'))
   const paymentEnabled = ref(readCachedBool('payment_enabled_cached', false))
   const customMenuItems = ref<CustomMenuItem[]>([])
+  const adminQuickActions = ref(defaultAdminQuickActions())
 
   async function fetch(force = false): Promise<void> {
     if (loaded.value && !force) return
@@ -59,7 +61,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     try {
       const [settings, paymentConfigResp] = await Promise.all([
         adminAPI.settings.getSettings(),
-        adminAPI.payment.getConfig()
+        adminAPI.payment.getConfig().catch(() => null)
       ])
       opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
       writeCachedBool('ops_monitoring_enabled_cached', opsMonitoringEnabled.value)
@@ -70,9 +72,10 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
       opsQueryModeDefault.value = settings.ops_query_mode_default || 'auto'
       writeCachedString('ops_query_mode_default_cached', opsQueryModeDefault.value)
 
+      adminQuickActions.value = normalizeAdminQuickActions(settings.admin_quick_actions)
       customMenuItems.value = Array.isArray(settings.custom_menu_items) ? settings.custom_menu_items : []
 
-      paymentEnabled.value = paymentConfigResp.data?.enabled ?? false
+      paymentEnabled.value = paymentConfigResp?.data?.enabled ?? paymentEnabled.value
       writeCachedBool('payment_enabled_cached', paymentEnabled.value)
 
       loaded.value = true
@@ -141,6 +144,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     opsQueryModeDefault,
     paymentEnabled,
     customMenuItems,
+    adminQuickActions,
     fetch,
     setOpsMonitoringEnabledLocal,
     setOpsRealtimeMonitoringEnabledLocal,

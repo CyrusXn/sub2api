@@ -162,6 +162,7 @@ type SystemSettings struct {
 	PurchaseSubscriptionURL     string
 	TableDefaultPageSize        int
 	TablePageSizeOptions        []int
+	AdminQuickActions           string // 管理员共用快捷菜单
 	CustomMenuItems             string // JSON array of custom menu items
 	CustomEndpoints             string // JSON array of custom endpoints
 

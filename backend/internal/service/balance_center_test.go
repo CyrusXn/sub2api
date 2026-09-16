@@ -96,6 +96,19 @@ func TestBalanceCenterSettingsDefaultsAndValidation(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestBalanceCenterRecipientFailureStillPersistsSnapshot(t *testing.T) {
+	repo := &balanceCenterServiceRepositoryStub{}
+	svc := NewBalanceCenterService(repo, &balanceCenterSettingRepoStub{values: map[string]string{
+		SettingKeyBalanceCenterEmailEnabled:  "true",
+		SettingKeyOpsEmailNotificationConfig: "invalid-json",
+	}})
+	persisted, err := svc.PersistSnapshot(context.Background(), &BalanceCenterSnapshot{ConvertedBalance: float64Ptr(9)})
+	require.ErrorContains(t, err, "收件人配置无效")
+	require.NotNil(t, persisted)
+	require.Equal(t, int64(1), repo.persistedCount())
+	require.True(t, persisted.RechargeSkip, "保留充值基线，等收件人配置恢复后重试")
+}
+
 func TestEvaluateBalanceCenterAlertsLowBalanceLifecycle(t *testing.T) {
 	state := BalanceCenterAlertState{}
 
@@ -215,6 +228,7 @@ func TestBuildBalanceCenterAlertEmailUsesDynamicLowBalanceValues(t *testing.T) {
 	snapshot := &BalanceCenterSnapshot{
 		SiteName:         "派大星",
 		ConvertedBalance: float64Ptr(3.25),
+		ProbedAt:         time.Date(2026, 9, 16, 1, 2, 3, 0, time.UTC),
 	}
 
 	subject, body := buildBalanceCenterAlertEmail(snapshot, BalanceCenterAlertDecision{
@@ -224,7 +238,9 @@ func TestBuildBalanceCenterAlertEmailUsesDynamicLowBalanceValues(t *testing.T) {
 	})
 
 	require.Equal(t, "派大星-余额低于5元", subject)
-	require.Equal(t, "派大星余额：3.25元", body)
+	require.Contains(t, body, "派大星余额：3.25元")
+	require.Contains(t, body, "2026-09-16 09:02:03（北京时间）")
+	require.Contains(t, body, "触发提醒时的余额")
 }
 
 func TestBuildBalanceCenterAlertEmailFallsBackToAccountID(t *testing.T) {

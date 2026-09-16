@@ -661,6 +661,8 @@ export default {
 
   // Model Plaza (public group/model pricing showcase)
   modelPlaza: {
+    platformGroupCount: '{count} 个分组',
+    groupModelCount: '{count} 个模型',
     title: '模型广场',
     description: '按分组浏览可用模型与价格',
     loading: '加载中...',
@@ -721,8 +723,8 @@ export default {
     }
   },
   modelFactory: {
-    title: '模型工厂',
-    description: '查看各分组当前所有账号综合支持的模型。',
+    title: '模型广场',
+    description: '按平台查看公开分组内账号支持的模型、分组倍率和输入、输出及缓存价格。',
   },
 
   affiliate: {

@@ -28,7 +28,8 @@ func NewBalanceCenterEventQueue(rdb *redis.Client) service.BalanceCenterEventQue
 }
 
 func (q *balanceCenterEventQueue) Schedule(ctx context.Context, accountID int64, dueAt time.Time) error {
-	return q.rdb.ZAdd(ctx, balanceCenterEventQueueKey, redis.Z{
+	// 连续请求只合并事件，不延后首次到期时间，避免活跃账号一直无法探测。
+	return q.rdb.ZAddNX(ctx, balanceCenterEventQueueKey, redis.Z{
 		Score:  float64(dueAt.UnixMilli()),
 		Member: strconv.FormatInt(accountID, 10),
 	}).Err()

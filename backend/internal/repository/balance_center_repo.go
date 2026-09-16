@@ -119,6 +119,9 @@ ON CONFLICT (identity_key) DO UPDATE SET
 		return nil, fmt.Errorf("更新当前余额状态失败: %w", err)
 	}
 
+	if err = recordBalanceCenterCashIncrease(ctx, tx, siteID, snapshotID, conversionScale, snapshot); err != nil {
+		return nil, fmt.Errorf("记录现金余额充值增量失败: %w", err)
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, fmt.Errorf("提交余额快照事务失败: %w", err)
 	}
