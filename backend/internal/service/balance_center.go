@@ -85,29 +85,26 @@ type BalanceCenterAlertDeliveryInput struct {
 }
 
 type BalanceCenterSnapshot struct {
-	ID                     int64           `json:"id"`
-	SiteID                 int64           `json:"site_id"`
-	AccountID              *int64          `json:"account_id,omitempty"`
-	AccountName            string          `json:"account_name,omitempty"`
-	LegacyKeyID            *int64          `json:"legacy_key_id,omitempty"`
-	SiteName               string          `json:"site_name"`
-	NormalizedDomain       string          `json:"normalized_domain"`
-	BaseURL                string          `json:"base_url"`
-	Source                 string          `json:"source"`
-	SourceKey              string          `json:"source_key"`
-	Status                 string          `json:"status"`
-	Balance                *float64        `json:"balance,omitempty"`
-	ConvertedBalance       *float64        `json:"converted_balance,omitempty"`
-	RateMultiplier         *float64        `json:"rate_multiplier,omitempty"`
-	ConversionScale        float64         `json:"conversion_scale"`
-	Currency               string          `json:"currency"`
-	Reason                 string          `json:"reason"`
-	ProbedAt               time.Time       `json:"probed_at"`
-	LastUsedAt             *time.Time      `json:"last_used_at,omitempty"`
-	Payload                json.RawMessage `json:"payload,omitempty"`
-	RechargeRecipients     []string        `json:"-"`
-	RechargeSkip           bool            `json:"-"`
-	RechargeKeyFingerprint string          `json:"-"`
+	ID               int64           `json:"id"`
+	SiteID           int64           `json:"site_id"`
+	AccountID        *int64          `json:"account_id,omitempty"`
+	AccountName      string          `json:"account_name,omitempty"`
+	LegacyKeyID      *int64          `json:"legacy_key_id,omitempty"`
+	SiteName         string          `json:"site_name"`
+	NormalizedDomain string          `json:"normalized_domain"`
+	BaseURL          string          `json:"base_url"`
+	Source           string          `json:"source"`
+	SourceKey        string          `json:"source_key"`
+	Status           string          `json:"status"`
+	Balance          *float64        `json:"balance,omitempty"`
+	ConvertedBalance *float64        `json:"converted_balance,omitempty"`
+	RateMultiplier   *float64        `json:"rate_multiplier,omitempty"`
+	ConversionScale  float64         `json:"conversion_scale"`
+	Currency         string          `json:"currency"`
+	Reason           string          `json:"reason"`
+	ProbedAt         time.Time       `json:"probed_at"`
+	LastUsedAt       *time.Time      `json:"last_used_at,omitempty"`
+	Payload          json.RawMessage `json:"payload,omitempty"`
 }
 
 type BalanceCenterRepository interface {
@@ -156,24 +153,9 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 	if !settings.Enabled {
 		return nil, nil
 	}
-	var recipientErr error
-	if snapshot != nil {
-		// 充值流水和通知由仓储在同一事务写入，避免入账成功但通知丢失。
-		copy := *snapshot
-		copy.RechargeRecipients = nil
-		if settings.EmailEnabled {
-			copy.RechargeRecipients, recipientErr = s.balanceCenterAlertRecipients(ctx)
-			// 配置临时不可读时仍保存余额，但保留充值基线供下次重试，避免漏掉通知。
-			copy.RechargeSkip = recipientErr != nil
-		}
-		snapshot = &copy
-	}
 	persisted, err := s.repository.PersistSnapshot(ctx, snapshot)
 	if err != nil || persisted == nil {
 		return persisted, err
-	}
-	if recipientErr != nil {
-		return persisted, recipientErr
 	}
 	// 倍率失败不应阻断独立成功的余额告警；完全没有成功余额的失败快照仍只做留痕。
 	if persisted.Status != "ok" && persisted.ConvertedBalance == nil {

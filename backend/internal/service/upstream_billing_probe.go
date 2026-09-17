@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -2149,19 +2148,18 @@ func buildBalanceCenterProbeSnapshot(account *Account, snapshot *UpstreamBilling
 		siteName = bracketed
 	}
 	result := &BalanceCenterSnapshot{
-		RechargeKeyFingerprint: fmt.Sprintf("%x", md5.Sum([]byte(account.GetCredential("api_key")))),
-		AccountID:              &accountID,
-		AccountName:            strings.TrimSpace(account.Name),
-		SiteName:               siteName,
-		NormalizedDomain:       normalizedDomain,
-		BaseURL:                baseURL,
-		Source:                 "sub2api_probe",
-		SourceKey:              fmt.Sprintf("sub2api_probe:%d:%d", account.ID, snapshot.LastAttemptAt.UnixNano()),
-		Status:                 snapshot.Status,
-		ConversionScale:        balanceCenterProbeConversionScale(account),
-		Reason:                 snapshot.LastError,
-		ProbedAt:               snapshot.LastAttemptAt,
-		LastUsedAt:             account.LastUsedAt,
+		AccountID:        &accountID,
+		AccountName:      strings.TrimSpace(account.Name),
+		SiteName:         siteName,
+		NormalizedDomain: normalizedDomain,
+		BaseURL:          baseURL,
+		Source:           "sub2api_probe",
+		SourceKey:        fmt.Sprintf("sub2api_probe:%d:%d", account.ID, snapshot.LastAttemptAt.UnixNano()),
+		Status:           snapshot.Status,
+		ConversionScale:  balanceCenterProbeConversionScale(account),
+		Reason:           snapshot.LastError,
+		ProbedAt:         snapshot.LastAttemptAt,
+		LastUsedAt:       account.LastUsedAt,
 	}
 	if result.SiteName == "" {
 		result.SiteName = normalizedDomain

@@ -96,17 +96,16 @@ func TestBalanceCenterSettingsDefaultsAndValidation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBalanceCenterRecipientFailureStillPersistsSnapshot(t *testing.T) {
+func TestBalanceCenterSnapshotWithoutAlertsDoesNotRequireRecipients(t *testing.T) {
 	repo := &balanceCenterServiceRepositoryStub{}
 	svc := NewBalanceCenterService(repo, &balanceCenterSettingRepoStub{values: map[string]string{
 		SettingKeyBalanceCenterEmailEnabled:  "true",
 		SettingKeyOpsEmailNotificationConfig: "invalid-json",
 	}})
 	persisted, err := svc.PersistSnapshot(context.Background(), &BalanceCenterSnapshot{ConvertedBalance: float64Ptr(9)})
-	require.ErrorContains(t, err, "收件人配置无效")
+	require.NoError(t, err)
 	require.NotNil(t, persisted)
 	require.Equal(t, int64(1), repo.persistedCount())
-	require.True(t, persisted.RechargeSkip, "保留充值基线，等收件人配置恢复后重试")
 }
 
 func TestEvaluateBalanceCenterAlertsLowBalanceLifecycle(t *testing.T) {

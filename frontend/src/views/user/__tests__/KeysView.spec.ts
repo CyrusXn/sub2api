@@ -173,7 +173,7 @@ const DataTableStub = {
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
         <slot name="cell-name" :value="row.name" :row="row" />
-        <slot name="cell-actions" :row="row" />
+        <div data-test="row-actions"><slot name="cell-actions" :row="row" /></div>
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
         </div>
@@ -238,6 +238,7 @@ const mountView = async () => {
         SearchInput: SearchInputStub,
         Icon: IconStub,
         UseKeyModal: true,
+        KeyTestModal: true,
         BulkEditKeysModal: true,
         EndpointPopover: true,
         GroupBadge: true,
@@ -294,6 +295,24 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('操作栏按顺序显示五个入口，禁用和删除收进更多，测试使用当前行密钥', async () => {
+    const wrapper = await mountView()
+    const actions = wrapper.get('[data-test="row-actions"]')
+    expect(actions.findAll('button').map(button => button.get('span.text-xs').text())).toEqual([
+      'keys.useKey', 'keys.importToCcSwitch', 'common.edit', 'keys.testModal.action', 'common.more'
+    ])
+    await getButtonByText(wrapper, 'keys.testModal.action').trigger('click')
+    expect(wrapper.findComponent({ name: 'KeyTestModal' }).props('apiKey')).toMatchObject({ id: 1, key: 'sk-test-key' })
+    await getButtonByText(wrapper, 'common.more').trigger('click')
+    expect(wrapper.findAll('[role="menuitem"]').map(button => button.text())).toEqual([
+      expect.stringContaining('keys.disable'), expect.stringContaining('common.delete')
+    ])
+    await wrapper.findAll('[role="menuitem"]')[1].trigger('click')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+    expect(wrapper.findAllComponents({ name: 'ConfirmDialog' }).some(dialog => dialog.props('show') === true)).toBe(true)
+    wrapper.unmount()
   })
 
   it.each([
