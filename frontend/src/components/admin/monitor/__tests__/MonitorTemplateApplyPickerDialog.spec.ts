@@ -70,10 +70,10 @@ describe('MonitorTemplateApplyPickerDialog request ordering', () => {
   })
 
   it('still reports errors from the current request', async () => {
-    mocks.listAssociatedMonitors.mockRejectedValueOnce({ message: 'Current failure' })
+    mocks.listAssociatedMonitors.mockRejectedValueOnce({ message: '当前请求失败' })
     const wrapper = mountDialog()
     await flushPromises()
-    expect(mocks.showError).toHaveBeenCalledWith('Current failure')
+    expect(mocks.showError).toHaveBeenCalledWith('当前请求失败')
     expect(wrapper.text()).not.toContain('common.loading')
   })
 })

@@ -30,9 +30,9 @@ async function selectGroup() {
 
 describe('GroupReplaceModal feedback', () => {
   it.each([
-    [{ message: 'Group is unavailable' }, 'Group is unavailable'],
-    [{ response: { data: { detail: 'Permission denied' } } }, 'Permission denied'],
-    [{}, 'common.error']
+    [{ message: '分组不可用' }, '分组不可用'],
+    [{ response: { data: { detail: '无权限' } } }, '无权限'],
+    [{}, '操作失败，请稍后重试。']
   ])('shows API errors and keeps the dialog available for retry', async (error, message) => {
     mocks.replaceGroup.mockRejectedValueOnce(error)
     const wrapper = await selectGroup()
