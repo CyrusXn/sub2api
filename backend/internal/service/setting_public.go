@@ -442,14 +442,15 @@ type ChannelMonitorRuntime struct {
 	HideUserRanking bool
 }
 
-// ActiveProbesAllowed reports whether V1 active provider probes may run.
+// ActiveProbesAllowed 始终关闭主动探针，兼容旧配置的读取方。
 func (r ChannelMonitorRuntime) ActiveProbesAllowed() bool {
-	return r.Enabled && r.Mode == ChannelMonitorModeV1
+	// 渠道状态只读取真实流量，旧模式配置也不能重新开启付费探针。
+	return false
 }
 
-// PassiveAggregationAllowed reports whether V2 passive aggregation may run.
+// PassiveAggregationAllowed 不受旧版展示模式影响。
 func (r ChannelMonitorRuntime) PassiveAggregationAllowed() bool {
-	return r.Enabled && r.Mode == ChannelMonitorModeV2
+	return r.Enabled
 }
 
 // GetChannelMonitorRuntime reads the channel monitor feature flags directly from

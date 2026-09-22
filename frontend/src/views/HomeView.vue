@@ -209,12 +209,17 @@
         <!-- Hero Section - Left/Right Layout -->
         <div class="mb-12 flex flex-col items-center justify-between gap-12 lg:flex-row lg:gap-16">
           <!-- Left: Text Content -->
-          <div class="flex-1 text-center lg:text-left">
-            <h1
-              class="mb-4 text-4xl font-bold text-gray-900 dark:text-white md:text-5xl lg:text-6xl"
-            >
-              {{ siteName }}
-            </h1>
+          <div class="min-w-0 flex-1 text-center lg:text-left">
+            <div class="mb-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-4 lg:justify-start">
+              <h1
+                class="text-4xl font-bold text-gray-900 dark:text-white md:text-5xl lg:text-6xl"
+              >
+                {{ siteName }}
+              </h1>
+              <p class="text-xl font-bold text-red-600 dark:text-red-500 xl:text-2xl">
+                【联系客服微信：ncwqwert】
+              </p>
+            </div>
             <p class="mb-8 text-lg text-gray-600 dark:text-dark-300 md:text-xl">
               {{ siteSubtitle }}
             </p>

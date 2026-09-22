@@ -4,7 +4,8 @@ export default {
       description: '管理 AI 平台账号和 Cookie',
       mock: {
         title: 'Mock账号',
-        description: 'OAuth Gmail 模拟号池（仅用于本地预览）',
+        description: 'OpenAI OAuth 模拟账号',
+        allPlans: '全部套餐',
         search: '搜索名称、邮箱或平台',
         refresh: '重新随机',
         oauth: 'OAuth',

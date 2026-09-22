@@ -124,7 +124,7 @@ type ChannelMonitorV2Health struct {
 	TTFT      string `json:"ttft"`
 	Cache     string `json:"cache"`
 	// Score is 0–100 when samples are sufficient; omitted/null when unknown.
-	// Overall blends error-rate, TTFT p50, and cache rate (weights in Thresholds).
+	// 综合分只使用错误率与首 Token P50，缓存率仅单独展示。
 	Score          *float64                         `json:"score,omitempty"`
 	ErrorRateScore *float64                         `json:"error_rate_score,omitempty"`
 	TTFTScore      *float64                         `json:"ttft_score,omitempty"`
@@ -147,10 +147,10 @@ type ChannelMonitorV2HealthThresholds struct {
 	// Higher cache rate is better; defaults 20% warning / 5% critical.
 	WarningCacheRate  float64 `json:"warning_cache_rate"`
 	CriticalCacheRate float64 `json:"critical_cache_rate"`
-	// ErrorWeight + TTFTWeight + CacheWeight should sum to 1.0.
+	// 综合分按 ErrorWeight 与 TTFTWeight 的相对权重计算。
 	ErrorWeight float64 `json:"error_weight"`
 	TTFTWeight  float64 `json:"ttft_weight"`
-	CacheWeight float64 `json:"cache_weight"`
+	CacheWeight float64 `json:"cache_weight"` // 兼容旧配置，规范化后固定为 0。
 }
 
 type ChannelMonitorV2Coverage struct {
@@ -296,6 +296,8 @@ type ChannelMonitorV2List[T any] struct {
 }
 
 type ChannelMonitorV2Repository interface {
+	RefreshPassiveMinutes(ctx context.Context, end time.Time) error
+	GetPassiveCards(ctx context.Context, filter ChannelMonitorV2Filter) ([]ChannelMonitorPassiveCard, error)
 	GetConfig(ctx context.Context) (*ChannelMonitorV2Config, error)
 	UpdateConfig(ctx context.Context, config ChannelMonitorV2Config, expectedVersion int) (*ChannelMonitorV2Config, error)
 	GetDimensions(ctx context.Context, filter ChannelMonitorV2Filter, config ChannelMonitorV2Config) (*ChannelMonitorV2Dimensions, error)
@@ -528,6 +530,12 @@ func (s *ChannelMonitorV2Service) Matrix(ctx context.Context, filter ChannelMoni
 	matrix, err := s.repo.GetMatrix(ctx, filter, *cfg, groupBy, admin)
 	if err != nil {
 		return nil, err
+	}
+	if matrix != nil {
+		// 先按窗口内的请求量排序，再隐藏普通用户的用量；同频率保留原有稳定顺序。
+		sort.SliceStable(matrix.Items, func(i, j int) bool {
+			return matrix.Items[i].Metrics.RequestCount > matrix.Items[j].Metrics.RequestCount
+		})
 	}
 	if !admin && matrix != nil {
 		hideTP := s.hideThroughputForViewer(ctx, admin)
@@ -797,16 +805,16 @@ func DefaultChannelMonitorV2HealthThresholds() ChannelMonitorV2HealthThresholds 
 		MinimumSample:     50,
 		WarningErrorRate:  0.05,
 		CriticalErrorRate: 0.20,
-		TargetTTFTMs:      3000,
-		WarningTTFTMs:     3000,
-		CriticalTTFTMs:    10000,
+		TargetTTFTMs:      10000,
+		WarningTTFTMs:     10001,
+		CriticalTTFTMs:    20000,
 		// A zero/zero cache threshold means cache misses do not affect health
 		// until an operator explicitly configures cache scoring.
 		WarningCacheRate:  0,
 		CriticalCacheRate: 0,
-		ErrorWeight:       0.60,
-		TTFTWeight:        0.20,
-		CacheWeight:       0.20,
+		ErrorWeight:       0.75,
+		TTFTWeight:        0.25,
+		CacheWeight:       0,
 	}
 }
 
@@ -830,17 +838,21 @@ func NormalizeChannelMonitorV2HealthThresholds(in ChannelMonitorV2HealthThreshol
 	if in.CriticalErrorRate < in.WarningErrorRate {
 		in.CriticalErrorRate = in.WarningErrorRate
 	}
-	if in.TargetTTFTMs <= 0 {
+	// 同时兼容数据库中的旧阈值，保证首 Token 在 10 秒内不扣分。
+	if in.TargetTTFTMs < def.TargetTTFTMs {
 		in.TargetTTFTMs = def.TargetTTFTMs
 	}
 	if in.WarningTTFTMs <= 0 {
 		in.WarningTTFTMs = def.WarningTTFTMs
 	}
-	if in.WarningTTFTMs < in.TargetTTFTMs {
+	if in.WarningTTFTMs <= in.TargetTTFTMs {
 		in.WarningTTFTMs = in.TargetTTFTMs + 1
 	}
 	if in.CriticalTTFTMs <= 0 {
 		in.CriticalTTFTMs = def.CriticalTTFTMs
+	}
+	if in.CriticalTTFTMs <= in.TargetTTFTMs {
+		in.CriticalTTFTMs = in.TargetTTFTMs * 2
 	}
 	if in.CriticalTTFTMs < in.WarningTTFTMs {
 		in.CriticalTTFTMs = in.WarningTTFTMs
@@ -860,8 +872,9 @@ func NormalizeChannelMonitorV2HealthThresholds(in ChannelMonitorV2HealthThreshol
 	if in.CriticalCacheRate > in.WarningCacheRate {
 		in.CriticalCacheRate = in.WarningCacheRate
 	}
-	if in.ErrorWeight <= 0 && in.TTFTWeight <= 0 && in.CacheWeight <= 0 {
-		in.ErrorWeight, in.TTFTWeight, in.CacheWeight = def.ErrorWeight, def.TTFTWeight, def.CacheWeight
+	in.CacheWeight = 0
+	if in.ErrorWeight <= 0 && in.TTFTWeight <= 0 {
+		in.ErrorWeight, in.TTFTWeight = def.ErrorWeight, def.TTFTWeight
 	}
 	return in
 }
@@ -969,7 +982,7 @@ func ChannelMonitorV2HealthForWithThresholds(metrics ChannelMonitorV2Metric, thr
 		weight float64
 		band   string
 	}
-	parts := make([]scored, 0, 3)
+	parts := make([]scored, 0, 2)
 
 	if metrics.RequestCount >= result.MinimumSample {
 		s := errorRateScore(metrics.ErrorRate, thresholds.CriticalErrorRate)
@@ -1002,7 +1015,6 @@ func ChannelMonitorV2HealthForWithThresholds(metrics ChannelMonitorV2Metric, thr
 		result.CacheScore = &s
 		// Invert for healthBand (lower is worse): use (1 - rate) against warning/critical floors.
 		result.Cache = cacheRateBand(metrics.CacheRate, thresholds.WarningCacheRate, thresholds.CriticalCacheRate)
-		parts = append(parts, scored{score: s, weight: thresholds.CacheWeight, band: result.Cache})
 	}
 
 	if len(parts) == 0 {

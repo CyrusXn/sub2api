@@ -22,6 +22,13 @@ type channelMonitorV2RepoStub struct {
 // Alias keeps composite literals readable without introducing another package.
 type serviceChannelMonitorV2ConfigAlias = ChannelMonitorV2Config
 
+func (s *channelMonitorV2RepoStub) RefreshPassiveMinutes(context.Context, time.Time) error {
+	return nil
+}
+func (s *channelMonitorV2RepoStub) GetPassiveCards(context.Context, ChannelMonitorV2Filter) ([]ChannelMonitorPassiveCard, error) {
+	return nil, nil
+}
+
 func (s *channelMonitorV2RepoStub) GetConfig(context.Context) (*ChannelMonitorV2Config, error) {
 	cfg := ChannelMonitorV2Config(s.config)
 	return &cfg, nil
@@ -201,9 +208,9 @@ func TestChannelMonitorV2ErrorTaxonomyPriority(t *testing.T) {
 	}
 }
 
-func TestChannelMonitorV2HealthBlendsErrorTTFTAndCache(t *testing.T) {
+func TestChannelMonitorV2HealthBlendsErrorAndTTFT(t *testing.T) {
 	// error 3%/5% → 40; ttft p50 2s → 100; cache 50% → 50
-	// overall = (0.6*40 + 0.2*100 + 0.2*50) / 1.0 = 54 → warning
+	// 缓存率单独展示，综合分只保留错误率与首 Token：(0.6*40 + 0.2*100) / 0.8 = 55。
 	p50 := int64(2000)
 	p95 := int64(9000)
 	thresholds := ChannelMonitorV2HealthThresholds{
@@ -233,7 +240,7 @@ func TestChannelMonitorV2HealthBlendsErrorTTFTAndCache(t *testing.T) {
 	require.NotNil(t, health.Score)
 	require.NotNil(t, health.CacheScore)
 	require.InDelta(t, 50.0, *health.CacheScore, 0.01)
-	require.InDelta(t, 54.0, *health.Score, 0.01)
+	require.InDelta(t, 55.0, *health.Score, 0.01)
 	require.Equal(t, "warning", health.Overall)
 
 	// Perfect signals → 100
@@ -250,6 +257,83 @@ func TestChannelMonitorV2HealthBlendsErrorTTFTAndCache(t *testing.T) {
 	health = ChannelMonitorV2HealthFor(ChannelMonitorV2Metric{RequestCount: 2})
 	require.Equal(t, "unknown", health.Overall)
 	require.Nil(t, health.Score)
+}
+
+func TestChannelMonitorV2HealthIgnoresCacheAndAllowsTenSecondTTFT(t *testing.T) {
+	// 模拟数据库中已有的旧阈值，确保规则不是只对新安装生效。
+	thresholds := DefaultChannelMonitorV2HealthThresholds()
+	thresholds.TargetTTFTMs, thresholds.WarningTTFTMs, thresholds.CriticalTTFTMs = 3000, 3000, 10000
+	thresholds.WarningCacheRate, thresholds.CriticalCacheRate = 0.85, 0.60
+	thresholds.ErrorWeight, thresholds.TTFTWeight, thresholds.CacheWeight = 0.60, 0.20, 0.20
+	for _, tt := range []struct {
+		name                 string
+		requests             int64
+		ttft                 int64
+		cache, errors, score float64
+	}{
+		{"零缓存且恰好十秒", 100, 10000, 0, 0, 100},
+		{"全缓存且十秒以内", 100, 9999, 1, 0, 100},
+		{"失败请求仍扣分", 100, 1000, 1, 0.10, 62.5},
+		{"超过十秒仍扣分", 100, 20000, 1, 0, 75},
+		{"少量成功请求不被零缓存判红", 4, 5000, 0, 0, -1},
+		{"少量成功请求不被缓存判黄", 29, 1000, 0.579, 0, -1},
+		{"没有流量", 0, 0, 0, 0, -1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			health := ChannelMonitorV2HealthForWithThresholds(ChannelMonitorV2Metric{
+				RequestCount: tt.requests, ErrorRate: tt.errors,
+				CacheRate: tt.cache, CacheRateDenominator: tt.requests * 1000,
+				TTFT: ChannelMonitorV2Latency{SampleCount: tt.requests, P50Ms: &tt.ttft},
+			}, thresholds)
+			if tt.score < 0 {
+				require.Nil(t, health.Score)
+				require.Equal(t, "unknown", health.Overall)
+				return
+			}
+			require.NotNil(t, health.Score)
+			require.InDelta(t, tt.score, *health.Score, 0.01)
+			if tt.ttft <= 10000 {
+				require.Equal(t, "healthy", health.TTFT)
+				require.InDelta(t, 100.0, *health.TTFTScore, 0.01)
+			}
+		})
+	}
+	// 旧配置即便只给缓存权重，也必须恢复成功率和首 Token 的有效权重。
+	thresholds.ErrorWeight, thresholds.TTFTWeight = 0, 0
+	normalized := NormalizeChannelMonitorV2HealthThresholds(thresholds)
+	require.Zero(t, normalized.CacheWeight)
+	require.Greater(t, normalized.ErrorWeight, 0.0)
+	require.Greater(t, normalized.TTFTWeight, 0.0)
+}
+
+func TestChannelMonitorV2MatrixSortsUsageBeforeRedaction(t *testing.T) {
+	for _, admin := range []bool{true, false} {
+		t.Run(fmt.Sprintf("admin=%t", admin), func(t *testing.T) {
+			repo := &channelMonitorV2RepoStub{
+				config: ChannelMonitorV2Config{Enabled: true},
+				matrix: &ChannelMonitorV2Matrix{Items: []ChannelMonitorV2MatrixRow{
+					{GroupName: "未使用A"},
+					{GroupName: "较少使用", Metrics: ChannelMonitorV2Metric{RequestCount: 10, RPM: 100}},
+					{GroupName: "最多使用", Metrics: ChannelMonitorV2Metric{RequestCount: 100, RPM: 1}},
+					{GroupName: "同频率", Metrics: ChannelMonitorV2Metric{RequestCount: 10}},
+					{GroupName: "未使用B"},
+				}},
+			}
+			svc := NewChannelMonitorV2Service(repo)
+			svc.SetRuntimeReader(channelMonitorV2RuntimeStub{rt: ChannelMonitorRuntime{HideThroughput: true}})
+			result, err := svc.Matrix(context.Background(), ChannelMonitorV2Filter{}, ChannelMonitorV2GroupByPlatformGroup, admin)
+			require.NoError(t, err)
+			names := make([]string, 0, len(result.Items))
+			for _, row := range result.Items {
+				names = append(names, row.GroupName)
+				if !admin {
+					require.Zero(t, row.Metrics.RequestCount)
+					require.Zero(t, row.Metrics.RPM)
+				}
+			}
+			require.Equal(t, []string{"最多使用", "较少使用", "同频率", "未使用A", "未使用B"}, names)
+		})
+	}
 }
 
 func TestChannelMonitorV2HealthLeavesMissingTTFTUnknown(t *testing.T) {

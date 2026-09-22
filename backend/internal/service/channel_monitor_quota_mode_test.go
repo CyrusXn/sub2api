@@ -46,7 +46,7 @@ func (r *quotaModeRepoStub) Update(_ context.Context, m *ChannelMonitor) error {
 	return nil
 }
 
-// newQuotaModeService 构造启用 V1 探活的 service（复用 retirement/duplicate 测试的 stub）。
+// newQuotaModeService 仅供旧配额转换、持久化逻辑的单元测试。
 func newQuotaModeService(repo *quotaModeRepoStub) *ChannelMonitorService {
 	svc := NewChannelMonitorService(repo, &duplicateChannelMonitorEncryptor{})
 	svc.SetRuntimeReader(channelMonitorRuntimeStub{rt: ChannelMonitorRuntime{
@@ -70,9 +70,9 @@ func newQuotaModeFetcher(accounts map[int64]*Account, usage *stubMonitorUsageSou
 	}
 }
 
-// --- RunCheck 分派 ---
+// --- 旧配额结果转换；公开 RunCheck 入口已由 retirement 测试验证停用 ---
 
-func TestRunCheck_QuotaModeProducesSingleQuotaResult(t *testing.T) {
+func TestQuotaModeProducesSingleQuotaResult(t *testing.T) {
 	repo := &quotaModeRepoStub{monitor: &ChannelMonitor{
 		ID:              1,
 		Name:            "kimi-quota",
@@ -95,8 +95,8 @@ func TestRunCheck_QuotaModeProducesSingleQuotaResult(t *testing.T) {
 	}}
 	svc.SetQuotaFetcher(fetcher)
 
-	results, err := svc.RunCheck(context.Background(), 1)
-	require.NoError(t, err)
+	results := svc.runQuotaOnlyCheck(context.Background(), repo.monitor)
+	svc.persistCheckResults(context.Background(), repo.monitor, results)
 	require.Len(t, results, 1)
 
 	res := results[0]
@@ -115,7 +115,7 @@ func TestRunCheck_QuotaModeProducesSingleQuotaResult(t *testing.T) {
 	require.Equal(t, []int64{1}, repo.markedIDs)
 }
 
-func TestRunCheck_QuotaModeUnlinkedAccountDegrades(t *testing.T) {
+func TestQuotaModeUnlinkedAccountDegrades(t *testing.T) {
 	repo := &quotaModeRepoStub{monitor: &ChannelMonitor{
 		ID:              2,
 		Provider:        MonitorProviderDeepseek,
@@ -130,15 +130,14 @@ func TestRunCheck_QuotaModeUnlinkedAccountDegrades(t *testing.T) {
 	svc := newQuotaModeService(repo)
 	svc.SetQuotaFetcher(newQuotaModeFetcher(nil, nil))
 
-	results, err := svc.RunCheck(context.Background(), 2)
-	require.NoError(t, err)
+	results := svc.runQuotaOnlyCheck(context.Background(), repo.monitor)
 	require.Len(t, results, 1)
 	require.Equal(t, MonitorStatusDegraded, results[0].Status)
 	require.Contains(t, results[0].Message, "linked account not found")
 	require.False(t, results[0].Quota.Success)
 }
 
-func TestRunCheck_QuotaModeNilFetcherFailsClosed(t *testing.T) {
+func TestQuotaModeNilFetcherFailsClosed(t *testing.T) {
 	repo := &quotaModeRepoStub{monitor: &ChannelMonitor{
 		ID:              3,
 		Provider:        MonitorProviderZhipu,
@@ -151,14 +150,13 @@ func TestRunCheck_QuotaModeNilFetcherFailsClosed(t *testing.T) {
 	}}
 	svc := newQuotaModeService(repo) // 不注入 fetcher
 
-	results, err := svc.RunCheck(context.Background(), 3)
-	require.NoError(t, err)
+	results := svc.runQuotaOnlyCheck(context.Background(), repo.monitor)
 	require.Len(t, results, 1)
 	require.Equal(t, MonitorStatusError, results[0].Status)
 	require.Contains(t, results[0].Message, "not configured")
 }
 
-func TestRunCheck_QuotaProbeAttachesSnapshotToPrimaryRowOnly(t *testing.T) {
+func TestQuotaProbeAttachesSnapshotToPrimaryRowOnly(t *testing.T) {
 	h := &openAICaptureHandler{}
 	endpoint := setupFakeOpenAI(t, h)
 	repo := &quotaModeRepoStub{monitor: &ChannelMonitor{
@@ -182,8 +180,11 @@ func TestRunCheck_QuotaProbeAttachesSnapshotToPrimaryRowOnly(t *testing.T) {
 		12: {ID: 12, Platform: domain.PlatformOpenAI},
 	}, usage))
 
-	results, err := svc.RunCheck(context.Background(), 4)
+	m, err := svc.Get(context.Background(), 4)
 	require.NoError(t, err)
+	results := svc.runChecksConcurrent(context.Background(), m)
+	attachQuotaSnapshot(results, svc.fetchQuotaSnapshot(context.Background(), m))
+	svc.persistCheckResults(context.Background(), m, results)
 	require.Len(t, results, 2)
 
 	// 探活状态为准，配额只挂主模型行。
@@ -200,7 +201,7 @@ func TestRunCheck_QuotaProbeAttachesSnapshotToPrimaryRowOnly(t *testing.T) {
 	require.Nil(t, repo.history[1].Quota)
 }
 
-func TestRunCheck_QuotaProbeQuotaFailureKeepsProbeStatus(t *testing.T) {
+func TestQuotaProbeQuotaFailureKeepsProbeStatus(t *testing.T) {
 	h := &openAICaptureHandler{}
 	endpoint := setupFakeOpenAI(t, h)
 	repo := &quotaModeRepoStub{monitor: &ChannelMonitor{
@@ -218,8 +219,10 @@ func TestRunCheck_QuotaProbeQuotaFailureKeepsProbeStatus(t *testing.T) {
 	svc := newQuotaModeService(repo)
 	svc.SetQuotaFetcher(newQuotaModeFetcher(nil, nil))
 
-	results, err := svc.RunCheck(context.Background(), 5)
+	m, err := svc.Get(context.Background(), 5)
 	require.NoError(t, err)
+	results := svc.runChecksConcurrent(context.Background(), m)
+	attachQuotaSnapshot(results, svc.fetchQuotaSnapshot(context.Background(), m))
 	require.Len(t, results, 1)
 	require.Equal(t, MonitorStatusOperational, results[0].Status, "quota failure must not flip probe status")
 	require.False(t, results[0].Quota.Success)

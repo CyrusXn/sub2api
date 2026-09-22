@@ -31,20 +31,28 @@
       :description="t('channelStatus.empty.description')"
     />
 
-    <!-- 按平台分组展示：固定顺序 OpenAI → Claude → Grok → 国模 → 其余平台 -->
-    <div v-else class="space-y-8">
-      <section v-for="group in groupedItems" :key="group.key">
-        <div class="flex items-center gap-2 mb-3">
-          <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">
+    <!-- 按平台折叠展示，组内保留使用频率顺序。 -->
+    <div v-else class="space-y-4">
+      <details
+        v-for="group in groupedItems"
+        :key="group.key"
+        :open="group.key === 'openai'"
+        class="group rounded-2xl border border-gray-200/80 bg-white/40 dark:border-dark-700/70 dark:bg-dark-800/30"
+      >
+        <summary class="flex cursor-pointer list-none items-center gap-2 rounded-2xl px-5 py-4 select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 [&::-webkit-details-marker]:hidden">
+          <svg class="h-4 w-4 text-gray-500 transition-transform group-open:rotate-90" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.17 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd" />
+          </svg>
+          <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">
             {{ t(`channelStatus.platformGroups.${group.key}`) }}
-          </h3>
+          </span>
           <span
             class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300"
           >
             {{ group.items.length }}
           </span>
-        </div>
-        <div class="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        </summary>
+        <div class="grid gap-5 grid-cols-1 px-5 pb-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           <MonitorCard
             v-for="item in group.items"
             :key="item.id"
@@ -55,7 +63,7 @@
             @click="emit('cardClick', item)"
           />
         </div>
-      </section>
+      </details>
     </div>
   </div>
 </template>
@@ -111,6 +119,9 @@ const groupedItems = computed<{ key: MonitorGroupKey; items: UserMonitorView[] }
 function resolveAvailability(item: UserMonitorView): number | null {
   if (props.window === '7d') {
     return item.availability_7d ?? null
+  }
+  if (item.passive) {
+    return props.window === '15d' ? item.availability_15d ?? null : item.availability_30d ?? null
   }
   const detail = props.detailCache[item.id]
   if (!detail) return null

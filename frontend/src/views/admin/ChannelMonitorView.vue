@@ -11,11 +11,7 @@
           {{ t('admin.channelMonitor.title') }}
         </h1>
         <p class="page-description mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-          {{
-            isV1Mode
-              ? t('channelMonitorV2.admin.descriptionV1')
-              : t('channelMonitorV2.admin.descriptionV2')
-          }}
+          {{ t('channelStatus.passive.description') }}
         </p>
         <div class="mt-4 border-t border-gray-100 pt-4 dark:border-dark-700">
           <div
@@ -41,7 +37,7 @@
               :aria-selected="adminMonitorTab === 'legacy'"
               @click="adminMonitorTab = 'legacy'"
             >
-              {{ isV1Mode ? t('channelMonitorV2.admin.tabV1Active') : t('channelMonitorV2.admin.tabV1History') }}
+              {{ t('channelMonitorV2.admin.tabV1History') }}
             </button>
           </div>
         </div>
@@ -103,7 +99,7 @@
           <template #cell-actions="{ row }">
             <MonitorActionsCell
               :row="row"
-              :running="runningId === row.id"
+              :running="false"
               :duplicating="duplicatingIds.has(row.id)"
               @run="handleRunNow"
               @duplicate="handleDuplicate"
@@ -149,12 +145,6 @@
       @updated="reload"
     />
 
-    <MonitorRunResultDialog
-      :show="showRunResult"
-      :results="runResults"
-      @close="showRunResult = false"
-    />
-
     <ConfirmDialog
       :show="showDeleteDialog"
       :title="t('common.delete')"
@@ -176,7 +166,6 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { adminAPI } from '@/api/admin'
 import type {
   ChannelMonitor,
-  CheckResult,
   ListParams,
   Provider,
 } from '@/api/admin/channelMonitor'
@@ -193,7 +182,6 @@ import Toggle from '@/components/common/Toggle.vue'
 import MonitorFiltersBar from '@/components/admin/monitor/MonitorFiltersBar.vue'
 import MonitorFormDialog from '@/components/admin/monitor/MonitorFormDialog.vue'
 import MonitorTemplateManagerDialog from '@/components/admin/monitor/MonitorTemplateManagerDialog.vue'
-import MonitorRunResultDialog from '@/components/admin/monitor/MonitorRunResultDialog.vue'
 import MonitorPrimaryModelCell from '@/components/admin/monitor/MonitorPrimaryModelCell.vue'
 import MonitorActionsCell from '@/components/admin/monitor/MonitorActionsCell.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
@@ -203,7 +191,6 @@ import { isChannelMonitorV1Mode } from '@/utils/featureFlags'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const isV1Mode = computed(() => isChannelMonitorV1Mode())
 const adminMonitorTab = ref<'v2' | 'legacy'>(isChannelMonitorV1Mode() ? 'legacy' : 'v2')
 const {
   providerLabel,
@@ -216,7 +203,6 @@ const {
 
 const monitors = ref<ChannelMonitor[]>([])
 const loading = ref(false)
-const runningId = ref<number | null>(null)
 const searchQuery = ref('')
 const providerFilter = ref<Provider | ''>('')
 const enabledFilter = ref<'' | 'true' | 'false'>('')
@@ -227,8 +213,6 @@ const showTemplateManager = ref(false)
 const editing = ref<ChannelMonitor | null>(null)
 const showDeleteDialog = ref(false)
 const deleting = ref<ChannelMonitor | null>(null)
-const showRunResult = ref(false)
-const runResults = ref<CheckResult[]>([])
 const duplicatingIds = reactive(new Set<number>())
 
 let abortController: AbortController | null = null
@@ -324,25 +308,8 @@ async function toggleEnabled(row: ChannelMonitor) {
   }
 }
 
-async function handleRunNow(row: ChannelMonitor) {
-  if (!isV1Mode.value) {
-    appStore.showError(t('admin.channelMonitor.runFailed'))
-    return
-  }
-  if (runningId.value != null) return
-  runningId.value = row.id
-  try {
-    const res = await adminAPI.channelMonitor.runNow(row.id)
-    runResults.value = res.results || []
-    showRunResult.value = true
-    appStore.showSuccess(t('admin.channelMonitor.runSuccess'))
-    // Refresh row to get latest status from backend
-    void reload()
-  } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('admin.channelMonitor.runFailed')))
-  } finally {
-    runningId.value = null
-  }
+function handleRunNow() {
+  appStore.showError(t('channelStatus.passive.description'))
 }
 
 async function handleDuplicate(row: ChannelMonitor) {

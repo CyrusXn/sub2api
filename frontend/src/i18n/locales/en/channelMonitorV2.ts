@@ -88,7 +88,7 @@ export default {
       modeBanner:
         'System mode is currently {mode}. V2 minute aggregation will not run; this config can be prepared now and takes effect after switching to {modeV2}. Change mode under System Settings → Feature switches.',
       modeClosed: 'Channel monitor disabled',
-      modeV1: 'V1 active probes',
+      modeV1: 'V1 basic statistics',
       modeV2: 'V2 passive monitoring',
       enableTitle: 'Enable V2 aggregation',
       enableHint:
@@ -112,7 +112,7 @@ export default {
       ignoredSummary: 'Ignored {ignored} categories · counted in error rate {counted} categories',
       healthTitle: 'Health thresholds',
       healthHint:
-        'Controls user-facing color bands and overall score. Defaults are tolerant so small error rates or low cache do not immediately show as unhealthy.',
+        'Overall health uses only success rate and TTFT P50, with no TTFT penalty at or below 10 seconds. Cache thresholds apply only to the cache view, not overall health.',
       fields: {
         minimumSample: 'Minimum samples',
         warningError: 'Error rate watch %',
@@ -127,7 +127,7 @@ export default {
       namedModelsCount: 'Showing {count} named model dimensions; unlisted models fold into per-platform “Other”.',
       userContractTitle: 'User-facing display contract',
       userContract: {
-        health: 'Health color weights: error rate 60% + first-token P50 20% + cache rate 20% (thresholds configurable above)',
+        health: 'Default overall health weights: success rate 75% + TTFT P50 25%. TTFT at or below 10 seconds has no penalty; cache rate does not affect overall health.',
         trend: 'Trend can switch between pulse matrix and line chart (error · cache · first token)',
         latency: 'Latency shows AVG · P50 · P90; absolute request / error counts are not shown',
         models: 'Empty model lists show real names and never dump everything into “Other”',
@@ -135,13 +135,13 @@ export default {
     },
     admin: {
       descriptionV1:
-        'System mode is V1 active probes: manage probe monitors and run checks now; V2 aggregation does not run.',
+        'Real groups are collected passively every minute. Legacy active probes are disabled.',
       descriptionV2:
-        'System mode is V2 passive monitoring: configure aggregation dimensions; V1 active probes do not run.',
+        'Real groups are collected passively every minute, with additional detailed metrics.',
       tabAria: 'Monitor management',
       tabV2: 'V2 data monitor config',
-      tabV1Active: 'V1 active probes',
-      tabV1History: 'V1 history (probes not active in current mode)',
+      tabV1Active: 'Legacy configuration (probes disabled)',
+      tabV1History: 'Legacy configuration and history (probes disabled)',
     },
   },
 }

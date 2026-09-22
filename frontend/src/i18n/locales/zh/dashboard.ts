@@ -605,6 +605,15 @@ export default {
 
   // Channel Status (user-facing read-only view)
   channelStatus: {
+    passive: {
+      previewHint: '本地只读预览：仅使用线上最近一小时真实记录，7 / 15 / 30 天可用率暂不代表完整历史。',
+      description: '每分钟汇总真实请求监控记录',
+      allModels: '分组全部模型',
+      firstToken: '最近分钟最快首字',
+      successRate: '最近分钟成功率',
+      rules: '每个有流量的分钟记录一个状态：存在成功且首字低于 10 秒的请求为绿色；全部直接报错为红色；其他情况为黄色。无流量不记点。',
+      availabilityHint: '可用率为有成功请求的分钟数占有流量分钟数的比例；只统计已采集的真实记录，慢请求记黄色。',
+    },
     title: '渠道状态',
     description: '查看渠道可用性、延迟和近期状态',
     searchPlaceholder: '搜索渠道...',
@@ -626,7 +635,7 @@ export default {
     // 平台分组标题（渠道状态页按平台分组展示）
     platformGroups: {
       openai: 'OpenAI',
-      claude: 'Claude',
+      claude: 'Anthropic',
       grok: 'Grok',
       cn: '国模',
       gemini: 'Gemini',
@@ -652,7 +661,7 @@ export default {
     },
     empty: {
       title: '暂无可显示的渠道',
-      description: '管理员尚未配置可监控的渠道。'
+      description: '当前筛选下暂无已采集到使用记录的分组。'
     }
   },
 

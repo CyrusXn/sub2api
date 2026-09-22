@@ -1122,10 +1122,7 @@ func ProvideChannelMonitorService(
 	return svc
 }
 
-// ProvideChannelMonitorRunner 创建并启动渠道监控调度器。
-// 通过 SetScheduler 注入回 service 后再 Start，确保启动时加载所有 enabled monitor，
-// 后续 CRUD 也能即时同步任务表。Runner.Stop 由 cleanup function 调用。
-// settingService 用于 runner 每次 fire 读取功能开关。
+// ProvideChannelMonitorRunner 保留清理依赖，不再启动主动监控调度器。
 // quotaFetcher（账号侧用量聚合）也在此注入：accountUsage/CN 服务在 wire 图中
 // 晚于 channelMonitorService 构造，走 setter 注入避免调整既有构造顺序。
 func ProvideChannelMonitorRunner(
@@ -1138,13 +1135,8 @@ func ProvideChannelMonitorRunner(
 	if svc != nil {
 		// 即使 api_only 不启动调度器，也保留请求路径所需的运行时设置读取能力。
 		svc.SetRuntimeReader(settingService)
-		if cfg.ShouldStartBackgroundTask(config.BackgroundTaskChannelMonitor) {
-			svc.SetScheduler(r)
-		}
+		// 保留旧配置查询能力，但不再注册或启动主动探针调度。
 		svc.SetQuotaFetcher(quotaFetcher)
-	}
-	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskChannelMonitor) {
-		r.Start()
 	}
 	return r
 }
@@ -1158,7 +1150,7 @@ func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingServ
 }
 
 // ProvideChannelMonitorV2Aggregator starts the passive minute-rollup worker.
-// Aggregation only runs when channel_monitor_enabled=true and mode=v2 (and V2 config enabled).
+// 分组分钟采集只受总开关控制；旧 V2 统计仍受模式和 V2 配置控制。
 // Set CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR=1 to skip Start (local demo with seeded facts).
 func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService, cfg *config.Config) *ChannelMonitorV2Aggregator {
 	aggregator := NewChannelMonitorV2Aggregator(repo, db, settingService)

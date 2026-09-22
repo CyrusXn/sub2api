@@ -22,6 +22,10 @@ export interface MonitorTimelinePoint {
 }
 
 export interface UserMonitorView {
+  passive?: boolean
+  success_rate?: number
+  availability_15d?: number
+  availability_30d?: number
   id: number
   name: string
   provider: Provider
@@ -70,6 +74,16 @@ export async function list(options?: { signal?: AbortSignal }): Promise<UserMoni
     signal: options?.signal,
   })
   return data
+}
+
+/** 每分钟从真实流量汇总的分组卡片，不会触发上游请求。 */
+export async function listPassive(options: { signal?: AbortSignal; range: string }): Promise<UserMonitorListResponse> {
+  type PassiveCard = Omit<UserMonitorView, 'group_name' | 'primary_model' | 'primary_ping_latency_ms' | 'extra_models'>
+  const { data } = await apiClient.get<{ items: PassiveCard[] }>('/channel-monitor-passive', {
+    signal: options.signal,
+    params: { range: options.range },
+  })
+  return { items: data.items.map(item => ({ ...item, group_name: '', primary_model: '', primary_ping_latency_ms: null, extra_models: [] })) }
 }
 
 /**

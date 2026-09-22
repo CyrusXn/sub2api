@@ -88,7 +88,7 @@ export default {
       modeBanner:
         '当前系统设置为 {mode}。V2 分钟聚合不会运行；此处配置可预先保存，切换到 {modeV2} 后立即生效。可在系统设置 → 功能开关调整。',
       modeClosed: '渠道监控已关闭',
-      modeV1: 'V1 主动探测',
+      modeV1: 'V1 基础统计',
       modeV2: 'V2 被动监控',
       enableTitle: '启用 V2 汇总',
       enableHint: '在系统模式为 V2 时生效；关闭后仅停止本配置的汇总，系统模式开关仍在「功能开关」',
@@ -109,7 +109,7 @@ export default {
         '勾选「忽略」的类别不计入错误率与健康分，仍在错误原因列表中以灰色显示并标记忽略。未匹配的错误归入「其他」。',
       ignoredSummary: '已忽略 {ignored} 类 · 计入错误率 {counted} 类',
       healthTitle: '健康阈值',
-      healthHint: '控制用户端色块和整体评分。默认阈值较宽松，避免少量错误或低缓存率立即显示异常。',
+      healthHint: '综合健康分只考虑成功率与首 Token P50，首 Token 在 10 秒内不扣分。缓存阈值仅用于缓存率视图，不影响综合分。',
       fields: {
         minimumSample: '最小样本数',
         warningError: '错误率关注 %',
@@ -124,19 +124,19 @@ export default {
       namedModelsCount: '将展示 {count} 个命名模型维度；名单外模型归入各平台「其他」。',
       userContractTitle: '用户端展示约定',
       userContract: {
-        health: '健康色三指标：错误率 60% + 首 Token P50 20% + 缓存率 20%（阈值可在上方配置）',
+        health: '综合健康分默认权重：成功率 75% + 首 Token P50 25%；首 Token 在 10 秒内不扣分，缓存率不参与综合评分。',
         trend: '趋势可切换色块矩阵 / 折线图（错误率 · 缓存率 · 首 Token）',
         latency: '延迟展示 AVG · P50 · P90；不展示绝对请求数 / 错误数',
         models: '模型列表留空时展示真实模型名，不会全部归入「其他」',
       },
     },
     admin: {
-      descriptionV1: '当前系统设置为 V1 主动探测：可管理监控项并立即检测；V2 聚合不会运行。',
-      descriptionV2: '当前系统设置为 V2 被动监控：配置聚合维度；V1 主动探测不会运行。',
+      descriptionV1: '按真实分组每分钟被动采集，旧主动探针已停用。',
+      descriptionV2: '按真实分组每分钟被动采集，并额外聚合详细指标。',
       tabAria: '监控管理',
       tabV2: 'V2 数据监控配置',
-      tabV1Active: 'V1 主动探测',
-      tabV1History: 'V1 历史（当前模式未启用探测）',
+      tabV1Active: '旧监控配置（已停用探针）',
+      tabV1History: '旧监控配置与历史（已停用探针）',
     },
   },
 }

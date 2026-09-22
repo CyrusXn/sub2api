@@ -547,7 +547,7 @@ const healthModeOptions = computed(() => [
 
 const filter = ref<MonitorFilter>({
   range: parseRange(route.query.range),
-  platforms: csv(route.query.platform),
+  platforms: route.query.platform === undefined ? ['openai'] : csv(route.query.platform),
   groupIds: csv(route.query.group).map(Number).filter(Boolean),
   models: csv(route.query.model),
 })
@@ -693,7 +693,8 @@ function syncQuery() {
   void router.replace({
     query: {
       range: filter.value.range,
-      platform: filter.value.platforms.join(',') || undefined,
+      // 空字符串保留“全部平台”，避免刷新后重新套用 OpenAI 默认值。
+      platform: filter.value.platforms.join(','),
       group: filter.value.groupIds.join(',') || undefined,
       model: filter.value.models.join(',') || undefined,
       group_by: matrixGroupBy.value,

@@ -216,7 +216,7 @@
           </label>
           <label class="block">
             <span class="input-label">{{ t('channelMonitorV2.settings.fields.targetTtft') }}</span>
-            <input v-model.number="draft.health_thresholds.target_ttft_ms" class="input" type="number" min="1" step="100" />
+            <input v-model.number="draft.health_thresholds.target_ttft_ms" class="input" type="number" min="10000" step="100" />
           </label>
           <label class="block">
             <span class="input-label">{{ t('channelMonitorV2.settings.fields.warningTtft') }}</span>
@@ -307,15 +307,15 @@ const defaultThresholds = {
   minimum_sample: 50,
   warning_error_rate: 0.05,
   critical_error_rate: 0.20,
-  target_ttft_ms: 3000,
-  warning_ttft_ms: 3000,
-  critical_ttft_ms: 10000,
+  target_ttft_ms: 10000,
+  warning_ttft_ms: 10001,
+  critical_ttft_ms: 20000,
   // Higher is better: below 85% watch, below 60% critical.
   warning_cache_rate: 0.85,
   critical_cache_rate: 0.60,
-  error_weight: 0.60,
-  ttft_weight: 0.20,
-  cache_weight: 0.20,
+  error_weight: 0.75,
+  ttft_weight: 0.25,
+  cache_weight: 0,
 }
 
 /** Factory ignored categories (matches backend DefaultChannelMonitorV2IgnoredErrorCategories). */

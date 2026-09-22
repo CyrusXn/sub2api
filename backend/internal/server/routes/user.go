@@ -136,6 +136,7 @@ func RegisterUserRoutes(
 		}
 
 		// 渠道监控（用户只读）
+		authenticated.GET("/channel-monitor-passive", panelRateLimiter.Heavy(), channelMonitorAdminFeatureGuard(settingService), h.ChannelMonitorV2.PassiveCards)
 		monitors := authenticated.Group("/channel-monitors")
 		{
 			monitors.GET("", h.ChannelMonitor.List)

@@ -17,16 +17,16 @@ vi.mock('../ChannelStatusV2View.vue', () => ({
 
 import ChannelStatusView from '../ChannelStatusView.vue'
 
-describe('ChannelStatusView mode switch', () => {
+describe('旧模式设置均使用被动卡片', () => {
   beforeEach(() => {
     isV1.mockReset()
   })
 
-  it('renders V2 when not in v1 mode', () => {
+  it('V2 设置也保留卡片展示', () => {
     isV1.mockReturnValue(false)
     const wrapper = mount(ChannelStatusView)
-    expect(wrapper.find('[data-testid="v2"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="v1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="v2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="v1"]').exists()).toBe(true)
   })
 
   it('renders V1 when in v1 mode', () => {

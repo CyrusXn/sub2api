@@ -82,7 +82,7 @@ export const DEFAULT_INTERVAL_SECONDS = 60
 /**
  * 渠道状态页平台分组键。
  *
- * 用户要求渠道状态按平台分组展示，固定顺序为 OpenAI → Claude → Grok → 国模，
+ * 用户要求渠道状态按平台分组展示，固定顺序为 OpenAI → Anthropic → 国模 → Grok，
  * 其余平台依次追加。这里用固定枚举 + 固定顺序表达，渲染时过滤掉空分组，
  * 避免引入动态分组注册表（YAGNI）。
  */
@@ -99,8 +99,8 @@ export type MonitorGroupKey =
 export const MONITOR_GROUP_ORDER: readonly MonitorGroupKey[] = [
   'openai',
   'claude',
-  'grok',
   'cn',
+  'grok',
   'gemini',
   'antigravity',
   'other',

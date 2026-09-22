@@ -25,7 +25,7 @@
           </span>
           <!-- 纯配额模式主模型是占位符 "quota"，展示层替换为本地化「配额」标签 -->
           <span class="font-mono text-xs truncate text-gray-500 dark:text-gray-400">
-            {{ formatMonitorModel(item.primary_model) }}
+            {{ item.passive ? t('channelStatus.passive.allModels') : formatMonitorModel(item.primary_model) }}
           </span>
           <span
             v-if="item.group_name"
@@ -46,13 +46,13 @@
     <!-- Metrics -->
     <MonitorMetricPair
       primary-icon="bolt"
-      :primary-label="t('monitorCommon.dialogLatency')"
+      :primary-label="t(item.passive ? 'channelStatus.passive.firstToken' : 'monitorCommon.dialogLatency')"
       :primary-value="formatLatency(item.primary_latency_ms)"
       primary-unit="ms"
       secondary-icon="globe"
-      :secondary-label="t('monitorCommon.endpointPing')"
-      :secondary-value="formatLatency(item.primary_ping_latency_ms)"
-      secondary-unit="ms"
+      :secondary-label="t(item.passive ? 'channelStatus.passive.successRate' : 'monitorCommon.endpointPing')"
+      :secondary-value="item.passive ? ((item.success_rate ?? 0) * 100).toFixed(1) : formatLatency(item.primary_ping_latency_ms)"
+      :secondary-unit="item.passive ? '%' : 'ms'"
     />
 
     <!-- 配额模式：最新用量/余额快照（服务端已按系统开关剥离，此处 flag 为纵深防御） -->

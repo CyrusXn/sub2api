@@ -1,5 +1,11 @@
 <template>
   <AppLayout>
+    <p v-if="isLocalPreview" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+      {{ t('channelStatus.passive.previewHint') }}
+    </p>
+    <div class="flex flex-wrap items-center justify-between gap-3 py-3">
+      <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('channelStatus.passive.description') }}</p>
+    </div>
     <MonitorHero
       :overall-status="overallStatus"
       :interval-seconds="DEFAULT_INTERVAL_SECONDS"
@@ -23,21 +29,21 @@
       :show="showDetail"
       :monitor-id="detailTarget?.id ?? null"
       :title="detailTitle"
+      :passive-item="detailTarget"
       @close="closeDetail"
     />
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import {
-  list as listChannelMonitorViews,
-  status as fetchChannelMonitorDetail,
+  listPassive as listChannelMonitorViews,
   type UserMonitorView,
-  type UserMonitorDetail,
 } from '@/api/channelMonitor'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import MonitorHero, {
@@ -51,12 +57,15 @@ import { useAutoRefresh } from '@/composables/useAutoRefresh'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const route = useRoute()
+const router = useRouter()
+const isLocalPreview = Boolean(import.meta.env.VITE_CHANNEL_MONITOR_PREVIEW_TARGET)
 
 // ── State ──
 const items = ref<UserMonitorView[]>([])
 const loading = ref(false)
-const currentWindow = ref<MonitorWindow>('7d')
-const detailCache = reactive<Record<number, UserMonitorDetail>>({})
+const currentWindow = ref<MonitorWindow>(['7d', '15d', '30d'].includes(String(route.query.range)) ? route.query.range as MonitorWindow : '7d')
+const detailCache = {}
 const showDetail = ref(false)
 const detailTarget = ref<UserMonitorView | null>(null)
 
@@ -64,7 +73,7 @@ let abortController: AbortController | null = null
 
 const autoRefresh = useAutoRefresh({
   storageKey: 'channel-status-auto-refresh',
-  intervals: [30, 60, 120] as const,
+  intervals: [60] as const,
   defaultInterval: DEFAULT_INTERVAL_SECONDS,
   onRefresh: () => reload(true),
   shouldPause: () => document.hidden || loading.value,
@@ -74,10 +83,8 @@ const countdown = autoRefresh.countdown
 // ── Computed ──
 const overallStatus = computed<OverallStatus>(() => {
   if (items.value.length === 0) return 'operational'
-  for (const it of items.value) {
-    if (it.primary_status === 'failed' || it.primary_status === 'error') return 'unavailable'
-    if (it.primary_status !== STATUS_OPERATIONAL) return 'degraded'
-  }
+  if (items.value.some(it => it.primary_status === 'failed' || it.primary_status === 'error')) return 'unavailable'
+  if (items.value.some(it => it.primary_status !== STATUS_OPERATIONAL)) return 'degraded'
   return 'operational'
 })
 
@@ -92,9 +99,13 @@ async function reload(silent = false) {
   abortController = ctrl
   if (!silent) loading.value = true
   try {
-    const res = await listChannelMonitorViews({ signal: ctrl.signal })
+    const res = await listChannelMonitorViews({ signal: ctrl.signal, range: currentWindow.value })
     if (ctrl.signal.aborted || abortController !== ctrl) return
     items.value = res.items || []
+    if (detailTarget.value) {
+      detailTarget.value = items.value.find(it => it.id === detailTarget.value?.id) ?? null
+      if (!detailTarget.value) showDetail.value = false
+    }
   } catch (err: unknown) {
     const e = err as { name?: string; code?: string }
     if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') return
@@ -110,31 +121,11 @@ async function reload(silent = false) {
 
 async function manualReload() {
   await reload(false)
-  // After base reload, refresh any cached detail records so non-7d availability
-  // values stay in sync without forcing the user to switch tabs again.
-  if (currentWindow.value !== '7d') {
-    await Promise.all(items.value.map(it => loadDetail(it.id, true)))
-  }
-}
-
-async function loadDetail(id: number, force = false) {
-  if (!force && detailCache[id]) return
-  try {
-    detailCache[id] = await fetchChannelMonitorDetail(id)
-  } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('channelStatus.detailLoadError')))
-  }
-}
-
-async function ensureDetailsForWindow() {
-  if (currentWindow.value === '7d') return
-  await Promise.all(items.value.map(it => loadDetail(it.id)))
 }
 
 // ── Handlers ──
-async function handleWindowChange(value: MonitorWindow) {
+function handleWindowChange(value: MonitorWindow) {
   currentWindow.value = value
-  await ensureDetailsForWindow()
 }
 
 function openDetail(row: UserMonitorView) {
@@ -147,8 +138,9 @@ function closeDetail() {
   detailTarget.value = null
 }
 
-watch(items, () => {
-  void ensureDetailsForWindow()
+watch(currentWindow, () => {
+  void router.replace({ query: { ...route.query, platform: undefined, range: currentWindow.value } })
+  void reload(false)
 })
 
 watch(
@@ -160,6 +152,10 @@ watch(
 )
 
 onMounted(() => {
+  // 移除旧链接的平台筛选，所有平台统一通过折叠面板展示。
+  if (route.query.platform !== undefined) {
+    void router.replace({ query: { ...route.query, platform: undefined } })
+  }
   void reload(false)
   if (appStore.cachedPublicSettings?.channel_monitor_enabled !== false) {
     autoRefresh.setEnabled(true)

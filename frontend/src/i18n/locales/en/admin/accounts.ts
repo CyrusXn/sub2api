@@ -4,7 +4,8 @@ export default {
       description: 'Manage AI platform accounts and credentials',
       mock: {
         title: 'Mock Account Pool',
-        description: 'OAuth Gmail mock accounts for local preview only',
+        description: 'OpenAI OAuth mock accounts',
+        allPlans: 'All Plans',
         search: 'Search name, email, or platform',
         refresh: 'Regenerate',
         oauth: 'OAuth',

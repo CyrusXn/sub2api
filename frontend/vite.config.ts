@@ -2,6 +2,8 @@ import { defineConfig, loadEnv, Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
+import { globalAgent as httpAgent } from 'node:http'
+import { globalAgent as httpsAgent } from 'node:https'
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -81,6 +83,8 @@ export default defineConfig(({ mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
+  // 复用 Node 的环境代理；Vite 默认 agent=false 会绕过系统配置的出站代理。
+  const backendAgent = backendUrl.startsWith('https:') ? httpsAgent : httpAgent
 
   return {
     plugins: [
@@ -159,16 +163,25 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       strictPort: true,
       proxy: {
+        ...(env.VITE_CHANNEL_MONITOR_PREVIEW_TARGET ? {
+          '/api/v1/channel-monitor-passive': {
+            target: env.VITE_CHANNEL_MONITOR_PREVIEW_TARGET,
+            changeOrigin: true,
+          },
+        } : {}),
         '/api': {
           target: backendUrl,
+          agent: backendAgent,
           changeOrigin: true
         },
         '/v1': {
           target: backendUrl,
+          agent: backendAgent,
           changeOrigin: true
         },
         '/setup': {
           target: backendUrl,
+          agent: backendAgent,
           changeOrigin: true
         }
       }

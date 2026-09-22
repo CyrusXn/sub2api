@@ -110,6 +110,7 @@ func (s *ChannelMonitorV2Aggregator) Start() {
 			}
 		}
 		go s.loop()
+		go s.passiveLoop()
 	})
 }
 
@@ -190,7 +191,8 @@ func (s *ChannelMonitorV2Aggregator) passiveAggregationAllowed(ctx context.Conte
 		// Fail closed without settings: do not aggregate under ambiguous mode.
 		return false
 	}
-	return s.settings.GetChannelMonitorRuntime(ctx).PassiveAggregationAllowed()
+	rt := s.settings.GetChannelMonitorRuntime(ctx)
+	return rt.PassiveAggregationAllowed() && rt.Mode == ChannelMonitorModeV2
 }
 
 func (s *ChannelMonitorV2Aggregator) wait(interval time.Duration) bool {

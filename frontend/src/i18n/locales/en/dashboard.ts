@@ -601,6 +601,15 @@ export default {
 
   // Channel Status (user-facing read-only view)
   channelStatus: {
+    passive: {
+      previewHint: 'Local read-only preview: only real traffic from the last hour is included. The 7 / 15 / 30 day availability values do not cover the full history yet.',
+      description: 'Monitoring records aggregated from real requests every minute',
+      allModels: 'All models in group',
+      firstToken: 'Fastest TTFT in latest minute',
+      successRate: 'Latest minute success rate',
+      rules: 'One point per active minute: green if any successful request has TTFT below 10 seconds; red if every request failed directly; yellow otherwise. Idle minutes add no points.',
+      availabilityHint: 'Availability is the share of observed active minutes containing a successful request. Only collected real traffic is counted; slow responses are yellow.',
+    },
     title: 'Channel Status',
     description: 'Inspect channel availability, latency and recent status',
     searchPlaceholder: 'Search channels...',
@@ -622,7 +631,7 @@ export default {
     // Platform group titles (channel status cards are grouped by platform)
     platformGroups: {
       openai: 'OpenAI',
-      claude: 'Claude',
+      claude: 'Anthropic',
       grok: 'Grok',
       cn: 'Chinese Models',
       gemini: 'Gemini',
@@ -648,7 +657,7 @@ export default {
     },
     empty: {
       title: 'No channels available',
-      description: 'No monitored channels have been configured yet.'
+      description: 'No groups with collected usage records match the current filters.'
     }
   },
 

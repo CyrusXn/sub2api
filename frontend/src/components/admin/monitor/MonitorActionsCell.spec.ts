@@ -41,6 +41,13 @@ function makeMonitor(overrides: Partial<ChannelMonitor> = {}): ChannelMonitor {
 }
 
 describe('MonitorActionsCell duplicate action', () => {
+  it('停用立即检测按钮，不触发探针事件', async () => {
+    const wrapper = mount(MonitorActionsCell, { props: { row: makeMonitor(), running: false, duplicating: false } })
+    const button = wrapper.get('[data-testid="monitor-run-disabled"]')
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    expect(wrapper.emitted('run')).toBeUndefined()
+  })
   it('emits the selected monitor when duplicate is clicked', async () => {
     const row = makeMonitor()
     const wrapper = mount(MonitorActionsCell, {

@@ -5,7 +5,17 @@
     width="wide"
     @close="$emit('close')"
   >
-    <div v-if="loading" class="py-8 text-center text-sm text-gray-500">
+    <div v-if="passiveItem" class="space-y-4">
+      <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('channelStatus.passive.rules') }}</p>
+      <MonitorTimeline :buckets="passiveItem.timeline" :countdown-seconds="60" />
+      <div class="grid grid-cols-3 gap-3 text-sm">
+        <div v-for="window in (['7d', '15d', '30d'] as const)" :key="window">
+          {{ t(`channelStatus.windowTab.${window}`) }}：{{ formatPercent(passiveItem[`availability_${window}`] ?? 0) }}
+        </div>
+      </div>
+      <p class="text-xs text-gray-500">{{ t('channelStatus.passive.availabilityHint') }}</p>
+    </div>
+    <div v-else-if="loading" class="py-8 text-center text-sm text-gray-500">
       {{ t('common.loading') }}
     </div>
     <div v-else-if="!detail" class="py-8 text-center text-sm text-gray-500">
@@ -67,14 +77,17 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import {
   status as fetchChannelMonitorDetail,
   type UserMonitorDetail,
+  type UserMonitorView,
 } from '@/api/channelMonitor'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import MonitorTimeline from '@/components/user/monitor/MonitorTimeline.vue'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 
 const props = defineProps<{
   show: boolean
   monitorId: number | null
   title: string
+  passiveItem?: UserMonitorView | null
 }>()
 
 defineEmits<{
@@ -101,9 +114,9 @@ async function load(id: number) {
 }
 
 watch(
-  () => [props.show, props.monitorId] as const,
-  ([show, id]) => {
-    if (!show) {
+  () => [props.show, props.monitorId, props.passiveItem] as const,
+  ([show, id, passive]) => {
+    if (!show || passive) {
       detail.value = null
       return
     }
