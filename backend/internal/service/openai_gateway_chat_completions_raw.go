@@ -519,12 +519,12 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
 		usage = parsedUsage
 	}
-	respBody = sanitizeOpenAIResponseJSON(respBody, originalModel, upstreamModel)
 	responseModel := gjson.GetBytes(respBody, "model").String()
 	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) {
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}
+	respBody = sanitizeOpenAIResponseJSON(respBody, originalModel, upstreamModel)
 	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
 	respBody = s.replaceModelInResponseBody(respBody, originalModel)
 

@@ -192,7 +192,7 @@ cleanup_release() {
     while read -r container_id; do
       [[ -n "$container_id" ]] || continue
       if [[ "$(docker inspect "$container_id" --format '{{.Image}}')" == "$image_id" ]]; then referenced=1; break; fi
-    done < <(docker ps -aq --filter 'name=^/sub2api')
+    done < <(docker ps -aq)
     if [[ "$referenced" == 1 ]]; then
       log "保留仍被容器引用的镜像标签: $tag"
     else

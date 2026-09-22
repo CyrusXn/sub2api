@@ -99,6 +99,8 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 		Concurrency:           6,
 		Priority:              40,
 		RateMultiplier:        &rateMultiplier,
+		AdminUsageMultiplier:  &rateMultiplier,
+		UpstreamRechargeScale: 2.5,
 		LoadFactor:            &loadFactor,
 		Status:                StatusError,
 		Schedulable:           true,
@@ -170,6 +172,8 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 	require.Equal(t, source.Notes, duplicate.Notes)
 	require.Equal(t, source.ProxyFallbackOriginID, duplicate.ProxyID)
 	require.Equal(t, source.RateMultiplier, duplicate.RateMultiplier)
+	require.Equal(t, source.AdminUsageMultiplier, duplicate.AdminUsageMultiplier)
+	require.Equal(t, source.UpstreamRechargeScale, duplicate.UpstreamRechargeScale)
 	require.Equal(t, source.LoadFactor, duplicate.LoadFactor)
 	require.Equal(t, source.GroupIDs, repo.groupsOf[duplicate.ID])
 	require.Equal(t, []AccountGroup{
@@ -264,6 +268,7 @@ func TestDuplicateAccountPreservesUngroupedState(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Empty(t, duplicate.GroupIDs)
+	require.Equal(t, 1.0, duplicate.UpstreamRechargeScale)
 	require.NotContains(t, repo.groupsOf, duplicate.ID)
 }
 

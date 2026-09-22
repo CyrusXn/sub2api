@@ -1165,13 +1165,14 @@ func (s *AuthService) createUserWithRegistrationEmailGuard(ctx context.Context, 
 // 并发正确性仍由 Use 的条件更新兜底（可能产生孤儿用户，但不会放行第二个注册）。
 func (s *AuthService) createUserAndClaimInvitation(ctx context.Context, user *User, invitation *RedeemCode) error {
 	commitUser := func(execCtx context.Context) error {
-		if err := s.createUserWithRegistrationEmailGuard(execCtx, user); err != nil {
+		// 已按定制邮箱域规则校验，创建时沿用精确账号唯一约束，并保留邀请码事务。
+		if err := s.userRepo.Create(execCtx, user); err != nil {
 			return err
 		}
 		if invitation == nil {
 			return nil
 		}
-		// createUserWithRegistrationEmailGuard 会回填 user.ID（applyUserEntityToService），
+		// Create 会回填 user.ID（applyUserEntityToService），
 		// 直接以其原子占用邀请码；占用失败即整体回滚（含用户创建，见 user_repo.create
 		// 对外部事务的复用）。
 		if err := s.redeemRepo.Use(execCtx, invitation.ID, user.ID); err != nil {

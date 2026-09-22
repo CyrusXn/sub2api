@@ -1266,10 +1266,9 @@ func TestForwardAsRawChatCompletions_RestoresMappedResponseModel(t *testing.T) {
 					upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(upstreamBody))}}
 					svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
 					account := rawChatCompletionsTestAccount()
-					expectedModel, expectedUpstream := returned, "public"
+					expectedModel, expectedUpstream := "public", "public"
 					if mapped {
 						account.Credentials["model_mapping"] = map[string]any{"public": "ZHIPU/GLM-5.3"}
-						expectedModel = "public"
 						expectedUpstream = "ZHIPU/GLM-5.3"
 					}
 					rec := httptest.NewRecorder()
@@ -1278,7 +1277,11 @@ func TestForwardAsRawChatCompletions_RestoresMappedResponseModel(t *testing.T) {
 					result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
 					require.NoError(t, err)
 					require.Equal(t, expectedUpstream, gjson.GetBytes(upstream.lastBody, "model").String())
-					require.Contains(t, rec.Body.String(), strings.Replace(payload, `"model":"`+returned+`"`, `"model":"`+expectedModel+`"`, 1))
+					responseJSON := rec.Body.String()
+					if stream {
+						responseJSON = strings.TrimPrefix(strings.SplitN(responseJSON, "\n", 2)[0], "data: ")
+					}
+					require.JSONEq(t, strings.Replace(payload, `"model":"`+returned+`"`, `"model":"`+expectedModel+`"`, 1), responseJSON)
 					require.Equal(t, returned, result.UpstreamResponseModel)
 				})
 			}

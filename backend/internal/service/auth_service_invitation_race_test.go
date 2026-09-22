@@ -39,7 +39,7 @@ func (s *raceSafeUserRepo) ExistsByEmailAlias(ctx context.Context, email string)
 	return s.ExistsByEmail(ctx, email)
 }
 
-func (s *raceSafeUserRepo) CreateWithEmailAliasGuard(_ context.Context, user *User) error {
+func (s *raceSafeUserRepo) Create(_ context.Context, user *User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.byEmail[user.Email]; ok {
@@ -154,7 +154,7 @@ func TestAuthService_Register_InvitationCodeSingleUseUnderConcurrency(t *testing
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			email := fmt.Sprintf("race-%d@example.com", i)
+			email := fmt.Sprintf("race-%d@qq.com", i)
 			// 本站已把官方 RegisterWithVerification 改名为 RegisterWithOptions 并移除 verifyCode 形参；
 			// 官方这三处调用的 verifyCode 实参本就是空串，去掉后语义完全等价。
 			_, _, err := svc.RegisterWithOptions(ctx, email, "Password123!", "", code, "")
@@ -207,7 +207,7 @@ func TestAuthService_Register_InvitationCodeRejectedWhenAlreadyUsed(t *testing.T
 		&userPlatformQuotaRepoStub{},
 	)
 
-	_, _, err := svc.RegisterWithOptions(context.Background(), "later@example.com", "Password123!", "", code, "")
+	_, _, err := svc.RegisterWithOptions(context.Background(), "later@qq.com", "Password123!", "", code, "")
 	require.ErrorIs(t, err, ErrInvitationCodeInvalid)
 }
 
@@ -229,10 +229,10 @@ func TestAuthService_Register_InvitationCodeMissingWhenEnabled(t *testing.T) {
 		&userPlatformQuotaRepoStub{},
 	)
 
-	_, _, err := svc.RegisterWithOptions(context.Background(), "no-invite@example.com", "Password123!", "", "", "")
+	_, _, err := svc.RegisterWithOptions(context.Background(), "no-invite@qq.com", "Password123!", "", "", "")
 	require.ErrorIs(t, err, ErrInvitationCodeRequired)
 
-	ok, err := userRepo.ExistsByEmail(context.Background(), "no-invite@example.com")
+	ok, err := userRepo.ExistsByEmail(context.Background(), "no-invite@qq.com")
 	require.NoError(t, err)
 	require.False(t, ok, "被拒绝的注册不应产生用户")
 }

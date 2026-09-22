@@ -314,6 +314,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		expiresAt = &unix
 	}
 	autoPauseOnExpired := source.AutoPauseOnExpired
+	upstreamRechargeScale := source.UpstreamRechargeConversionScale()
 	groups, groupIDs := duplicateAccountGroups(source)
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
@@ -335,7 +336,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		Priority:              source.Priority,
 		RateMultiplier:        cloneAccountValuePointer(source.RateMultiplier),
 		AdminUsageMultiplier:  cloneAccountValuePointer(source.AdminUsageMultiplier),
-		UpstreamRechargeScale: cloneAccountValuePointer(&source.UpstreamRechargeScale),
+		UpstreamRechargeScale: &upstreamRechargeScale,
 		LoadFactor:            cloneAccountValuePointer(source.LoadFactor),
 		GroupIDs:              groupIDs,
 		ExpiresAt:             expiresAt,
