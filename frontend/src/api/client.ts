@@ -268,6 +268,7 @@ apiClient.interceptors.response.use(
     // 网络错误统一返回中文，避免调用方直接展示英文默认文案。
     return Promise.reject({
       status: 0,
+      code: error.code || 'ERR_NETWORK',
       message: '网络错误，请检查网络连接。'
     })
   }

@@ -1034,8 +1034,11 @@ func TestUsageLogRepositoryAdminAggregatesReadSettledValues(t *testing.T) {
 		useGroupUsageRepositoryTestTimezone(t, "UTC")
 		db, mock := newSQLMock(t)
 		repo := &usageLogRepository{sql: db}
-		mock.ExpectQuery(`(?s)usage_group_daily_rollups.*SUM\(ul\.actual_cost\).*created_at >= state\.tail_start`).
-			WithArgs(start, start.AddDate(0, 0, -1), "UTC", "2025-01-01", "2024-12-31").
+		mock.ExpectQuery(`(?s)COUNT\(\*\).*usage_group_rollup_state.*WHERE id = 1`).
+			WillReturnRows(sqlmock.NewRows([]string{"count", "closed_before", "retained_from", "timezone_name"}).
+				AddRow(1, "2024-12-31", start.AddDate(0, -1, 0), "UTC"))
+		mock.ExpectQuery(`(?s)usage_group_daily_rollups.*SUM\(ul\.actual_cost\).*created_at >= \$7`).
+			WithArgs(start, start.AddDate(0, 0, -1), "2024-12-31", true, "2024-12-01", "2024-12-31", start.AddDate(0, 0, -1)).
 			WillReturnRows(sqlmock.NewRows([]string{"group_id", "total_cost", "today_cost", "yesterday_cost"}))
 
 		_, err := repo.GetAllGroupUsageSummary(context.Background(), start)
