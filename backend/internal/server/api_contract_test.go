@@ -988,6 +988,13 @@ func TestAPIContracts(t *testing.T) {
 					"balance_low_notify_threshold": 0,
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
+                    "admin_quick_actions": [
+                        {"name": "用户管理", "url": "/admin/users"},
+                        {"name": "账号管理", "url": "/admin/accounts"},
+                        {"name": "余额中心", "url": "/admin/balance-center"},
+                        {"name": "使用记录", "url": "/admin/usage"},
+                        {"name": "分组管理", "url": "/admin/groups"}
+                    ],
 					"channel_monitor_enabled": true,
 					"channel_monitor_mode": "v1",
 					"channel_monitor_hide_throughput": true,
@@ -1303,6 +1310,13 @@ func TestAPIContracts(t *testing.T) {
 					"balance_low_notify_threshold": 0,
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
+                    "admin_quick_actions": [
+                        {"name": "用户管理", "url": "/admin/users"},
+                        {"name": "账号管理", "url": "/admin/accounts"},
+                        {"name": "余额中心", "url": "/admin/balance-center"},
+                        {"name": "使用记录", "url": "/admin/usage"},
+                        {"name": "分组管理", "url": "/admin/groups"}
+                    ],
 					"channel_monitor_enabled": true,
 					"channel_monitor_mode": "v1",
 					"channel_monitor_hide_throughput": true,
