@@ -75,6 +75,7 @@ const autoRefresh = useAutoRefresh({
   storageKey: 'channel-status-auto-refresh',
   intervals: [60] as const,
   defaultInterval: DEFAULT_INTERVAL_SECONDS,
+  defaultEnabled: true,
   onRefresh: () => reload(true),
   shouldPause: () => document.hidden || loading.value,
 })
@@ -158,7 +159,7 @@ onMounted(() => {
   }
   void reload(false)
   if (appStore.cachedPublicSettings?.channel_monitor_enabled !== false) {
-    autoRefresh.setEnabled(true)
+    autoRefresh.setEnabled(autoRefresh.enabled.value)
   }
 })
 

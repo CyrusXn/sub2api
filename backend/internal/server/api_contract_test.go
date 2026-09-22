@@ -2550,6 +2550,10 @@ func (r *stubApiKeyRepo) GetRateLimitData(ctx context.Context, id int64) (*servi
 	return nil, nil
 }
 
+func (r *stubUsageLogRepo) ListRecentGPTAPIKeyIPCandidates(context.Context, time.Time, string, int) ([]service.RecentGPTAPIKeyIPCandidate, error) {
+	return nil, nil
+}
+
 type stubUsageLogRepo struct {
 	userLogs map[int64][]service.UsageLog
 }
