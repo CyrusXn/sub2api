@@ -232,7 +232,7 @@ func (s *PricingService) Initialize() error {
 	if s.cfg.IsAPIOnly() {
 		if err := s.loadPricingData(s.getPricingFilePath()); err != nil {
 			logger.LegacyPrintf("service.pricing", "[Pricing] API-only local load failed, using fallback: %v", err)
-			if err := s.useFallbackPricing(); err != nil {
+			if err := s.loadPricingData(s.cfg.Pricing.FallbackFile); err != nil {
 				return fmt.Errorf("failed to load pricing data: %w", err)
 			}
 		}
@@ -243,8 +243,8 @@ func (s *PricingService) Initialize() error {
 				return fmt.Errorf("failed to load pricing data: %w", err)
 			}
 		}
-		s.startUpdateScheduler()
 	}
+	s.startUpdateScheduler()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized with %d models", len(s.pricingData))
 	return nil
@@ -257,24 +257,29 @@ func (s *PricingService) Stop() {
 	logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Service stopped")
 }
 
-// startUpdateScheduler 启动定时调度器：每个周期先做远程目录哈希同步（配置了 remote_url 时），
-// 再比对 fallback/override 文件指纹做本地热重载（配置了任一文件时）。两者都未配置则不启动。
+// startUpdateScheduler 由主节点同步远程目录，API 节点只读热重载共享目录，
+// 两类节点均保留 fallback/override 文件更新能力。
 func (s *PricingService) startUpdateScheduler() {
 	if s == nil || s.cfg == nil {
 		return
 	}
-	remoteEnabled := strings.TrimSpace(s.cfg.Pricing.RemoteURL) != ""
+	apiOnly := s.cfg.IsAPIOnly()
+	remoteEnabled := !apiOnly && strings.TrimSpace(s.cfg.Pricing.RemoteURL) != ""
 	watchCustom := s.hasCustomPricingFiles()
-	if !remoteEnabled {
+	if !remoteEnabled && !apiOnly {
 		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Remote sync disabled: pricing remote URL is empty")
 	}
-	if !remoteEnabled && !watchCustom {
+	if !remoteEnabled && !watchCustom && !apiOnly {
 		return
 	}
 
 	hashInterval := time.Duration(s.cfg.Pricing.HashCheckIntervalMinutes) * time.Minute
 	if hashInterval < time.Minute {
 		hashInterval = 10 * time.Minute
+	}
+	if apiOnly {
+		// 共享目录已由主节点同步，分钟级只读检查避免新模型长期使用兜底价格。
+		hashInterval = time.Minute
 	}
 
 	s.wg.Add(1)
@@ -286,6 +291,12 @@ func (s *PricingService) startUpdateScheduler() {
 		for {
 			select {
 			case <-ticker.C:
+				if apiOnly {
+					if err := s.reloadSharedPricingIfChanged(); err != nil {
+						logger.LegacyPrintf("service.pricing", "[Pricing] 共享价格重载失败，保留当前价格: %v", err)
+					}
+					continue
+				}
 				if remoteEnabled {
 					if err := s.syncWithRemote(); err != nil {
 						logger.LegacyPrintf("service.pricing", "[Pricing] Sync failed: %v", err)
@@ -301,6 +312,24 @@ func (s *PricingService) startUpdateScheduler() {
 	}()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Update scheduler started (check every %v, remote sync=%t, custom file watch=%t)", hashInterval, remoteEnabled, watchCustom)
+}
+
+// reloadSharedPricingIfChanged 比较目录正文而非远程哈希文件，避免两个文件更新时序
+// 不一致时漏掉更新。API 节点只替换内存，不下载或回写共享文件。
+func (s *PricingService) reloadSharedPricingIfChanged() error {
+	body, err := os.ReadFile(s.getPricingFilePath())
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(body)
+	fingerprint := s.customPricingFilesFingerprint()
+	s.mu.RLock()
+	unchanged := hex.EncodeToString(hash[:]) == s.localHash && fingerprint == s.customFilesHash
+	s.mu.RUnlock()
+	if unchanged {
+		return nil
+	}
+	return s.reloadCustomPricingLayers()
 }
 
 // checkAndUpdatePricing 检查并更新价格数据
@@ -469,14 +498,15 @@ func (s *PricingService) reloadIfCustomFilesChanged() {
 	}
 }
 
-// reloadCustomPricingLayers 读取本地目录缓存并重新叠加 fallback/override，只替换内存数据
-// 与叠加层指纹。
+// reloadCustomPricingLayers 读取本地目录缓存并重新叠加 fallback/override，只替换内存。
+// API 节点同时记录目录正文指纹；主节点保留原远程同步锚点。
 func (s *PricingService) reloadCustomPricingLayers() error {
 	pricingFile := s.getPricingFilePath()
 	// 定价层文件可能在读取期间被替换。只有构建前后指纹一致时才提交，
 	// 否则丢弃这次混合快照并重试，避免短暂应用不匹配的 fallback/override。
 	var data map[string]*LiteLLMModelPricing
 	var fingerprint string
+	var catalogHash string
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
@@ -486,6 +516,18 @@ func (s *PricingService) reloadCustomPricingLayers() error {
 		body, readErr := os.ReadFile(pricingFile)
 		if readErr != nil {
 			return fmt.Errorf("read file failed: %w", readErr)
+		}
+		hash := sha256.Sum256(body)
+		catalogHash = hex.EncodeToString(hash[:])
+		if s.cfg.IsAPIOnly() {
+			// 空目录或半写文件不能抹掉已生效的模型价格；下一轮继续重试。
+			var catalog map[string]json.RawMessage
+			if parseErr := json.Unmarshal(body, &catalog); parseErr != nil {
+				return fmt.Errorf("parse shared pricing data: %w", parseErr)
+			}
+			if len(catalog) == 0 {
+				return fmt.Errorf("shared pricing catalog is empty")
+			}
 		}
 		data, fingerprint, err = s.buildPricingData(body)
 		if err != nil {
@@ -507,9 +549,13 @@ func (s *PricingService) reloadCustomPricingLayers() error {
 	warnDroppedLongContextLadders(s.pricingData, data)
 	s.pricingData = data
 	s.customFilesHash = fingerprint
+	if s.cfg.IsAPIOnly() {
+		s.localHash = catalogHash
+		s.lastUpdated = time.Now()
+	}
 	s.mu.Unlock()
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing files changed, reloaded %d models from %s", len(data), pricingFile)
+	logger.LegacyPrintf("service.pricing", "[Pricing] 本地价格文件已更新，从 %s 重载 %d 个模型", pricingFile, len(data))
 	return nil
 }
 
