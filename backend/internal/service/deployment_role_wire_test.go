@@ -185,3 +185,22 @@ func TestProvideScheduledTestRunnerServiceRespectsDeploymentRole(t *testing.T) {
 	require.NotNil(t, primary.cron)
 	primary.Stop()
 }
+
+func TestProvideOpenCodeGoUsageServiceDoesNotStartOnAPIOnly(t *testing.T) {
+	svc := ProvideOpenCodeGoUsageService(nil, nil, nil, nil, nil, &config.Config{
+		DeploymentRole: config.DeploymentRoleAPIOnly,
+	})
+	t.Cleanup(svc.Stop)
+	require.False(t, svc.started)
+}
+
+func TestProvideClaudeCodeVersionSyncServiceDoesNotWriteOnAPIOnly(t *testing.T) {
+	repo := newClaudeCodeVersionSyncSettingRepoStub(nil)
+	github := &claudeCodeVersionSyncGitHubStub{latest: &GitHubRelease{TagName: "v2.1.280"}}
+	svc := ProvideClaudeCodeVersionSyncService(repo, &SettingService{}, github, &config.Config{
+		DeploymentRole: config.DeploymentRoleAPIOnly,
+	})
+	svc.Stop()
+	require.Empty(t, repo.syncedWrites())
+	require.Zero(t, github.latestCalls)
+}

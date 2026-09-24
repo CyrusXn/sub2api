@@ -100,24 +100,30 @@ const { statusLabel, statusBadgeClass, formatLatency, formatPercent, formatMonit
 
 const detail = ref<UserMonitorDetail | null>(null)
 const loading = ref(false)
+let requestVersion = 0
 
 async function load(id: number) {
+  const version = ++requestVersion
   detail.value = null
   loading.value = true
   try {
-    detail.value = await fetchChannelMonitorDetail(id)
+    const result = await fetchChannelMonitorDetail(id)
+    if (version === requestVersion) detail.value = result
   } catch (err: unknown) {
+    if (version !== requestVersion) return
     appStore.showError(extractApiErrorMessage(err, t('channelStatus.detailLoadError')))
   } finally {
-    loading.value = false
+    if (version === requestVersion) loading.value = false
   }
 }
 
 watch(
   () => [props.show, props.monitorId, props.passiveItem] as const,
-  ([show, id, passive]) => {
+  ([show, id, passive], _, onCleanup) => {
+    onCleanup(() => { requestVersion++ })
     if (!show || passive) {
       detail.value = null
+      loading.value = false
       return
     }
     if (id != null) void load(id)

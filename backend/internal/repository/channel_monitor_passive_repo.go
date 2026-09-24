@@ -127,6 +127,8 @@ WITH ranked AS (
   FROM channel_monitor_passive_minutes m JOIN groups g ON g.id = m.group_id
   WHERE m.bucket_start >= $1::timestamptz - INTERVAL '30 days' AND m.bucket_start < $1
     AND g.deleted_at IS NULL
+    -- 渠道状态只公开非专属分组，管理员和已授权用户也遵守此展示范围。
+    AND NOT g.is_exclusive
     -- 隐藏名称明确标注图片生成的专用分组，不因普通分组允许生图而将其隐藏。
     AND g.name !~* '(image|dall-e|生图|绘图)'
     AND (NOT $2 OR m.group_id = ANY($3))

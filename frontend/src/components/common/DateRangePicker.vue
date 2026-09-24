@@ -44,7 +44,7 @@
               :type="showTime ? 'datetime-local' : 'date'"
               :step="showTime ? 1 : undefined"
               v-model="localStartDate"
-              :max="localEndDate || tomorrow"
+              :max="localEndDate || tomorrow()"
               class="date-picker-input"
               @change="onDateChange"
             />
@@ -59,7 +59,7 @@
               :step="showTime ? 1 : undefined"
               v-model="localEndDate"
               :min="localStartDate"
-              :max="tomorrow"
+              :max="tomorrow()"
               class="date-picker-input"
               @change="onDateChange"
             />
@@ -116,12 +116,12 @@ const showTime = computed(() => props.showTime === true)
 
 // Tomorrow's date - used for max date to handle timezone differences
 // When user is in a timezone behind the server, "today" on server might be "tomorrow" locally
-const tomorrow = computed(() => {
+const tomorrow = () => {
   const d = new Date()
   d.setDate(d.getDate() + 1)
   const date = formatDateToString(d)
   return showTime.value ? `${date}T23:59:59` : date
-})
+}
 
 // Helper function to format date to YYYY-MM-DD using local timezone
 const formatDateToString = (date: Date): string => {
@@ -335,6 +335,14 @@ const handleEscape = (event: KeyboardEvent) => {
     isOpen.value = false
   }
 }
+
+// Restore the applied range after dismissal, including parent updates from Apply.
+watch(isOpen, (open) => {
+  if (open) return
+  localStartDate.value = props.startDate
+  localEndDate.value = props.endDate
+  onDateChange()
+}, { flush: 'post' })
 
 // Sync local state with props
 watch(

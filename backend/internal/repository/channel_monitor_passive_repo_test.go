@@ -42,7 +42,7 @@ func TestChannelMonitorPassivePostgres(t *testing.T) {
 		_, err := db.ExecContext(ctx, query, args...)
 		require.NoError(t, err)
 	}
-	execSQL(`CREATE TABLE groups (id bigint PRIMARY KEY, name text NOT NULL, platform text NOT NULL, deleted_at timestamptz);
+	execSQL(`CREATE TABLE groups (id bigint PRIMARY KEY, name text NOT NULL, platform text NOT NULL, deleted_at timestamptz, is_exclusive boolean NOT NULL DEFAULT false);
 CREATE TABLE usage_logs (id bigserial PRIMARY KEY, group_id bigint, user_id bigint DEFAULT 1, request_id text,
  created_at timestamptz, first_token_ms bigint, request_type smallint DEFAULT 2, actual_cost numeric DEFAULT 0,
  total_cost numeric DEFAULT 0, input_tokens integer DEFAULT 0, output_tokens integer DEFAULT 0,
@@ -58,7 +58,7 @@ CREATE TABLE ops_error_logs (id bigserial PRIMARY KEY, group_id bigint, user_id 
 	end := time.Now().UTC().Truncate(time.Minute)
 	minute := end.Add(-time.Minute)
 	for id := 1; id <= 12; id++ {
-		execSQL(`INSERT INTO groups VALUES ($1, $2, 'openai', NULL)`, id, fmt.Sprintf("group-%02d", id))
+		execSQL(`INSERT INTO groups (id, name, platform) VALUES ($1, $2, 'openai')`, id, fmt.Sprintf("group-%02d", id))
 	}
 	usage := func(group int, request string, at time.Time, ttft any, tokens int, requestType int) {
 		execSQL(`INSERT INTO usage_logs (group_id, request_id, created_at, first_token_ms, output_tokens, request_type)
@@ -91,9 +91,12 @@ VALUES ($1, $2, $3, $4, $5, $6)`, group, request, at, ttft, tokens, requestType)
 	// 图片专用分组即使有记录也不展示，大小写和中文命名均生效。
 	for index, name := range []string{"【GPT】image2", "DALL-E", "生图专用", "绘图"} {
 		id := 13 + index
-		execSQL(`INSERT INTO groups VALUES ($1, $2, 'openai', NULL)`, id, name)
+		execSQL(`INSERT INTO groups (id, name, platform) VALUES ($1, $2, 'openai')`, id, name)
 		usage(id, "image-request", minute, nil, 5, 2)
 	}
+	// 专属属性控制展示，不能按分组名称或用户授权推断是否公开。
+	execSQL(`INSERT INTO groups (id, name, platform, is_exclusive) VALUES (17, '普通名称', 'openai', true)`)
+	usage(17, "exclusive-request", minute, 20, 5, 2)
 	require.NoError(t, repo.RefreshPassiveMinutes(ctx, end))
 	require.NoError(t, repo.RefreshPassiveMinutes(ctx, end))
 	filter := service.ChannelMonitorV2Filter{Start: end.Add(-7 * 24 * time.Hour), End: end}
@@ -116,11 +119,16 @@ VALUES ($1, $2, $3, $4, $5, $6)`, group, request, at, ttft, tokens, requestType)
 	cards, err = repo.GetPassiveCards(ctx, filter)
 	require.NoError(t, err)
 	require.Empty(t, cards)
-	filter.AllowedGroupIDs = []int64{7, 8}
+	filter.AllowedGroupIDs = []int64{7, 8, 17}
 	cards, err = repo.GetPassiveCards(ctx, filter)
 	require.NoError(t, err)
 	require.Len(t, cards, 1)
 	require.Equal(t, int64(7), cards[0].ID)
+	filter.AllowedGroupIDs = []int64{17}
+	cards, err = repo.GetPassiveCards(ctx, filter)
+	require.NoError(t, err)
+	require.Empty(t, cards, "已授权的专属分组也不展示")
+	filter.AllowedGroupIDs = []int64{7}
 	filter.Platforms = []string{"anthropic"}
 	cards, err = repo.GetPassiveCards(ctx, filter)
 	require.NoError(t, err)
