@@ -1013,7 +1013,7 @@ func TestUsageLogRepositoryAdminAggregatesReadSettledValues(t *testing.T) {
 			WithArgs(start, end, 10, start, end).
 			WillReturnRows(sqlmock.NewRows([]string{"date", "user_id", "email", "username", "requests", "tokens", "cost", "actual_cost"}))
 
-		_, err := repo.GetUserUsageTrend(context.Background(), start, end, "day", 10)
+		_, err := repo.GetUserUsageTrend(context.Background(), start, end, "day", 10, "tokens")
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})

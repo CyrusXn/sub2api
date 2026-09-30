@@ -87,8 +87,12 @@ func (r *usageLogRepository) GetAPIKeyUsageTrend(ctx context.Context, startTime,
 }
 
 // GetUserUsageTrend returns usage trend data grouped by user and date
-func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []UserUsageTrendPoint, err error) {
+func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int, metric string) (results []UserUsageTrendPoint, err error) {
 	dateFormat := safeDateFormat(granularity)
+	rankExpr := adminScaledTotalTokensSum("ul")
+	if metric == "actual_cost" {
+		rankExpr = adminScaledCostSum("ul.actual_cost")
+	}
 
 	query := fmt.Sprintf(`
 		WITH top_users AS (
@@ -98,7 +102,7 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 			LEFT JOIN groups g ON g.id = ul.group_id
 			WHERE ul.created_at >= $1 AND ul.created_at < $2
 			GROUP BY ul.user_id
-			ORDER BY %s DESC
+			ORDER BY %s DESC, ul.user_id ASC
 			LIMIT $3
 		)
 		SELECT
@@ -117,7 +121,7 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 		  AND ul.created_at >= $4 AND ul.created_at < $5
 		GROUP BY date, ul.user_id, u.email, u.username
 		ORDER BY date ASC, tokens DESC
-	`, adminScaledTotalTokensSum("ul"), dateFormat, adminScaledTotalTokensSum("ul"), adminScaledCostSum("ul.total_cost"), adminScaledCostSum("ul.actual_cost"))
+	`, rankExpr, dateFormat, adminScaledTotalTokensSum("ul"), adminScaledCostSum("ul.total_cost"), adminScaledCostSum("ul.actual_cost"))
 
 	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit, startTime, endTime)
 	if err != nil {
