@@ -59,6 +59,31 @@ describe('BulkEditUserModal', () => {
     vi.restoreAllMocks()
   })
 
+  it.each([
+    [{ message: 'Selected users are no longer available' }, '操作失败，请稍后重试。'],
+    [{ response: { data: { message: 'Legacy message' } } }, '操作失败，请稍后重试。'],
+    [{ response: { data: { detail: 'Legacy detail' } } }, '操作失败，请稍后重试。'],
+    [{}, '操作失败，请稍后重试。'],
+    [{ message: '选中的用户已不可用' }, '选中的用户已不可用'],
+    [{ response: { data: { message: '用户状态已变化' } } }, '用户状态已变化'],
+    [{ response: { data: { detail: '不能修改管理员账户' } } }, '不能修改管理员账户'],
+    [{ message: 'Network error. Please check your connection.' }, '网络错误，请检查网络连接。'],
+  ])('保留中文错误、归一英文错误并允许失败后重试：%j', async (error, expected) => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    batchUpdateLimits.mockRejectedValueOnce(error)
+    const wrapper = mountModal()
+    await wrapper.get('[data-test="enable-concurrency"]').trigger('click')
+    await wrapper.get('[data-test="concurrency-input"]').setValue('5')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith(expected)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('success')).toBeUndefined()
+    expect(wrapper.get('[data-test="submit"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('disables submission until at least one enabled field has a value', async () => {
     const wrapper = mountModal()
 
