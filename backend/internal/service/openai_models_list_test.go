@@ -232,6 +232,25 @@ func TestFetchOpenAIModelsListEmptyAndMalformedResponses(t *testing.T) {
 	}
 }
 
+func TestRefreshOpenAIModelsRechecksFreshCacheAfterDelayedColdMiss(t *testing.T) {
+	s := newCodexModelsAPIKeyTestService(nil)
+	request := openAIModelsRequest{url: "https://models.example/v1/models", accountID: 1}
+	cached := &OpenAIModelsResponse{Body: []byte(`{"object":"list","data":[]}`)}
+	key := buildOpenAIModelsCacheKey(request)
+	_, state := s.openAIModelsCache.get(key, time.Now())
+	require.Equal(t, openAIModelsCacheMiss, state)
+	// 模拟另一个冷请求先完成，当前请求随后才进入单飞刷新。
+	s.openAIModelsCache.set(key, cached, time.Now())
+	var calls atomic.Int32
+	result := <-s.refreshCachedOpenAIModels(key, request, func(context.Context, string) (*OpenAIModelsResponse, error) {
+		calls.Add(1)
+		return cached, nil
+	})
+	require.NoError(t, result.Err)
+	require.Same(t, cached, result.Val)
+	require.Zero(t, calls.Load(), "已变新鲜的缓存不能再次请求上游")
+}
+
 func TestPinnedOpenAIModelsListMixedAccountsShareColdCacheAcrossGroups(t *testing.T) {
 	_, oauthCalls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"shared-model"},{"slug":"oauth-special"}]}`)
 	var apiCalls atomic.Int32

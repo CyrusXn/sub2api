@@ -1882,7 +1882,12 @@ func (s *OpenAIGatewayService) refreshCachedOpenAIModels(cacheKey string, reques
 	return s.openAIModelsCache.refresh.DoChan(cacheKey, func() (any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), codexModelsManifestRequestTimeout)
 		defer cancel()
-		cached, _ := s.openAIModelsCache.get(cacheKey, time.Now())
+		cached, state := s.openAIModelsCache.get(cacheKey, time.Now())
+		// 进入 singleflight 回调前可能已有并发请求填充缓存；重新检查
+		// fresh 状态，避免冷启动竞态再次请求上游。
+		if state == openAIModelsCacheFresh {
+			return cached, nil
+		}
 		ifNoneMatch := ""
 		if cached != nil {
 			ifNoneMatch = cached.upstreamETag
