@@ -49,7 +49,10 @@ describe('AccountTableFilters', () => {
     expect(toggle.attributes('type')).toBe('button')
     expect(toggle.attributes('aria-expanded')).toBe('false')
     expect(panel.isVisible()).toBe(false)
-    expect(wrapper.findAllComponents(Select).filter(select => select.isVisible())).toHaveLength(2)
+    expect(wrapper.findAllComponents(Select).filter(select => select.isVisible())).toHaveLength(3)
+    const group = wrapper.findAllComponents(Select).find(select => select.get('button').attributes('aria-label') === 'admin.accounts.allGroups')!
+    expect(group.isVisible()).toBe(true)
+    expect(panel.element.contains(group.element)).toBe(false)
     await toggle.trigger('click')
     expect(toggle.attributes('aria-expanded')).toBe('true')
     expect(panel.isVisible()).toBe(true)
@@ -69,8 +72,8 @@ describe('AccountTableFilters', () => {
     expect(toggle.find('span').exists()).toBe(false)
     for (const [filters, count] of [
       [{ type: 'oauth', privacy_mode: '', group: '' }, 1],
-      [{ type: 'setup-token', privacy_mode: '__unset__', group: 'ungrouped' }, 3],
-      [{ type: '', privacy_mode: 'training_off', group: '42' }, 2]
+      [{ type: 'setup-token', privacy_mode: '__unset__', group: 'ungrouped' }, 2],
+      [{ type: '', privacy_mode: 'training_off', group: '42' }, 1]
     ] as const) {
       await wrapper.setProps({ filters: { ...defaultFilters(), ...filters } })
       expect(toggle.get('span').text()).toBe(String(count))
@@ -80,6 +83,8 @@ describe('AccountTableFilters', () => {
     await wrapper.setProps({ filters: { type: null, privacy_mode: undefined, group: '' } })
     expect(toggle.find('span').exists()).toBe(false)
     expect(toggle.attributes('aria-label')).toBe('admin.accounts.moreFilters')
+    await wrapper.setProps({ filters: { ...defaultFilters(), group: 'ungrouped' } })
+    expect(toggle.find('span').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -90,9 +95,9 @@ describe('AccountTableFilters', () => {
     const expectedOptions = [
       ['platform', ['', ...CONCRETE_PLATFORM_OPTIONS.map(option => option.value)]],
       ['status', ['', 'active', 'inactive', 'error', 'rate_limited', 'temp_unschedulable', 'unschedulable']],
+      ['group', ['', 'ungrouped', '42']],
       ['type', ['', 'oauth', 'setup-token', 'apikey', 'bedrock']],
-      ['privacy_mode', ['', '__unset__', 'training_off', 'training_set_cf_blocked', 'training_set_failed']],
-      ['group', ['', 'ungrouped', '42']]
+      ['privacy_mode', ['', '__unset__', 'training_off', 'training_set_cf_blocked', 'training_set_failed']]
     ] as const
     let changes = 0
     for (const [index, [key, values]] of expectedOptions.entries()) {
@@ -109,8 +114,21 @@ describe('AccountTableFilters', () => {
         expect(wrapper.props('filters')).toEqual(filters)
       }
     }
-    expect(wrapper.findAllComponents(Select)[4].props('options')[2].label).toBe('A very long group name')
+    expect(wrapper.findAllComponents(Select)[2].props('options')[2].label).toBe('A very long group name')
     wrapper.unmount()
+  })
+
+  it('分组常驻显示，折叠时切换与清除仍保留其他筛选并触发刷新', async () => {
+    const filters = { ...defaultFilters(), type: 'oauth', privacy_mode: '__unset__' }
+    const wrapper = mountFilters(filters)
+    const group = wrapper.findAllComponents(Select).find(select => select.get('button').attributes('aria-label') === 'admin.accounts.allGroups')!
+    for (const [index, value] of ['ungrouped', '42', ''].entries()) {
+      await group.get('button').trigger('click')
+      await group.findAll('[role="option"]')[value === '' ? 0 : value === 'ungrouped' ? 1 : 2].trigger('click')
+      expect(wrapper.emitted('update:filters')?.at(-1)).toEqual([{ ...filters, group: value }])
+      expect(wrapper.emitted('change')).toHaveLength(index + 1)
+      expect(wrapper.get('button[aria-controls]').attributes('aria-expanded')).toBe('false')
+    }
   })
 
   it('preserves immediate search updates and the debounced search change event', async () => {
