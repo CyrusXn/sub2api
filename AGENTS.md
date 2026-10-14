@@ -4,6 +4,16 @@
 
 本文件适用于本仓库全部开发、同步、验证和生产部署操作。任何子目录没有更具体的 `AGENTS.md` 时，必须遵循本文件。
 
+## 每次发布的必读与执行清单
+
+每次发布（包括重试、续接会话和上下文压缩后），必须先完整重读本文件、`scripts/release-console/README.md` 及适用的部署 skill，再逐项执行以下清单；不得仅凭旧会话记忆或旧 skill 发版。本项目的服务器构建规则覆盖旧 skill 中“本地构建、导出/上传镜像归档”的冲突步骤。
+
+1. 在唯一主项目盘点全部定制改动、同步官方基线并完成审核验证；全部入镜代码已提交、已推送，工作区干净，记录完整发布 SHA。
+2. 核验生产 SSH 主机身份，只读检查健康、容器、资源和回滚资产；只通过服务器 `sub2api-release deploy <已审核且已推送的完整提交 SHA>` 发布。本机不得为发布启动 Docker、构建镜像或生成新的镜像归档及备份副本。
+3. 完成一致性备份、候选验证和无中断切换，再验收线上健康、版本、定制功能及 Nginx、PostgreSQL、Redis 未重启。
+4. 仅验收成功后清空 Sub2API 专用构建缓存、删除临时源码并停止构建器；精确删除上上版本及更早的无引用应用镜像和完整备份，保留当前版本、上一版本完整回滚资产、待发布候选及任意容器引用的镜像。不得清理数据库卷或其他项目资产。
+5. 核对发布命令退出码和清理记录，重新列出保留资产并复查线上健康；清理失败视为发布流程未完成，保留现场并报告，不得只因切流成功就宣称发布完成。`deploy` 已包含自动清理；需要补做时按 README 使用 `cleanup-release`，不得绕过成功记录及备份校验门槛。
+
 ## 基线与版本
 
 - 官方仓库：`origin/main`，开始发布前必须先执行 `git fetch origin main` 并确认最新提交。
@@ -16,7 +26,7 @@
 ## 工作区保护
 
 - 当前工作区可能包含用户未提交改动。开始前检查 `git status --short --branch`，不得执行 `git reset --hard`、`git checkout --` 或清理用户文件。
-- 所有开发、官方同步、验证、构建和发布只允许在主项目 `/Users/xn/Code/ai-tools/sub2api` 完成，禁止创建或使用 release、WIP、临时 Git worktree。
+- 开发和官方同步在唯一主项目 `/Users/xn/Code/ai-tools/sub2api` 完成，禁止创建或使用 release、WIP、临时 Git worktree。按用户 2026-10-12 的要求，发布构建迁移到生产服务器的独立构建器；服务器只消费已审核、已推送的定制提交，不在服务器编辑业务源码。
 - 发布前必须在主项目提交全部入镜代码并确认工作区干净；存在无关未提交改动时暂停发布并保留现场，不得通过旁路 worktree 规避。
 - 只修改当前任务需要的文件，不顺手重构，不覆盖用户最新改动。
 - 代码、日志和注释默认使用中文；不得记录 API Key、Token、Cookie、密码、请求头或未脱敏上游响应。
@@ -47,28 +57,18 @@
 - 未经用户单独明确授权，不得通过本地环境修改线上业务数据、执行写入型接口、运行迁移或进行破坏性测试。若当前启动方式无法保证这些边界，必须停止启动并向用户说明风险。
 - 数据库连接凭据只能复用现有安全配置，不得输出到终端、日志、文档、截图或提交记录。
 
-## 本地构建
+## 服务器构建与发布
 
-生产镜像只能在本地构建，服务器禁止执行源码构建或 Docker build。目标平台固定为 `linux/amd64`：
+按用户 2026-10-12 的明确要求，以服务器构建替代旧的本地构建要求。此节替代旧发布技能中的本地构建限制；仍须遵守主机身份验证、提交可追溯、无中断切换和回滚保护。
 
-```bash
-docker buildx build \
-  --builder colima \
-  --platform linux/amd64 \
-  --load \
-  --build-arg VERSION=0.1.163 \
-  --build-arg BUILD_TYPE=custom \
-  --build-arg EDITION=xnkaixin.YYYYMMDD \
-  -t weishaw/sub2api:xnkaixin-0.1.163-YYYYMMDD-full \
-  .
-```
-
-构建后必须先在本地启动候选镜像，验证 `/health`、版本信息、登录页、`/ai-image` 和运维监控页面。然后导出并生成校验值：
-
-```bash
-docker save weishaw/sub2api:xnkaixin-0.1.163-YYYYMMDD-full | gzip > sub2api-xnkaixin-0.1.163-YYYYMMDD-full.tar.gz
-shasum -a 256 sub2api-xnkaixin-0.1.163-YYYYMMDD-full.tar.gz > sub2api-xnkaixin-0.1.163-YYYYMMDD-full.tar.gz.sha256
-```
+- 在服务器执行 `sub2api-release deploy <已审核的完整提交 SHA>`，从 `CyrusXn/sub2api` 的 `xnkaixin` 分支拉取并核验提交归属；禁止自动合并或部署未经审核的分支头。
+- 本机入口 `scripts/release-console/release-console.sh` 只触发远程命令，不运行 Docker、不编译、不导出镜像压缩包。
+- 服务器源码及发布状态放在 `/home/docker/sub2api/.server-release`。独立构建器名为 `sub2api-release`，最多使用 2 核 CPU、3 GiB 内存、单任务编译；开始前至少保留 20 GiB 磁盘与 4.5 GiB 可用内存。
+- 构建固定目标 `linux/amd64`，注入 VERSION、完整 COMMIT、BUILD_TYPE=custom 和 EDITION；必须验证候选二进制的版本与提交。
+- 备份后预热候选，验证健康及纯语义版本，再沿用蓝绿切换。Nginx、PostgreSQL、Redis 的容器身份、启动时间及重启计数不得变化。
+- 仅成功验收后轮转旧资产：保留当前版本、上一版本完整回滚备份、待发布候选及所有容器引用镜像；删除上上版本及更早的无引用应用镜像和完整备份。
+- 发布成功后清空该专用构建器缓存、删除临时源码并停止构建器。失败时保留备份和诊断现场；修复后可用 `sub2api-release cleanup-build` 单独清理构建缓存。
+- 发布全过程使用同一排他锁；最新备份损坏、版本不符或健康检查失败时不得清理回滚资产。
 
 ## 生产环境
 
@@ -89,7 +89,7 @@ shasum -a 256 sub2api-xnkaixin-0.1.163-YYYYMMDD-full.tar.gz > sub2api-xnkaixin-0
 - `docker-compose.yml`、环境文件和当前镜像 ID/标签快照。
 - 为当前镜像创建明确的回滚标签。
 
-上传本地镜像归档和 SHA256 文件，在服务器校验后执行 `docker load`。服务器只允许导入镜像和切换应用容器，不得构建镜像。
+镜像由服务器专用构建器生成并加载；不再上传本地镜像归档。服务器发布入口和安装方式见 `scripts/release-console/README.md`。
 
 发布成功且健康检查完成后，必须执行精确的发布资产清理：服务器只保留当前线上镜像、上一版本可回滚资产、仍被任意容器引用的镜像，以及最近一次通过 `SHA256SUMS` 校验的完整备份；更早的 `bluegreen-*` 备份目录、未被容器引用的旧 `weishaw/sub2api:*` 镜像标签和旧本机归档应逐项删除。禁止使用 `docker system prune -a`、宽泛通配符或删除运行中容器。清理失败必须记录并阻止发布流程宣称完成。
 
@@ -118,7 +118,7 @@ docker compose up -d \
 
 ## 禁止事项
 
-- 禁止在生产服务器 `git pull`、编译前端、编译 Go 或执行 `docker build`。
+- 禁止在生产目录直接 `git pull` 后运行未审核源码；服务器构建仅允许通过上述受资源限制、固定提交的发布入口。
 - 禁止使用 `docker compose down` 或重启全部服务完成常规发布。
 - 禁止直接点击官方在线更新覆盖 `custom` 构建。
 - 禁止在命令输出、提交记录、文档或告警中写入真实凭据和用户敏感信息。

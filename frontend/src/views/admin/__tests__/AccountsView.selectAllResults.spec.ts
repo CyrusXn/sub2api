@@ -234,6 +234,10 @@ describe('admin AccountsView select all filtered results', () => {
 
     expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
     expect(wrapper.get('[data-test="all-results-selected"]').text()).toBe('false')
+    // 筛选会触发防抖加载，必须等它结束，避免下个测试重置 mock 后仍有请求。
+    await vi.waitFor(() => expect(listAccounts).toHaveBeenCalledTimes(3))
+    await flushPromises()
+    wrapper.unmount()
   })
 
   it('keeps the original page selection when loading all results fails', async () => {
@@ -263,5 +267,6 @@ describe('admin AccountsView select all filtered results', () => {
     expect(wrapper.get('[data-test="selected-count"]').text()).toBe('20')
     expect(wrapper.get('[data-test="all-results-selected"]').text()).toBe('false')
     expect(showError).toHaveBeenCalledWith('admin.accounts.bulkActions.selectAllFailed')
+    wrapper.unmount()
   })
 })

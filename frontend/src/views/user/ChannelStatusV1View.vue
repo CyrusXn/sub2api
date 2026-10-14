@@ -13,7 +13,7 @@
       :loading="loading"
       :auto-refresh="autoRefresh"
       @update:window="handleWindowChange"
-      @refresh="manualReload"
+      @refresh="refresh()"
     />
 
     <MonitorCardGrid
@@ -76,7 +76,7 @@ const autoRefresh = useAutoRefresh({
   intervals: [60] as const,
   defaultInterval: DEFAULT_INTERVAL_SECONDS,
   defaultEnabled: true,
-  onRefresh: () => reload(true),
+  onRefresh: () => refresh(true),
   shouldPause: () => document.hidden || loading.value,
 })
 const countdown = autoRefresh.countdown
@@ -120,8 +120,9 @@ async function reload(silent = false) {
   }
 }
 
-async function manualReload() {
-  await reload(false)
+async function refresh(silent = false) {
+  // 被动监控接口一次返回所有窗口可用率，刷新列表即可同步详情，不能回退到主动探针。
+  await reload(silent)
 }
 
 // ── Handlers ──

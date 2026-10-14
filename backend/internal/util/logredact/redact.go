@@ -70,6 +70,8 @@ var (
 	reAIza   = regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)
 	reBearer = regexp.MustCompile(`(?i)\bBearer\s+[0-9A-Za-z._~+/=-]+`)
 	reAPIKey = regexp.MustCompile(`\b(?:sk|sess|xox[a-z]?)-[0-9A-Za-z_-]{16,}\b`)
+	// Gemini auth key：AQ.Ab 前缀 + 48 位，长度放宽以覆盖格式变体。
+	reGeminiAuthKey = regexp.MustCompile(`AQ\.Ab[0-9A-Za-z_-]{40,}`)
 
 	defaultTextRedactPatterns = compileTextRedactPatterns(nil)
 	extraTextPatternCache     sync.Map // map[string]*textRedactPatterns
@@ -129,6 +131,7 @@ func RedactText(input string, extraKeys ...string) string {
 	out = reAIza.ReplaceAllString(out, "AIza***")
 	out = reBearer.ReplaceAllString(out, "Bearer ***")
 	out = reAPIKey.ReplaceAllString(out, "***")
+	out = reGeminiAuthKey.ReplaceAllString(out, "AQ.***")
 	out = patterns.reJSONLike.ReplaceAllString(out, `$1***$3`)
 	out = patterns.reQueryLike.ReplaceAllString(out, `$1=***`)
 	out = patterns.rePlain.ReplaceAllString(out, `$1$2***`)

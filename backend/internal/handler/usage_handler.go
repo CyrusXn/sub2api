@@ -252,15 +252,15 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
-	out := mapUsageLogsForUserList(records)
+	out := mapUsageLogsForUserList(records, c.GetHeader("Accept-Language"))
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
 // mapUsageLogsForUserList 仅返回真实用量指标，禁止为用户端生成首字延迟派生值。
-func mapUsageLogsForUserList(records []service.UsageLog) []dto.UsageLog {
+func mapUsageLogsForUserList(records []service.UsageLog, acceptLanguage string) []dto.UsageLog {
 	out := make([]dto.UsageLog, 0, len(records))
 	for i := range records {
-		out = append(out, *dto.UsageLogFromService(&records[i]))
+		out = append(out, *dto.UsageLogFromService(&records[i]).Localized(acceptLanguage))
 	}
 	return out
 }
@@ -406,7 +406,7 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.UsageLogFromService(record))
+	response.Success(c, dto.UsageLogFromService(record).Localized(c.GetHeader("Accept-Language")))
 }
 
 // Stats handles getting usage statistics

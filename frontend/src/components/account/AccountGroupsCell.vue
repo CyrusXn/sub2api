@@ -1,7 +1,7 @@
 <template>
   <div v-if="groups && groups.length > 0" class="relative w-full min-w-0">
     <!-- 分组容器：徽章内部单行；多个分组可换到下一行，但单个名称不折行 -->
-    <div class="flex max-h-28 flex-wrap content-start items-start gap-1 overflow-hidden">
+    <div class="flex flex-wrap content-start items-start gap-1">
       <GroupBadge
         v-for="group in displayGroups"
         :key="group.id"
@@ -10,6 +10,7 @@
         :subscription-type="group.subscription_type"
         :rate-multiplier="group.rate_multiplier"
         :show-rate="false"
+        :truncate="false"
         class="max-w-none shrink-0"
       />
       <!-- 更多数量徽章 -->
@@ -62,6 +63,8 @@
               :subscription-type="group.subscription_type"
               :rate-multiplier="group.rate_multiplier"
               :show-rate="false"
+              :truncate="false"
+              class="min-w-0 max-w-full"
             />
           </div>
         </div>

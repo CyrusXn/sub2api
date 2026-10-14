@@ -51,15 +51,25 @@ ensure_runtime_env() {
   fi
   chmod 600 "$RUNTIME_ENV"
 }
+ensure_connections_drained() {
+  local connections
+  # 查询失败不代表连接为零，必须停止替换以保护仍在进行的请求。
+  connections=$(ss -Htn state established "( src 127.0.0.1 and sport = :$1 )") || { log '连接排空检查失败，拒绝替换'; return 1; }
+  [[ -z "$connections" ]] || { log '槽位仍有连接，拒绝替换'; return 1; }
+}
 run_api_slot() {
 	local name=$1 port=$2 image=$3 active
 	active=$(active_port || true)
 	[[ "$active" != "$port" ]] || { log "拒绝替换正在承接流量的候选端口: $port"; return 1; }
+	ensure_connections_drained "$port" || return 1
 	ensure_runtime_env
-	docker rm -f "$name" >/dev/null 2>&1 || true
-	docker run -d --name "$name" --restart unless-stopped --network sub2api_sub2api-network -v sub2api_sub2api_data:/app/data -p "127.0.0.1:$port:8080" --security-opt no-new-privileges:true --ulimit nofile=100000:100000 --env-file "$RUNTIME_ENV" -e DEPLOYMENT_ROLE=api_only -e DATABASE_MAX_OPEN_CONNS=20 -e DATABASE_MAX_IDLE_CONNS=5 "$image" >/dev/null
+	if docker inspect "$name" >/dev/null 2>&1; then
+		docker stop --time 120 "$name" >/dev/null
+		docker rm "$name" >/dev/null
+	fi
+	docker run -d --name "$name" --restart unless-stopped --network sub2api_sub2api-network -v sub2api_sub2api_data:/app/data -p "127.0.0.1:$port:8080" --security-opt no-new-privileges:true --ulimit nofile=100000:100000 --env-file "$RUNTIME_ENV" -e DEPLOYMENT_ROLE=api_only -e DATABASE_MAX_OPEN_CONNS=20 -e DATABASE_MAX_IDLE_CONNS=5 -e 'PGOPTIONS=-c lock_timeout=1000' "$image" >/dev/null
 	for _ in $(seq 1 24); do health "$port" && return; sleep 5; done
-	docker logs --tail 80 "$name" >&2 || true
+	log '候选启动失败，保留容器供脱敏诊断'
 	return 1
 }
 ensure_primary_slot() {
@@ -76,6 +86,10 @@ ensure_primary_slot() {
     [[ "$active" != "$BLUE_PORT" ]] || { log '拒绝替换正在承接流量的 primary'; return 1; }
     # 流量已由健康 API 槽位承接；后台节点统一通过 Compose 更新，保留项目运行配置。
   fi
+  active=$(active_port)
+  [[ "$active" == "$GREEN_PORT" || "$active" == "$CANARY_PORT" ]] || { log '没有健康 API 流量槽位，拒绝重建主节点'; return 1; }
+  health "$active"
+  ensure_connections_drained "$BLUE_PORT" || return 1
   ensure_runtime_env
   local compose_tmp
   compose_tmp=$(mktemp "$APP_DIR/.compose-candidate.XXXXXX")
@@ -101,7 +115,7 @@ PYCOMPOSE
     fi
     sleep 5
   done
-  docker logs --tail 80 "$PRIMARY_NAME" >&2 || true
+  log '主节点启动失败，保留已有 API 流量槽位供排查'
   return 1
 }
 write_active() {
@@ -133,6 +147,7 @@ backup_release() {
   cp -p "$API_CONF" "$backup_dir/api.xnkaixin.eu.cc.conf"
   cp -p "$RELAY_CONF" "$backup_dir/relay-api.xnkaixin.eu.cc.conf"
   cp -p /home/web/nginx.conf "$backup_dir/nginx.conf"
+  cp -p "$ACTIVE_FILE" "$backup_dir/active-upstream.inc"
   active=$(active_port)
   active_container=$(container_for_port "$active")
   health "$active"
@@ -143,26 +158,29 @@ backup_release() {
   printf '%s\n' "$rollback_tag" > "$backup_dir/rollback-image.txt"
   docker exec sub2api-postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-acl' > "$backup_dir/postgres.dump"
   chmod 600 "$backup_dir"/postgres.dump "$backup_dir"/*.txt
-  (cd "$backup_dir" && sha256sum postgres.dump running-image.txt rollback-image.txt docker-compose.yml api.xnkaixin.eu.cc.conf relay-api.xnkaixin.eu.cc.conf nginx.conf > SHA256SUMS; if [[ -f .env ]]; then sha256sum .env >> SHA256SUMS; fi)
+  (cd "$backup_dir" && sha256sum postgres.dump running-image.txt rollback-image.txt docker-compose.yml api.xnkaixin.eu.cc.conf relay-api.xnkaixin.eu.cc.conf nginx.conf active-upstream.inc > SHA256SUMS; if [[ -f .env ]]; then sha256sum .env >> SHA256SUMS; fi)
+  is_complete_backup "$backup_dir" || { log '新备份校验失败，停止发布'; return 1; }
   log "发布备份已完成: $backup_dir"
 }
 
 is_complete_backup() {
-  local dir=$1
-  [[ -f "$dir/SHA256SUMS" && -f "$dir/postgres.dump" ]] || return 1
+  local dir=$1 file
+  [[ -f "$dir/SHA256SUMS" && -s "$dir/postgres.dump" && -s "$dir/rollback-image.txt" && -s "$dir/running-image.txt" ]] || return 1
+  # 校验清单被截短时 sha256sum 仍可成功，须同时确认全部恢复资产都在清单内。
+  for file in postgres.dump running-image.txt rollback-image.txt docker-compose.yml api.xnkaixin.eu.cc.conf relay-api.xnkaixin.eu.cc.conf nginx.conf active-upstream.inc; do
+    [[ -s "$dir/$file" ]] && grep -Eq "^[a-f0-9]{64}  $file$" "$dir/SHA256SUMS" || return 1
+  done
+  if [[ -f "$dir/.env" ]]; then
+    grep -Eq '^[a-f0-9]{64}  \.env$' "$dir/SHA256SUMS" || return 1
+  fi
   (cd "$dir" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
 }
 
 cleanup_release() {
-  local latest_backup='' latest_entry dir keep_rollback active active_container current_image previous_port previous_name previous_image image_id tag referenced
-  while IFS= read -r latest_entry; do
-    dir=${latest_entry#* }
-    if is_complete_backup "$dir"; then
-      latest_backup=$dir
-      break
-    fi
-  done < <(find "$APP_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name 'bluegreen-*' -printf '%T@ %p\n' | sort -nr)
-  [[ -n "$latest_backup" ]] || { log '没有可验证的完整发布备份，拒绝清理'; return 1; }
+  local latest_backup='' dir keep_rollback active active_container current_image previous_port previous_name previous_image image_id tag referenced pending_candidate
+  # 最新备份损坏时停止，不能退回旧备份后误删最近一次回滚资产。
+  latest_backup=$(find "$APP_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name 'bluegreen-*' -print | sort -r | sed -n '1p')
+  [[ -n "$latest_backup" ]] && is_complete_backup "$latest_backup" || { log '最新发布备份不完整或校验失败，拒绝清理'; return 1; }
   keep_rollback=$(tr -d '[:space:]' < "$latest_backup/rollback-image.txt")
   active=$(active_port)
   active_container=$(container_for_port "$active")
@@ -170,23 +188,33 @@ cleanup_release() {
   [[ -f "$PREVIOUS_ACTIVE_FILE" ]] || { log '缺少上一版本活跃实例记录，拒绝清理'; return 1; }
   IFS='|' read -r previous_port previous_name previous_image < "$PREVIOUS_ACTIVE_FILE"
   [[ "$previous_name" =~ ^sub2api(-green|-canary)?$ && "$previous_port" =~ ^(8080|18081|18082)$ ]] || { log '上一版本活跃实例记录无效'; return 1; }
+  [[ "$(container_for_port "$previous_port")" == "$previous_name" ]] || { log '上一版本端口与容器不匹配'; return 1; }
   health "$previous_port"
+  [[ "$keep_rollback" =~ ^weishaw/sub2api:rollback-[0-9]{8}-[0-9]{6}$ ]] || { log '回滚镜像标签无效'; return 1; }
+  [[ "$(docker image inspect "$keep_rollback" --format '{{.Id}}')" == "$(docker inspect "$previous_name" --format '{{.Image}}')" ]] || { log '最新备份与上一版本容器不匹配，拒绝清理'; return 1; }
   curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null
   current_image=$(docker inspect "$active_container" --format '{{.Config.Image}}')
-  ensure_primary_slot "$current_image"
+  pending_candidate=$(candidate_image)
+  if [[ -f "$APP_DIR/.server-release/candidate" ]]; then
+    IFS='|' read -r pending_candidate _ < "$APP_DIR/.server-release/candidate"
+  fi
+  health "$BLUE_PORT"
+  [[ "$(docker inspect "$PRIMARY_NAME" --format '{{.Image}}')" == "$(docker inspect "$active_container" --format '{{.Image}}')" ]] || { log '主节点版本不一致，拒绝清理'; return 1; }
 
   # primary 专门承担后台任务，不能按非流量槽位清理。
   for slot in "$PRIMARY_NAME" sub2api-green sub2api-canary; do
     [[ "$slot" == "$PRIMARY_NAME" ]] && continue
     [[ "$slot" == "$active_container" || "$slot" == "$previous_name" ]] && continue
     docker inspect "$slot" >/dev/null 2>&1 || continue
-    docker rm -f "$slot" >/dev/null
+    # 清理不得终止仍运行的容器，避免中断尚未排空的长连接。
+    [[ "$(docker inspect "$slot" --format '{{.State.Running}}')" == false ]] || { log "保留仍运行的旧槽位: $slot"; continue; }
+    docker rm "$slot" >/dev/null
     log "已删除未承流量的旧应用容器: $slot"
   done
 
   # 只删除未被任何容器引用的旧应用镜像标签，当前、上一版本和最新回滚始终保留。
   for tag in $(docker image ls 'weishaw/sub2api:*' --format '{{.Repository}}:{{.Tag}}' | sort -u); do
-    [[ "$tag" == "$current_image" || "$tag" == "$previous_image" || "$tag" == "$keep_rollback" ]] && continue
+    [[ "$tag" == "$current_image" || "$tag" == "$previous_image" || "$tag" == "$keep_rollback" || "$tag" == "$pending_candidate" ]] && continue
     image_id=$(docker image inspect "$tag" --format '{{.Id}}')
     referenced=0
     while read -r container_id; do
@@ -211,7 +239,22 @@ cleanup_release() {
   log "发布资产清理完成，保留最新完整备份: $latest_backup"
 }
 
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return; fi
+
 case "$ACTION" in
+  restore-active)
+    [[ "$IMAGE" == "$GREEN_PORT" || "$IMAGE" == "$CANARY_PORT" ]] || { log '恢复流量端口无效'; exit 1; }
+    health "$IMAGE"
+    write_active "$IMAGE"; nginx_reload
+    curl -fsS --max-time 10 https://api.xnkaixin.eu.cc/health >/dev/null
+    log '已恢复发布前的健康 API 流量槽位，备份保持不变'
+    ;;
+  stage-candidate)
+    [[ "$IMAGE" =~ ^weishaw/sub2api:[A-Za-z0-9._-]+$ ]] || { log '候选镜像标签无效'; exit 1; }
+    docker image inspect "$IMAGE" >/dev/null
+    printf '%s\n' "$IMAGE" > "$CANDIDATE_FILE"
+    log '服务器候选已登记'
+    ;;
   ensure-primary)
     active=$(active_port)
     active_container=$(container_for_port "$active")
