@@ -69,7 +69,7 @@ const models = ref<string[]>([])
 const modelOptions = computed(() => models.value.map(id => ({ value: id, label: id })))
 const modelError = ref('')
 const loadingModels = ref(false)
-const testPrompt = '你好，请简短回复，确认可以正常对话。'
+const testPrompt = '你是谁'
 const conversation = ref<HTMLElement | null>(null)
 interface Turn {
   prompt: string

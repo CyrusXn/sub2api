@@ -20,7 +20,7 @@ let stream: ReadableStreamDefaultController<Uint8Array>
 let now = 0
 let requests: Array<{ url: string; init: RequestInit }>
 let modelIds: string[]
-const testPrompt = '你好，请简短回复，确认可以正常对话。'
+const testPrompt = '你是谁'
 const emitData = (payload: unknown) => stream.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
 
 async function openModal() {
@@ -88,6 +88,7 @@ describe('密钥测试对话', () => {
     expect(JSON.parse(requests[1].init.body as string)).toMatchObject({
       model: 'gpt-5.6-astra', messages: [{ role: 'user', content: testPrompt }]
     })
+    expect(view.get('[role="log"]').text()).toContain(testPrompt)
   })
 
   it.each([
