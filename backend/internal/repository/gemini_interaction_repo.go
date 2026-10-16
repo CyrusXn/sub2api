@@ -68,7 +68,7 @@ func (r *geminiInteractionRepository) Create(ctx context.Context, v *service.Gem
 	}
 	// HTTP 返回后后台任务仍占用新协议并发额度；行锁避免多节点同时超额创建。
 	if limit > 0 {
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM gemini_interactions WHERE user_id = $1 AND settled = FALSE AND deleted_at IS NULL`, v.UserID).Scan(&pending); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM gemini_interactions WHERE user_id = $1 AND settled = FALSE AND deleted_at IS NULL AND review_reason = '' AND status NOT IN ('completed','failed','cancelled','requires_action')`, v.UserID).Scan(&pending); err != nil {
 			return err
 		}
 		if pending >= limit {
@@ -79,7 +79,7 @@ func (r *geminiInteractionRepository) Create(ctx context.Context, v *service.Gem
 		return geminiInteractionLockError(err)
 	}
 	if limit > 0 {
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM gemini_interactions WHERE account_id = $1 AND settled = FALSE AND deleted_at IS NULL`, v.AccountID).Scan(&pending); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM gemini_interactions WHERE account_id = $1 AND settled = FALSE AND deleted_at IS NULL AND review_reason = '' AND status NOT IN ('completed','failed','cancelled','requires_action')`, v.AccountID).Scan(&pending); err != nil {
 			return err
 		}
 		if pending >= limit {
@@ -129,7 +129,7 @@ func geminiInteractionDeleteError(err error) error {
 	return err
 }
 
-const interactionColumns = `id, public_id, upstream_id, api_key_id, user_id, group_id, account_id, metadata, status, usage, settled, created_at, hold_amount`
+const interactionColumns = `id, public_id, upstream_id, api_key_id, user_id, group_id, account_id, metadata, status, usage, settled, created_at, hold_amount, review_reason`
 
 func (r *geminiInteractionRepository) GetOwned(ctx context.Context, k, u, g int64, id string) (*service.GeminiInteraction, error) {
 	v, err := scanInteraction(r.db.QueryRowContext(ctx, `SELECT `+interactionColumns+` FROM gemini_interactions WHERE public_id = $1 AND api_key_id = $2 AND user_id = $3 AND group_id = $4 AND deleted_at IS NULL`, id, k, u, g))
@@ -151,8 +151,9 @@ func (r *geminiInteractionRepository) Update(ctx context.Context, v *service.Gem
 	err := r.db.QueryRowContext(ctx, `UPDATE gemini_interactions SET upstream_id = $2,
 status = CASE WHEN status IN ('completed','failed','cancelled','requires_action') THEN status ELSE $3 END,
 usage = CASE WHEN status IN ('completed','failed','cancelled','requires_action') AND usage IS NOT NULL THEN usage ELSE COALESCE($4::jsonb, usage) END,
+review_reason = CASE WHEN settled THEN review_reason WHEN resolution IS NOT NULL THEN review_reason WHEN $4::jsonb IS NOT NULL THEN '' WHEN $5 <> '' THEN $5 ELSE review_reason END,
 updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL AND (upstream_id = '' OR upstream_id = $2)
-RETURNING upstream_id, status, usage, settled`, v.ID, v.UpstreamID, v.Status, usage).Scan(&v.UpstreamID, &v.Status, &authoritativeUsage, &v.Settled)
+RETURNING upstream_id, status, usage, settled, review_reason`, v.ID, v.UpstreamID, v.Status, usage, v.ReviewReason).Scan(&v.UpstreamID, &v.Status, &authoritativeUsage, &v.Settled, &v.ReviewReason)
 	if err != nil {
 		return err
 	}
@@ -213,7 +214,8 @@ func (r *geminiInteractionRepository) SoftDelete(ctx context.Context, id int64) 
 	return err
 }
 func (r *geminiInteractionRepository) Pending(ctx context.Context, limit int) ([]*service.GeminiInteraction, error) {
-	rows, err := r.db.QueryContext(ctx, `WITH due AS (SELECT id FROM gemini_interactions WHERE settled = FALSE AND deleted_at IS NULL AND upstream_id <> '' AND next_poll_at <= NOW() ORDER BY next_poll_at,id LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE gemini_interactions gi SET next_poll_at = NOW() + INTERVAL '60 seconds' FROM due WHERE gi.id = due.id RETURNING gi.`+`id, gi.public_id, gi.upstream_id, gi.api_key_id, gi.user_id, gi.group_id, gi.account_id, gi.metadata, gi.status, gi.usage, gi.settled, gi.created_at, gi.hold_amount`, limit)
+	// 无 ID 的创建任务须超过完整 POST 超时窗口，避免误判仍在执行的请求。
+	rows, err := r.db.QueryContext(ctx, `WITH due AS (SELECT id FROM gemini_interactions WHERE settled = FALSE AND deleted_at IS NULL AND (upstream_id <> '' OR usage IS NOT NULL OR (review_reason = '' AND created_at < NOW() - INTERVAL '12 minutes')) AND next_poll_at <= NOW() ORDER BY next_poll_at,id LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE gemini_interactions gi SET next_poll_at = NOW() + INTERVAL '60 seconds' FROM due WHERE gi.id = due.id RETURNING gi.`+`id, gi.public_id, gi.upstream_id, gi.api_key_id, gi.user_id, gi.group_id, gi.account_id, gi.metadata, gi.status, gi.usage, gi.settled, gi.created_at, gi.hold_amount, gi.review_reason`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +233,7 @@ func (r *geminiInteractionRepository) Pending(ctx context.Context, limit int) ([
 func scanInteraction(row interface{ Scan(...any) error }) (*service.GeminiInteraction, error) {
 	v := &service.GeminiInteraction{}
 	var metadata, usage []byte
-	if err := row.Scan(&v.ID, &v.PublicID, &v.UpstreamID, &v.APIKeyID, &v.UserID, &v.GroupID, &v.AccountID, &metadata, &v.Status, &usage, &v.Settled, &v.CreatedAt, &v.BalanceHold); err != nil {
+	if err := row.Scan(&v.ID, &v.PublicID, &v.UpstreamID, &v.APIKeyID, &v.UserID, &v.GroupID, &v.AccountID, &metadata, &v.Status, &usage, &v.Settled, &v.CreatedAt, &v.BalanceHold, &v.ReviewReason); err != nil {
 		return nil, err
 	}
 	var m interactionMetadata

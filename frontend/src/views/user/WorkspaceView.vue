@@ -101,7 +101,7 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import WorkspaceConnection from '@/components/workspace/WorkspaceConnection.vue'
 import WorkspaceImageStudio from '@/components/workspace/WorkspaceImageStudio.vue'
-import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceModels, streamWorkspaceChat, validateWorkspaceReferenceVideoURL, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey, type WorkspaceSelection, type WorkspaceTab } from '@/api/workspace'
+import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceModels, modelMatchesTab, streamWorkspaceChat, validateWorkspaceReferenceVideoURL, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey, type WorkspaceSelection, type WorkspaceTab } from '@/api/workspace'
 import { KeyTestError, type TestMessage } from '@/api/keyTest'
 import { useAppStore } from '@/stores/app'
 import { getWorkspaceTab } from '@/utils/workspaceNavigation'
@@ -119,7 +119,7 @@ const selectedModel = ref('')
 const showAllKeys = ref(false)
 const selectedKey = computed(() => keys.value.find(key => String(key.id) === selectedKeyId.value))
 const models = computed(() => selectedKey.value ? workspaceSelectableModels(selectedKey.value, tab.value, showAllKeys.value) : [])
-const selection = computed<WorkspaceSelection | null>(() => selectedKey.value && selectedModel.value.trim() && (showAllKeys.value || models.value.includes(selectedModel.value)) ? { key: selectedKey.value, model: selectedModel.value.trim() } : null)
+const selection = computed<WorkspaceSelection | null>(() => selectedKey.value && selectedModel.value.trim() && (showAllKeys.value || models.value.includes(selectedModel.value)) && (tab.value !== 'video' || modelMatchesTab(selectedModel.value, 'video')) ? { key: selectedKey.value, model: selectedModel.value.trim() } : null)
 const imageVisited = ref(tab.value === 'image')
 const imageBusy = ref(false)
 const isSeedance = computed(() => /seedance|doubao.*video/i.test(selectedModel.value))
@@ -284,7 +284,10 @@ async function submit(): Promise<void> {
   } catch (cause) {
     // 只恢复本次请求前的上下文，迟到的取消回调不能覆盖更新的对话。
     restorePreviousMessages()
-    if (!abort.signal.aborted) error.value = currentTab === 'chat' ? chatErrorText(cause) : t(cause instanceof Error && cause.message === 'video-generation-timeout' ? 'workspace.videoTimeout' : 'workspace.requestError')
+    if (!abort.signal.aborted) {
+      const message = cause instanceof Error ? cause.message : ''
+      error.value = currentTab === 'chat' ? chatErrorText(cause) : t(message === 'video-generation-timeout' ? 'workspace.videoTimeout' : message === 'video-model-unsupported' ? 'workspace.videoModelUnsupported' : 'workspace.requestError')
+    }
   } finally {
     abort.signal.removeEventListener('abort', restorePreviousMessages)
     if (requestController === abort) { busy.value = false; statusText.value = ''; requestController = undefined }

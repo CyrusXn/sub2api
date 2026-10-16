@@ -25,7 +25,7 @@ func TestGeminiInteractionRepositoryResponseCannotResetSettled(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 	repo := NewGeminiInteractionRepository(db)
-	m.ExpectQuery(`UPDATE gemini_interactions SET upstream_id.*CASE WHEN status IN.*RETURNING upstream_id, status, usage, settled`).WithArgs(int64(1), "up", "in_progress", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"upstream_id", "status", "usage", "settled"}).AddRow("up", "completed", `{"input_tokens":5,"output_tokens":3}`, true))
+	m.ExpectQuery(`UPDATE gemini_interactions SET upstream_id.*CASE WHEN status IN.*RETURNING upstream_id, status, usage, settled`).WithArgs(int64(1), "up", "in_progress", sqlmock.AnyArg(), "").WillReturnRows(sqlmock.NewRows([]string{"upstream_id", "status", "usage", "settled", "review_reason"}).AddRow("up", "completed", `{"input_tokens":5,"output_tokens":3}`, true, ""))
 	v := &service.GeminiInteraction{ID: 1, UpstreamID: "up", Status: "in_progress", Usage: &service.ClaudeUsage{InputTokens: 2}}
 	require.NoError(t, repo.Update(context.Background(), v))
 	require.True(t, v.Settled)

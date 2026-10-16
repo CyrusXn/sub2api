@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +37,33 @@ func TestGeminiInteractionSettlementRecoversCommittedReceiptWithoutRebilling(t *
 	require.Equal(t, 1, repo.marks)
 }
 
+func TestGeminiInteractionMissingTerminalUsageNeedsReviewWithoutRefund(t *testing.T) {
+	repo := &interactionMemoryRepo{records: map[string]*GeminiInteraction{}}
+	svc := NewGeminiInteractionService(repo, nil, nil, nil, nil)
+	r := &GeminiInteraction{ID: 1, PublicID: "cancelled", UpstreamID: "up", Status: "cancelled", BalanceHold: 1.5}
+	require.NoError(t, svc.Settle(context.Background(), r))
+	require.Equal(t, 1, repo.updates, "缺失用量终态必须持久化待核对，不能无限占执行并发")
+	require.False(t, r.Settled)
+	require.Equal(t, 1.5, r.BalanceHold)
+}
+
+type orphanInteractionRepo struct{ interactionMemoryRepo }
+
+func (r *orphanInteractionRepo) Pending(context.Context, int) ([]*GeminiInteraction, error) {
+	return []*GeminiInteraction{{ID: 1, PublicID: "orphan", Status: "creating", BalanceHold: 2, CreatedAt: time.Now().Add(-20 * time.Minute)}}, nil
+}
+
+func TestGeminiInteractionRecoveryClassifiesOrphanWithoutReposting(t *testing.T) {
+	repo := &orphanInteractionRepo{interactionMemoryRepo{records: map[string]*GeminiInteraction{}}}
+	svc := NewGeminiInteractionService(repo, nil, nil, nil, nil)
+	n, err := svc.RecoverPending(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Equal(t, 1, repo.updates, "无上游ID的过期创建任务也必须收敛到待核对")
+	require.Equal(t, 2.0, repo.records["orphan"].BalanceHold)
+	require.False(t, repo.records["orphan"].Settled)
+}
+
 func TestGeminiInteractionInvalidUsageStillPersistsBinding(t *testing.T) {
 	repo := &interactionMemoryRepo{records: map[string]*GeminiInteraction{}}
 	svc := NewGeminiInteractionService(repo, nil, nil, nil, nil)
@@ -44,6 +72,7 @@ func TestGeminiInteractionInvalidUsageStillPersistsBinding(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "up", repo.records["local"].UpstreamID)
 	require.Nil(t, repo.records["local"].Usage)
+	require.Equal(t, "terminal_usage_missing", repo.records["local"].ReviewReason)
 }
 
 func TestGeminiInteractionProgressUsageCannotSettleAsFinalUsage(t *testing.T) {

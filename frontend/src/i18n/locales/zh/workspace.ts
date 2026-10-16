@@ -13,6 +13,7 @@ export default {
     videoReferencePlaceholder: '粘贴 HTTPS 视频地址（可选）',
     videoReferenceError: '请输入不含登录凭据的有效 HTTPS 视频地址。',
     videoReferenceUnsupported: '当前 Seedance 1.x 模型不支持参考视频，请选择 2.0 及以上模型。',
+    videoModelUnsupported: '当前工作台不支持此视频型号（包括仅支持图生视频的 Grok 1.5），请选择 Grok Imagine Video 或 Seedance 视频型号。',
     seedanceReferenceHint: 'Seedance 2.0 及以上支持参考视频；地址需能被上游直接访问。',
     grokReferenceHint: '支持可公开访问的 MP4 地址，源视频不超过 8.7 秒；编辑沿用源视频规格，输出最高 720p。',
     noKey: '暂无可用 API Key',

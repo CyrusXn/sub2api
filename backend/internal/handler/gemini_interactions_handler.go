@@ -290,6 +290,17 @@ func (h *GatewayHandler) GeminiInteractionsCreate(c *gin.Context) {
 		googleError(c, http.StatusInternalServerError, "Failed to persist interaction")
 		return
 	}
+	// POST 结束仍未拿到资源 ID 时不可重发或退款，持久化待核对以释放执行并发。
+	defer func() {
+		if r.Settled || r.UpstreamID != "" {
+			return
+		}
+		reviewCtx, reviewCancel := context.WithTimeout(context.WithoutCancel(opCtx), 5*time.Second)
+		defer reviewCancel()
+		if err := h.geminiInteractionService.RequireReview(reviewCtx, r, "create_result_unknown"); err != nil {
+			slog.Warn("Gemini Interactions 待核对标记保存失败，将后台恢复", "interaction_id", r.PublicID)
+		}
+	}()
 	setOpsSelectedAccount(c, account.ID, account.Platform)
 	resp, err := h.geminiInteractionService.Forward(opCtx, account, http.MethodPost, "", "", c.Request.URL.Query(), revision, body)
 	if err != nil {

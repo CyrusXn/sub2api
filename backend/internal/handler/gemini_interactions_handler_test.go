@@ -366,6 +366,17 @@ func TestGeminiInteractionsDeleteRefreshesAndSettlesBeforeDeleting(t *testing.T)
 	require.Equal(t, []string{"GET /v1beta/interactions/up1", "DELETE /v1beta/interactions/up1"}, u.calls)
 }
 
+func TestGeminiInteractionsDeleteWithoutUsageRemainsVisibleForReview(t *testing.T) {
+	e, repo, u := newInteractionEnv(t)
+	repo.records["pending"] = &service.GeminiInteraction{ID: 1, PublicID: "pending", UpstreamID: "up1", APIKeyID: e.apiKey.ID, UserID: e.apiKey.UserID, GroupID: e.group.ID, AccountID: 900, Model: "gemini-2.5-pro", BillingGroup: e.group, Status: "in_progress", BalanceHold: 1.5}
+	u.response = `{"id":"up1","status":"cancelled"}`
+	rec := e.serve(http.MethodDelete, "/v1beta/interactions/pending", "", gin.Params{{Key: "interactionID", Value: "pending"}}, e.h.GeminiInteractionsDelete)
+	require.Equal(t, 409, rec.Code)
+	require.Equal(t, "terminal_usage_missing", repo.records["pending"].ReviewReason)
+	require.False(t, repo.records["pending"].Settled)
+	require.Equal(t, 1.5, repo.records["pending"].BalanceHold)
+}
+
 func TestGeminiInteractionsDisconnectDoesNotLoseUsage(t *testing.T) {
 	e, repo, u := newInteractionEnv(t)
 	var clientCancel context.CancelFunc

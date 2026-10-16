@@ -8,6 +8,8 @@
         </RouterLink>
       </header>
 
+      <GeminiInteractionReview />
+
       <section v-if="settingsReady" class="flex flex-col gap-3 border-y border-gray-200 bg-gray-50 px-3 py-3 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-end sm:justify-between">
         <div class="flex items-center gap-3">
           <Icon name="bell" size="sm" class="text-gray-500 dark:text-gray-400" />
@@ -206,6 +208,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import BalanceCenterAssets from '@/components/admin/balance/BalanceCenterAssets.vue'
+import GeminiInteractionReview from '@/components/admin/GeminiInteractionReview.vue'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 

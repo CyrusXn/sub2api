@@ -46,6 +46,18 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 			_ = tx.Rollback()
 		}
 	}()
+	if strings.HasPrefix(cmd.RequestID, service.GeminiInteractionUsageRequestIDPrefix) {
+		// 与人工处置共用任务行锁，杜绝解冻后旧快照再次扣款。
+		// 结算 token 已应用管理员倍率，不能与原始用量比较；终态用量由任务仓储保持不可变。
+		var settled bool
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, `SELECT settled, usage FROM gemini_interactions WHERE public_id = $1 AND api_key_id = $2 FOR UPDATE`, strings.TrimPrefix(cmd.RequestID, service.GeminiInteractionUsageRequestIDPrefix), cmd.APIKeyID).Scan(&settled, &raw); err != nil {
+			return nil, err
+		}
+		if settled {
+			return &service.UsageBillingApplyResult{Applied: false}, nil
+		}
+	}
 
 	applied, err := r.claimUsageBillingKey(ctx, tx, cmd)
 	if err != nil {

@@ -526,7 +526,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 	// Bedrock accounts use a separate test path
 	if account.IsBedrock() {
-		return s.testBedrockAccountConnection(c, ctx, account, testModelID)
+		return s.testBedrockAccountConnection(c, ctx, account, testModelID, prompt)
 	}
 	if account.Type == AccountTypeServiceAccount {
 		return s.testClaudeVertexServiceAccountConnection(c, ctx, account, testModelID, prompt)
@@ -703,7 +703,7 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 }
 
 // testBedrockAccountConnection tests a Bedrock (SigV4 or API Key) account using non-streaming invoke
-func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx context.Context, account *Account, testModelID string) error {
+func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx context.Context, account *Account, testModelID, prompt string) error {
 	region := bedrockRuntimeRegion(account)
 	resolvedModelID, ok := ResolveBedrockModelID(account, testModelID)
 	if !ok {
@@ -719,6 +719,10 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 	c.Writer.Flush()
 
 	// Create a minimal Bedrock-compatible payload (no stream, no cache_control)
+	testPrompt := strings.TrimSpace(prompt)
+	if testPrompt == "" {
+		testPrompt = "hi"
+	}
 	bedrockPayload := map[string]any{
 		"anthropic_version": "bedrock-2023-05-31",
 		"messages": []map[string]any{
@@ -727,7 +731,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 				"content": []map[string]any{
 					{
 						"type": "text",
-						"text": "hi",
+						"text": testPrompt,
 					},
 				},
 			},
@@ -1050,7 +1054,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		if mapped := strings.TrimSpace(account.GetMappedModel(testModelID)); mapped != "" {
 			testModelID = mapped
 		}
-		return s.testGrokResponsesConnection(c, ctx, account, authToken, testModelID)
+		return s.testGrokResponsesConnection(c, ctx, account, authToken, testModelID, prompt)
 	}
 
 	// mode == default: infer from model family (legacy UI / API clients).
@@ -1068,7 +1072,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	case isGrokVideoGenerationModel(testModelID):
 		return s.testGrokVideoGeneration(c, ctx, account, authToken, testModelID, resolveGrokVideoPrompt(prompt), opts)
 	default:
-		return s.testGrokResponsesConnection(c, ctx, account, authToken, testModelID)
+		return s.testGrokResponsesConnection(c, ctx, account, authToken, testModelID, prompt)
 	}
 }
 
@@ -1254,7 +1258,7 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 	}
 }
 
-func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx context.Context, account *Account, authToken, testModelID string) error {
+func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx context.Context, account *Account, authToken, testModelID, prompt string) error {
 	apiURL, err := buildGrokResponsesURL(account, s.cfg, s.settingService)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid Grok base URL: %s", err.Error()))
@@ -1262,7 +1266,15 @@ func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx con
 
 	s.prepareGrokTestSSE(c)
 
-	payloadBytes, err := buildGrokQuotaProbeBody(testModelID)
+	testPrompt := strings.TrimSpace(prompt)
+	if testPrompt == "" {
+		testPrompt = grokQuotaProbeInput
+	}
+	payloadBytes, err := json.Marshal(map[string]any{
+		"model":  testModelID,
+		"input":  testPrompt,
+		"stream": true,
+	})
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Grok test payload")
 	}

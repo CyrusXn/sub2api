@@ -40,12 +40,13 @@ type balanceCenterAccountProber interface {
 
 // BalanceCenterHandler 提供只面向管理员的余额中心接口。
 type BalanceCenterHandler struct {
-	service balanceCenterAdminService
-	prober  balanceCenterAccountProber
+	service      balanceCenterAdminService
+	prober       balanceCenterAccountProber
+	interactions *service.GeminiInteractionService
 }
 
-func NewBalanceCenterHandler(balanceService *service.BalanceCenterService, prober *service.UpstreamBillingProbeService) *BalanceCenterHandler {
-	return &BalanceCenterHandler{service: balanceService, prober: prober}
+func NewBalanceCenterHandler(balanceService *service.BalanceCenterService, prober *service.UpstreamBillingProbeService, interactions *service.GeminiInteractionService) *BalanceCenterHandler {
+	return &BalanceCenterHandler{service: balanceService, prober: prober, interactions: interactions}
 }
 
 func (h *BalanceCenterHandler) Overview(c *gin.Context) {

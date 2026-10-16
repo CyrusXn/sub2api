@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { keysAPI } from '../keys'
-import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceSelection, modelMatchesTab, preferredModels, streamWorkspaceChat, workspaceModelsForKey, type WorkspaceKey } from '../workspace'
+import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceSelection, modelMatchesTab, preferredModels, streamWorkspaceChat, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey } from '../workspace'
 
 vi.mock('../keys', () => ({ keysAPI: { list: vi.fn() } }))
 
@@ -77,6 +77,27 @@ describe('workspace model selection', () => {
     expect(preferredModels(['grok-imagine-video', 'seedance-1-5-pro', 'gpt-5.6-sol'], 'video')).toEqual([
       'seedance-1-5-pro', 'grok-imagine-video'
     ])
+  })
+
+  it.each(['grok-imagine-video-1.5', 'grok-imagine-video-1.5-preview', 'grok-video-1.5', ' xai/GROK-IMAGINE-VIDEO-1.5 '])('视频工作台不将仅图生视频的 %s 识别为可执行型号', model => {
+    expect(modelMatchesTab(model, 'video')).toBe(false)
+    expect(preferredModels([model, 'grok-imagine-video', 'seedance-1-5-pro'], 'video')).toEqual(['seedance-1-5-pro', 'grok-imagine-video'])
+  })
+
+  it('Heavy 仅有图生视频型号时不自动匹配，也不降级到 free', () => {
+    const heavy = key(1, ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-preview'], '【Grok】Heavy')
+    const free = key(2, ['grok-imagine-video'], '【Grok】free')
+    expect(workspaceModelsForKey(heavy, 'video')).toEqual([])
+    expect(getWorkspaceSelection([heavy, free], 'video')).toBeNull()
+    const seedance = { ...key(3, ['seedance-1-5-pro']), platform: 'openai' }
+    expect(getWorkspaceSelection([heavy, seedance], 'video')).toEqual({ key: seedance, model: 'seedance-1-5-pro' })
+  })
+
+  it('展开全部也不能重新选择工作台不支持的视频型号', () => {
+    const heavy = key(1, ['grok-imagine-video-1.5', 'grok-video-1.5', 'grok-4.7'], '【Grok】Heavy')
+    expect(workspaceSelectableModels(heavy, 'video', false)).toEqual([])
+    expect(workspaceSelectableModels(heavy, 'video', true)).toEqual([])
+    expect(workspaceSelectableModels(key(2, ['grok-imagine-video-1.5', 'grok-imagine-video']), 'video', true)).toEqual(['grok-imagine-video'])
   })
 
   it('keeps each tab on its matching capability', () => {
@@ -200,6 +221,16 @@ describe('workspace model selection', () => {
     }))
     expect(result.url).toBe('https://cdn.example/video.mp4')
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['grok-imagine-video-1.5', 'grok-imagine-video-1.5-preview', 'grok-video-1.5', 'grok-4.7'])('%s 在请求前拒绝工作台不支持的视频型号，参考视频不能替代输入图片', async model => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({}))
+    vi.stubGlobal('fetch', fetchMock)
+    for (const referenceVideoURL of [undefined, 'https://cdn.example/reference.mp4']) {
+      await expect(generateWorkspaceVideo({ selection: { key: key(1), model }, prompt: 'waves', referenceVideoURL,
+        duration: 6, aspectRatio: '16:9', resolution: '720p', signal: new AbortController().signal })).rejects.toThrow('video-model-unsupported')
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('Seedance 参考视频使用原生 video_url 和 reference_video，保留生成参数', async () => {

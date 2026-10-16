@@ -61,7 +61,7 @@ describe('创作工作台', () => {
     expect(view.get<HTMLTextAreaElement>('#ai-image-free-prompt').element.value).toBe('保留生图输入')
   })
 
-  it('展开全部 Key 后可选误筛的 Key 和模型且不重新加载', async () => {
+  it('展开全部 Key 保留跨分组手选，但不能将非视频型号作为默认', async () => {
     const { view } = await mountView('/workspace?tab=video')
     const count = vi.mocked(fetch).mock.calls.length
     await view.get('#workspace-key').trigger('click')
@@ -71,10 +71,57 @@ describe('创作工作台', () => {
     option.click()
     await flushPromises()
     expect(selectedValue(view, 'workspace-key')).toBe('1')
-    expect(selectedValue(view, 'workspace-model')).toBe('gpt-5.6-sol')
+    expect(selectedValue(view, 'workspace-model')).toBe('')
     expect(fetch).toHaveBeenCalledTimes(count)
     await view.get('#workspace-prompt').setValue('兜底测试')
+    expect(view.get('[data-test="submit"]').attributes('disabled')).toBeDefined()
+    await view.get('#workspace-model').trigger('click')
+    const modelSearch = document.body.querySelector<HTMLInputElement>('.select-search-input')!
+    modelSearch.value = 'grok-imagine-video'
+    modelSearch.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="option"]')!.click()
+    await flushPromises()
+    expect(selectedValue(view, 'workspace-model')).toBe('grok-imagine-video')
     expect(view.get('[data-test="submit"]').attributes('disabled')).toBeUndefined()
+    expect(fetch).toHaveBeenCalledTimes(count)
+  })
+
+  it('Heavy 仅有图生视频型号时显示未匹配，展开全部也不提供该型号', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: 'grok-imagine-video-1.5' }] })))
+    const { view } = await mountView('/workspace?tab=video')
+    expect(selectedValue(view, 'workspace-model')).toBe('')
+    expect(view.get('.key-label-row [role="status"]').text()).toBe('workspace.noMatch')
+    await view.get('#workspace-key').trigger('click')
+    document.body.querySelector<HTMLElement>('[data-test="show-all-keys"]')!.click()
+    await flushPromises()
+    const heavy = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(item => item.textContent?.includes('SuperGrok Heavy'))!
+    heavy.click()
+    await flushPromises()
+    const models = view.findAllComponents(Select).find(component => component.props('id') === 'workspace-model')!
+    expect(models.props('options')).toEqual([])
+    expect(view.get('[data-test="submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it.each(['grok-imagine-video-1.5', 'grok-imagine-video-1.5-preview', 'grok-video-1.5', 'gpt-5.6-sol'])('展开全部后手输 %s 仍明确拒绝，不显示已匹配或发送请求', async model => {
+    const { view } = await mountView('/workspace?tab=video')
+    const count = vi.mocked(fetch).mock.calls.length
+    await view.get('#workspace-key').trigger('click')
+    document.body.querySelector<HTMLElement>('[data-test="show-all-keys"]')!.click()
+    await flushPromises()
+    await view.get('#workspace-key').trigger('click')
+    await view.get('#workspace-model').trigger('click')
+    const modelSearch = document.body.querySelector<HTMLInputElement>('.select-search-input')!
+    modelSearch.value = model
+    modelSearch.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="option"]')!.click()
+    await flushPromises()
+    await view.get('#workspace-prompt').setValue('不应发送')
+    expect(view.get('[data-test="submit"]').attributes('disabled')).toBeDefined()
+    expect(view.get('.key-label-row [role="status"]').text()).toBe('workspace.noMatch')
+    expect(view.get('[role="alert"]').text()).toBe('workspace.videoModelUnsupported')
+    expect(fetch).toHaveBeenCalledTimes(count)
   })
 
   it('密钥下拉按 Tab 能力筛选，底部可展开所有 Key，切 Tab 恢复筛选', async () => {

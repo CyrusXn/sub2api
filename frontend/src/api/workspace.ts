@@ -37,7 +37,8 @@ export function modelMatchesTab(model: string, tab: WorkspaceTab): boolean {
   if (tab === 'chat') return Boolean(normalized.trim()) && !NON_CHAT_HINTS.some((hint) => normalized.includes(hint))
   // 本期生图复用 OpenAI Images；Gemini 图片端点不伪装为兼容接口。
   if (tab === 'image') return normalized.startsWith('gpt-image-') || normalized === 'grok-imagine' || normalized === 'grok-imagine-edit' || normalized.startsWith('grok-imagine-image')
-  return isSeedanceModel(model) || /grok.*video/i.test(model)
+  // Grok 1.5 仅支持图生视频；当前工作台没有输入图片协议，不能视为可执行型号。
+  return isSeedanceModel(model) || (/grok.*video/i.test(model) && !/grok-(?:imagine-)?video-1\.5/i.test(model))
 }
 
 function modelPriority(model: string, tab: WorkspaceTab): number {
@@ -62,8 +63,8 @@ export function workspaceModelsForKey(key: WorkspaceKey, tab: WorkspaceTab): str
 
 export function workspaceSelectableModels(key: WorkspaceKey, tab: WorkspaceTab, showAll: boolean): string[] {
   const matched = workspaceModelsForKey(key, tab)
-  // 用户主动展开全部时才放开本地识别；最终能力与权限仍由网关校验。
-  return showAll && !matched.length ? key.models : matched
+  // 展开全部不放开视频输入协议限制；跨分组权限仍由网关最终校验。
+  return showAll && !matched.length ? key.models.filter(model => tab !== 'video' || modelMatchesTab(model, tab)) : matched
 }
 
 export async function loadWorkspaceKeys(baseUrl: string, signal?: AbortSignal): Promise<WorkspaceKey[]> {
@@ -197,6 +198,7 @@ export async function generateWorkspaceVideo(options: {
 }): Promise<VideoResult> {
   const { selection } = options
   options.signal.throwIfAborted()
+  if (!modelMatchesTab(selection.model, 'video')) throw new Error('video-model-unsupported')
   const isSeedance = isSeedanceModel(selection.model)
   const referenceVideoURL = validateWorkspaceReferenceVideoURL(options.referenceVideoURL || '')
   if (referenceVideoURL && isSeedance && /seedance[-_.]?1(?:[-_.]|$)/i.test(selection.model)) throw new Error('video-reference-unsupported')

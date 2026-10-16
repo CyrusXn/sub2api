@@ -38,6 +38,7 @@ const mountView = () => mount(BalanceCenterView, {
   global: {
     stubs: {
       AppLayout: { template: '<div><slot /></div>' },
+      GeminiInteractionReview: true,
       Pagination: true,
       Icon: true,
       RouterLink: { props: ['to'], template: '<a><slot /></a>' }

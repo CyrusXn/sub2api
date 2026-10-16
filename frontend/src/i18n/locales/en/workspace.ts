@@ -13,6 +13,7 @@ export default {
     videoReferencePlaceholder: 'Paste an HTTPS video URL (optional)',
     videoReferenceError: 'Enter a valid HTTPS video URL without embedded credentials.',
     videoReferenceUnsupported: 'Seedance 1.x does not support video references. Select a 2.0 or newer model.',
+    videoModelUnsupported: 'This workspace does not support this video model, including image-to-video-only Grok 1.5. Choose Grok Imagine Video or a Seedance video model.',
     seedanceReferenceHint: 'Seedance 2.0 and newer support reference videos. The upstream must be able to access the URL.',
     grokReferenceHint: 'Use a publicly accessible MP4 up to 8.7 seconds. Editing keeps the source specifications, with output up to 720p.',
     noKey: 'No available API key',

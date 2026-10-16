@@ -41,6 +41,7 @@ type GeminiInteraction struct {
 	Usage                                       *ClaudeUsage
 	BalanceHold                                 float64
 	Status                                      string
+	ReviewReason                                string
 	Stream, Background, Settled, Deleted        bool
 }
 
@@ -159,6 +160,10 @@ func (s *GeminiInteractionService) Observe(ctx context.Context, r *GeminiInterac
 	if err == nil && GeminiInteractionTerminal(interaction.Get("status").String()) && !(terminal && r.Usage != nil) {
 		r.Usage = &usage
 	}
+	// 所有读取路径都在共享观察入口分类，DELETE 预读和坏用量也不能丢失核对入口。
+	if !r.Settled && GeminiInteractionTerminal(r.Status) && r.Usage == nil {
+		r.ReviewReason = "terminal_usage_missing"
+	}
 	// 先固化资源 ID，坏用量不能使已经创建的任务失去恢复入口。
 	if r.UpstreamID != "" && (id != "" || interaction.Get("status").Exists() || err == nil) {
 		if updateErr := s.repo.Update(ctx, r); updateErr != nil {
@@ -197,8 +202,11 @@ func (s *GeminiInteractionService) Observe(ctx context.Context, r *GeminiInterac
 
 // Settle 与后台恢复及客户端轮询共享同一个金额事件 ID，生产原子计费仓储负责去重。
 func (s *GeminiInteractionService) Settle(ctx context.Context, r *GeminiInteraction) error {
-	if r.Settled || !GeminiInteractionTerminal(r.Status) || r.Usage == nil {
+	if r.Settled || !GeminiInteractionTerminal(r.Status) {
 		return nil
+	}
+	if r.Usage == nil {
+		return s.RequireReview(ctx, r, "terminal_usage_missing")
 	}
 	if s.gateway == nil || s.apiKeys == nil {
 		return errors.New("interaction billing unavailable")
@@ -250,6 +258,15 @@ func (s *GeminiInteractionService) Settle(ctx context.Context, r *GeminiInteract
 	return s.markSettled(ctx, r)
 }
 
+// RequireReview 只释放执行名额，冻结金额留待核实，绝不推断未知费用为零。
+func (s *GeminiInteractionService) RequireReview(ctx context.Context, r *GeminiInteraction, reason string) error {
+	if r.Settled || r.ReviewReason == reason {
+		return nil
+	}
+	r.ReviewReason = reason
+	return s.repo.Update(ctx, r)
+}
+
 func (s *GeminiInteractionService) Failed(ctx context.Context, r *GeminiInteraction) error {
 	r.Status = "failed"
 	if err := s.repo.Update(ctx, r); err != nil {
@@ -272,8 +289,16 @@ func (s *GeminiInteractionService) RecoverPending(ctx context.Context) (int, err
 		if err = ctx.Err(); err != nil {
 			return settled, err
 		}
-		if r.UpstreamID == "" {
+		if r.UpstreamID == "" && r.Usage == nil {
+			if err := s.RequireReview(ctx, r, "create_result_unknown"); err != nil {
+				return settled, err
+			}
 			continue
+		}
+		if GeminiInteractionTerminal(r.Status) && r.Usage == nil {
+			if err := s.RequireReview(ctx, r, "terminal_usage_missing"); err != nil {
+				return settled, err
+			}
 		}
 		if !GeminiInteractionTerminal(r.Status) || r.Usage == nil {
 			a, e := s.Account(ctx, r.AccountID)

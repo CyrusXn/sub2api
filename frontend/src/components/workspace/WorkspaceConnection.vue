@@ -22,7 +22,7 @@
     <Select id="workspace-model" :model-value="model" :options="modelOptions" :searchable="true" :creatable="showAll" :disabled="loading || busy || !models.length && !showAll" :aria-label="t('workspace.model')" :placeholder="t('workspace.noModel')" @update:model-value="emit('update:model', $event)" @change="emit('model-change')" />
     <p v-if="matched && tab === 'chat'" class="protocol-hint">{{ t('workspace.protocol') }}<code>{{ /^gemini-/i.test(model) ? 'Gemini · generateContent' : 'OpenAI · chat/completions' }}</code></p>
     <div v-if="!loading && !matched" class="key-guide"><p>{{ t(keys.length ? 'workspace.noModelHint' : 'workspace.noKey') }}</p><button type="button" class="outline-button" data-test="create-key" @click="emit('create-key')"><Icon name="key" size="sm" />{{ t('workspace.createKey') }}</button></div>
-    <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+    <p v-if="error || videoModelError" class="error-message" role="alert">{{ error || videoModelError }}</p>
   </div>
 </template>
 
@@ -31,7 +31,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey, type WorkspaceTab } from '@/api/workspace'
+import { modelMatchesTab, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey, type WorkspaceTab } from '@/api/workspace'
 const props = defineProps<{ keys: WorkspaceKey[]; tab: WorkspaceTab; keyId: string; model: string; loading: boolean; busy: boolean; error: string; showAll: boolean }>()
 const emit = defineEmits<{
   (event: 'update:keyId' | 'update:model', value: string): void
@@ -45,7 +45,8 @@ const models = computed(() => {
   return key ? workspaceSelectableModels(key, props.tab, props.showAll) : []
 })
 const modelOptions = computed(() => models.value.map(model => ({ value: model, label: model })))
-const matched = computed(() => Boolean(props.keyId && props.model.trim()) && (props.showAll || models.value.includes(props.model)))
+const videoModelError = computed(() => props.tab === 'video' && props.model.trim() && !modelMatchesTab(props.model, 'video') ? t('workspace.videoModelUnsupported') : '')
+const matched = computed(() => Boolean(props.keyId && props.model.trim()) && !videoModelError.value && (props.showAll || models.value.includes(props.model)))
 </script>
 
 <style scoped>
