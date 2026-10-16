@@ -359,7 +359,7 @@ func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
 		if dbent.IsNotFound(err) {
 			return service.ErrAPIKeyNotFound
 		}
-		return err
+		return geminiInteractionDeleteError(err)
 	}
 	if affected == 0 {
 		exists, err := r.client.APIKey.Query().
@@ -412,7 +412,7 @@ func (r *apiKeyRepository) deleteWithTombstone(ctx context.Context, exec *dbent.
 		SET key = $1, deleted_at = NOW(), updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL`, tombstoneKey, id)
 	if err != nil {
-		return err
+		return geminiInteractionDeleteError(err)
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {

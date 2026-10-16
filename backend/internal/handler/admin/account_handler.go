@@ -1404,13 +1404,46 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 
 // TestAccountRequest represents the request body for testing an account
 type TestAccountRequest struct {
-	ModelID string `json:"model_id"`
-	Prompt  string `json:"prompt"`
-	Mode    string `json:"mode"`
+	ModelID  string               `json:"model_id"`
+	Prompt   string               `json:"prompt"`
+	Mode     string               `json:"mode"`
+	Messages []TestAccountMessage `json:"messages"`
 	// Optional media for Grok (and future) real generation tests.
 	// ImageDataURL / AudioDataURL are data:<mime>;base64,... payloads.
 	ImageDataURL string `json:"image_data_url"`
 	AudioDataURL string `json:"audio_data_url"`
+}
+
+type TestAccountMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+func formatTestConversation(messages []TestAccountMessage, fallback string) string {
+	if len(messages) == 0 {
+		return strings.TrimSpace(fallback)
+	}
+	var builder strings.Builder
+	for _, message := range messages {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		role := "用户"
+		if message.Role == "assistant" {
+			role = "助手"
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("\n\n")
+		}
+		builder.WriteString(role)
+		builder.WriteString("：\n")
+		builder.WriteString(content)
+	}
+	if builder.Len() == 0 {
+		return strings.TrimSpace(fallback)
+	}
+	return builder.String()
 }
 
 type SyncFromCRSRequest struct {
@@ -1439,6 +1472,7 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	var req TestAccountRequest
 	// Allow empty body, model_id is optional
 	_ = c.ShouldBindJSON(&req)
+	req.Prompt = formatTestConversation(req.Messages, req.Prompt)
 
 	opts := service.AccountTestOptions{
 		ImageDataURL: req.ImageDataURL,

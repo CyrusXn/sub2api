@@ -49,6 +49,9 @@
 
       <template #actions>
         <div class="flex justify-end gap-3">
+          <RouterLink v-if="returnToWorkspace" :to="returnToWorkspace" class="btn btn-secondary">
+            {{ t('workspace.backToWorkspace') }}
+          </RouterLink>
           <button
             @click="loadApiKeys"
             :disabled="loading"
@@ -1200,8 +1203,13 @@
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useRoute, useRouter } from 'vue-router'
+import { getWorkspaceReturnRoute } from '@/utils/workspaceNavigation'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const returnToWorkspace = computed(() => getWorkspaceReturnRoute(route.query))
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -1853,6 +1861,7 @@ const handleSubmit = async () => {
 
   submitting.value = true
   try {
+    const workspaceReturn = !showEditModal.value ? returnToWorkspace.value : null
     if (showEditModal.value && selectedKey.value) {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
@@ -1889,7 +1898,11 @@ const handleSubmit = async () => {
       }
     }
     closeModals()
-    loadApiKeys()
+    if (workspaceReturn) {
+      void router.push(workspaceReturn)
+    } else {
+      loadApiKeys()
+    }
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
@@ -2079,6 +2092,7 @@ function formatResetTime(resetAt: string | null): string {
 }
 
 onMounted(() => {
+  if (returnToWorkspace.value) showCreateModal.value = true
   loadSavedColumns()
   loadApiKeys()
   loadGroups()

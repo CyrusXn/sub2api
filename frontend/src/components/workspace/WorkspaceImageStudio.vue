@@ -1,84 +1,13 @@
 <template>
-  <AppLayout>
-    <!-- 桌面端直接锚定在顶部栏下方，避免负边距与视口高度换算产生外层滚动条。 -->
-    <div
-      class="-m-4 min-h-[calc(100vh-4rem)] overflow-hidden bg-white dark:bg-dark-900 md:-m-6 lg:-m-8 xl:absolute xl:inset-x-0 xl:bottom-0 xl:top-16 xl:m-0 xl:h-auto xl:min-h-0"
-    >
+    <div class="studio-shell">
       <div
-        class="grid min-h-0 xl:h-full"
+        class="studio-grid grid min-h-0"
         :class="historyCollapsed
-          ? 'xl:grid-cols-[minmax(390px,440px)_minmax(280px,1fr)_56px]'
-          : 'xl:grid-cols-[minmax(390px,440px)_minmax(280px,1fr)_minmax(230px,280px)]'"
+          ? 'xl:grid-cols-[minmax(280px,320px)_minmax(280px,1fr)_56px]'
+          : 'xl:grid-cols-[minmax(280px,320px)_minmax(280px,1fr)_minmax(210px,240px)]'"
       >
         <aside class="flex min-h-0 flex-col border-b border-gray-200 bg-gray-50/80 dark:border-dark-700 dark:bg-dark-900 xl:border-b-0 xl:border-r">
-          <div class="flex-shrink-0 space-y-3 border-b border-gray-200 p-4 dark:border-dark-700">
-            <div class="flex items-center justify-between gap-3">
-              <div class="flex min-w-0 items-center gap-2">
-                <Icon name="sparkles" size="sm" class="flex-shrink-0 text-primary-500" />
-                <span class="truncate text-sm font-semibold text-gray-900 dark:text-white">{{ AI_IMAGE_MODEL }}</span>
-              </div>
-              <label class="flex flex-shrink-0 items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
-                <span>{{ t('aiImage.connection.rememberKey') }}</span>
-                <Toggle v-model="rememberKey" />
-              </label>
-            </div>
-
-            <div class="relative">
-              <Icon name="key" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                id="ai-image-api-key"
-                v-model="apiKey"
-                :type="showAPIKey ? 'text' : 'password'"
-                class="input h-10 px-9 font-mono text-sm"
-                autocomplete="off"
-                :disabled="generationBusy"
-                :placeholder="t('aiImage.connection.apiKeyPlaceholder')"
-              />
-              <button
-                type="button"
-                class="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30 dark:hover:bg-dark-700 dark:hover:text-gray-200"
-                :title="t(showAPIKey ? 'aiImage.connection.hideKey' : 'aiImage.connection.showKey')"
-                :aria-label="t(showAPIKey ? 'aiImage.connection.hideKey' : 'aiImage.connection.showKey')"
-                @click="showAPIKey = !showAPIKey"
-              >
-                <Icon :name="showAPIKey ? 'eyeOff' : 'eye'" size="sm" :stroke-width="2" />
-              </button>
-            </div>
-
-            <div>
-              <div class="mb-1 flex items-center justify-between gap-2">
-                <label for="ai-image-base-url" class="text-xs font-medium text-gray-600 dark:text-gray-300">
-                  {{ t('aiImage.connection.baseURL') }}
-                </label>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1 text-[11px] font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400"
-                  :disabled="generationBusy"
-                  @click="resetBaseURL"
-                >
-                  <Icon name="refresh" size="xs" :stroke-width="2" />
-                  {{ t('aiImage.connection.resetDefault') }}
-                </button>
-              </div>
-              <input
-                id="ai-image-base-url"
-                v-model="baseURL"
-                type="url"
-                class="input h-9 font-mono text-xs"
-                autocomplete="url"
-                spellcheck="false"
-                :disabled="generationBusy"
-              />
-              <p v-if="endpointErrorMessage" class="mt-1 text-[11px] leading-4 text-red-600 dark:text-red-400">
-                {{ endpointErrorMessage }}
-              </p>
-              <p v-else-if="endpoint" class="mt-1 flex min-w-0 items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
-                <Icon name="shield" size="xs" class="flex-shrink-0" />
-                <span class="truncate">{{ t('aiImage.connection.target') }}: {{ endpoint.host }}</span>
-              </p>
-            </div>
-          </div>
-
+          <div class="studio-connection"><slot name="connection" /></div>
           <div class="flex-shrink-0 space-y-3 p-4 pb-3">
             <div>
               <label for="ai-image-free-prompt" class="mb-1.5 block text-sm font-semibold text-gray-900 dark:text-white">
@@ -149,45 +78,17 @@
                   {{ t('aiImage.references.clear') }}
                 </button>
               </div>
-              <div
-                class="flex h-24 w-full items-center justify-center overflow-hidden rounded-md border border-dashed border-gray-300 bg-white text-left transition-colors hover:border-primary-400 hover:bg-primary-50/30 dark:border-dark-600 dark:bg-dark-800 dark:hover:border-primary-700 dark:hover:bg-primary-900/10"
-                @dragover.prevent
-                @drop.prevent="handleReferenceDrop"
-                @paste="handleReferencePaste"
-              >
-                <span v-if="referenceImages.length" class="flex w-full gap-2 p-2">
-                  <span v-for="image in referenceImages" :key="image.id" class="group relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-md bg-gray-100 dark:bg-dark-950">
-                    <img :src="image.url" :alt="image.file.name" class="h-full w-full object-cover" />
-                    <button
-                      type="button"
-                      class="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-md bg-black/65 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                      :aria-label="t('aiImage.references.remove')"
-                      :disabled="generationBusy"
-                      @click="removeReferenceImage(image.id)"
-                    >
-                      <Icon name="x" size="xs" :stroke-width="2" />
-                    </button>
-                  </span>
-                  <button
-                    v-if="referenceImages.length < MAX_REFERENCE_IMAGES"
-                    type="button"
-                    class="flex h-20 w-20 flex-shrink-0 items-center justify-center rounded-md border border-dashed border-gray-300 text-gray-400 hover:border-primary-400 hover:text-primary-500 dark:border-dark-600"
-                    :title="t('aiImage.references.upload')"
-                    :aria-label="t('aiImage.references.upload')"
-                    :disabled="generationBusy"
-                    @click="openReferencePicker"
-                  >
-                    <Icon name="plus" size="md" />
-                  </button>
-                </span>
-                <button v-else type="button" class="flex h-full w-full flex-col items-center justify-center px-4 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/30" :disabled="generationBusy" @click="openReferencePicker">
-                  <Icon name="upload" size="md" class="text-gray-400" />
-                  <span class="mt-1 text-xs font-medium text-gray-700 dark:text-gray-200">
-                    {{ t('aiImage.references.title') }} · {{ t('aiImage.references.upload') }}
-                  </span>
-                  <span class="mt-0.5 text-[11px] text-gray-400">{{ t('aiImage.references.hint') }}</span>
+              <div class="reference-tiles" @dragover.prevent @drop.prevent="handleReferenceDrop" @paste="handleReferencePaste">
+                <div v-for="image in referenceImages" :key="image.id" class="reference-tile">
+                  <img :src="image.url" :alt="image.file.name" />
+                  <button type="button" class="reference-remove" :disabled="generationBusy" :aria-label="t('aiImage.references.remove')" @click="removeReferenceImage(image.id)"><Icon name="x" size="xs" /></button>
+                </div>
+                <button v-if="referenceImages.length < MAX_REFERENCE_IMAGES" type="button" class="reference-add" data-test="image-reference-add" :disabled="generationBusy" :aria-label="t('aiImage.references.upload')" @click="openReferencePicker">
+                  <Icon name="plus" size="lg" />
+                  <span>{{ t('aiImage.references.upload') }}</span>
                 </button>
               </div>
+              <p class="mt-2 text-[11px] text-gray-400">{{ t('aiImage.references.hint') }}</p>
               <input
                 ref="referenceInputRef"
                 type="file"
@@ -312,7 +213,7 @@
                     <Icon name="exclamationCircle" size="lg" />
                   </span>
                   <p class="mt-3 text-sm font-medium text-red-700 dark:text-red-300">{{ taskErrorMessage(currentTask) }}</p>
-                  <button type="button" class="btn btn-secondary btn-sm mt-4" :disabled="generationBusy || !apiKey.trim()" @click="retryTask(currentTask)">
+                  <button type="button" class="btn btn-secondary btn-sm mt-4" :disabled="generationBusy || loading || !selection" @click="retryTask(currentTask)">
                     <Icon name="refresh" size="sm" />
                     {{ t('aiImage.results.retry') }}
                   </button>
@@ -479,25 +380,20 @@
         </div>
       </Transition>
     </Teleport>
-  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
-import Toggle from '@/components/common/Toggle.vue'
 import { Icon } from '@/components/icons'
 import {
-  AI_IMAGE_MODEL,
   AIImageAPIError,
   downloadAIImageResult,
   generateAIImage,
   getAIImageResultBlob,
-  getDefaultAIImageBaseURL,
   resolveAIImageEndpoint,
   revokeAIImageResult,
   type AIImageEndpoint,
@@ -509,9 +405,12 @@ import {
   type AIImageTaskStatus
 } from '@/api/aiImage'
 
+import { workspaceGatewayURL, type WorkspaceSelection } from '@/api/workspace'
+
+const props = defineProps<{ selection: WorkspaceSelection | null; loading: boolean }>()
+const emit = defineEmits<{ (event: 'busy-change', busy: boolean): void }>()
 const { t, locale } = useI18n()
 
-const API_KEY_STORAGE_KEY = 'sub2api:ai-image:api-key:v1'
 const CUSTOM_PROMPTS_STORAGE_KEY = 'sub2api:ai-image:custom-prompts:v1'
 const SETTINGS_STORAGE_KEY = 'sub2api:ai-image:settings:v2'
 const HISTORY_DB_NAME = 'sub2api-ai-image-cache-v1'
@@ -529,8 +428,6 @@ const GENERATION_CONCURRENCY = 2
 const ACCEPTED_REFERENCE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 
 interface StoredSettings {
-  baseURL: string
-  rememberKey: boolean
   aspectRatio: string
   sizeTier: AIImageSizeTier
   imagesPerPrompt: number
@@ -544,6 +441,7 @@ interface ReferenceImage {
 }
 
 interface WorkbenchTask extends AIImageTask {
+  model: string
   aspectRatio: string
   sizeTier: AIImageSizeTier
 }
@@ -631,11 +529,10 @@ const PromptTemplateRow = defineComponent({
   }
 })
 
-const defaultBaseURL = getDefaultAIImageBaseURL()
-const baseURL = ref(defaultBaseURL)
-const apiKey = ref('')
-const showAPIKey = ref(false)
-const rememberKey = ref(false)
+const baseURL = computed(() => props.selection
+  ? new URL(workspaceGatewayURL(props.selection.key.baseUrl, '/v1'), window.location.origin).href
+  : '')
+const apiKey = computed(() => props.selection?.key.key || '')
 const freePrompt = ref('')
 const aspectRatio = ref('1:1')
 const sizeTier = ref<AIImageSizeTier>('1K')
@@ -695,19 +592,8 @@ const endpoint = computed<AIImageEndpoint | null>(() => {
   }
 })
 
-const endpointErrorCode = computed<AIImageErrorCode | null>(() => {
-  if (!baseURL.value.trim()) return 'invalid-base-url'
-  try {
-    resolveAIImageEndpoint(baseURL.value)
-    return null
-  } catch (error) {
-    return error instanceof AIImageAPIError ? error.code : 'invalid-base-url'
-  }
-})
-
-const endpointErrorMessage = computed(() => endpointErrorCode.value ? errorMessageForCode(endpointErrorCode.value) : '')
 const canGenerate = computed(() => (
-  !generationBusy.value &&
+  !generationBusy.value && !props.loading && !!props.selection &&
   !!endpoint.value &&
   !!apiKey.value.trim() &&
   promptCount.value > 0 &&
@@ -726,8 +612,6 @@ function createID(prefix: string): string {
 function persistSettings(): void {
   try {
     const value: StoredSettings = {
-      baseURL: baseURL.value,
-      rememberKey: rememberKey.value,
       aspectRatio: aspectRatio.value,
       sizeTier: sizeTier.value,
       imagesPerPrompt: imagesPerPrompt.value,
@@ -744,22 +628,13 @@ function loadSettings(): void {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<StoredSettings>
-      if (typeof parsed.baseURL === 'string' && parsed.baseURL.trim()) {
-        resolveAIImageEndpoint(parsed.baseURL)
-        baseURL.value = parsed.baseURL
-      }
       if (['1:1', '16:9', '9:16', '16:10'].includes(parsed.aspectRatio || '')) aspectRatio.value = parsed.aspectRatio || '1:1'
       if (['1K', '2K', '4K'].includes(parsed.sizeTier || '')) sizeTier.value = parsed.sizeTier as AIImageSizeTier
       imagesPerPrompt.value = normalizeImagesPerPrompt(parsed.imagesPerPrompt)
-      rememberKey.value = parsed.rememberKey === true
       historyCollapsed.value = parsed.historyCollapsed === true
     }
-    if (rememberKey.value) apiKey.value = localStorage.getItem(API_KEY_STORAGE_KEY) || ''
-    else localStorage.removeItem(API_KEY_STORAGE_KEY)
   } catch {
-    baseURL.value = defaultBaseURL
-    rememberKey.value = false
-    apiKey.value = ''
+    // 不可读的旧设置不影响使用工作台当前选定的密钥与模型。
   }
 }
 
@@ -789,10 +664,6 @@ function loadCustomPrompts(): void {
     customPrompts.value = []
     try { localStorage.removeItem(CUSTOM_PROMPTS_STORAGE_KEY) } catch { /* 已回退为空列表。 */ }
   }
-}
-
-function resetBaseURL(): void {
-  baseURL.value = defaultBaseURL
 }
 
 function isPromptSelected(id: string): boolean {
@@ -859,6 +730,7 @@ function openReferencePicker(): void {
 }
 
 function addReferenceFiles(files: File[]): void {
+  if (generationBusy.value) return
   referenceError.value = ''
   const availableSlots = MAX_REFERENCE_IMAGES - referenceImages.value.length
   if (availableSlots <= 0) {
@@ -1034,6 +906,7 @@ async function runTask(task: WorkbenchTask, endpointSnapshot: AIImageEndpoint, k
       apiKey: keySnapshot,
       prompt: task.prompt.prompt,
       sizeTier: task.sizeTier,
+      model: task.model,
       referenceImages: references,
       signal: controller.signal
     })
@@ -1079,6 +952,7 @@ async function startGeneration(): Promise<void> {
     id: createID('task'),
     prompt,
     status: 'queued',
+    model: props.selection!.model,
     aspectRatio: aspectRatio.value,
     sizeTier: sizeTier.value
   }))
@@ -1092,9 +966,10 @@ async function startGeneration(): Promise<void> {
 }
 
 async function retryTask(task: WorkbenchTask): Promise<void> {
-  if (generationBusy.value || !endpoint.value || !apiKey.value.trim()) return
+  if (generationBusy.value || props.loading || !props.selection || !endpoint.value || !apiKey.value.trim()) return
   revokeTaskResult(task)
   task.status = 'queued'
+  task.model = props.selection.model
   generationBusy.value = true
   try {
     await runTask(task, endpoint.value, apiKey.value.trim(), referenceImages.value.map((image) => image.file))
@@ -1225,25 +1100,11 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && previewItem.value) previewItem.value = null
 }
 
-watch([baseURL, rememberKey, aspectRatio, sizeTier, imagesPerPrompt, historyCollapsed], persistSettings)
+watch([aspectRatio, sizeTier, imagesPerPrompt, historyCollapsed], persistSettings)
 watch(freePrompt, () => {
   selectionError.value = promptCount.value > MAX_SELECTED_PROMPTS ? t('aiImage.errors.maxSelectedPrompts') : ''
 })
-watch(apiKey, (value) => {
-  try {
-    if (rememberKey.value) localStorage.setItem(API_KEY_STORAGE_KEY, value)
-  } catch {
-    // 密钥仍只保留在页面内存中。
-  }
-})
-watch(rememberKey, (value) => {
-  try {
-    if (value && apiKey.value) localStorage.setItem(API_KEY_STORAGE_KEY, apiKey.value)
-    if (!value) localStorage.removeItem(API_KEY_STORAGE_KEY)
-  } catch {
-    // 切换记忆状态不影响当前页面继续使用密钥。
-  }
-})
+watch(generationBusy, value => emit('busy-change', value))
 
 onMounted(() => {
   loadSettings()
@@ -1262,3 +1123,20 @@ onBeforeUnmount(() => {
   clearReferenceImages()
 })
 </script>
+
+<style scoped>
+.studio-shell { min-width: 0; }
+.studio-grid { gap: 1rem; min-height: 42rem; }
+.studio-grid > aside, .studio-grid > main { min-width: 0; border: 1px solid #dce7eb; border-radius: .85rem; overflow: hidden; }
+.studio-connection { padding: 1rem; border-bottom: 1px solid #dce7eb; background: white; }
+.reference-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; }
+.reference-tile, .reference-add { position: relative; aspect-ratio: 1; min-width: 0; overflow: hidden; border-radius: .6rem; }
+.reference-tile img { width: 100%; height: 100%; object-fit: cover; }
+.reference-add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4rem; border: 1px dashed #a6c9c7; background: #f5fbfa; color: #138f87; font-size: .7rem; }
+.reference-add:hover { border-color: #138f87; background: #e7f7f4; }
+.reference-add:focus-visible { outline: 2px solid #138f87; outline-offset: 2px; }
+.reference-remove { position: absolute; top: .25rem; right: .25rem; border-radius: 50%; padding: .25rem; color: white; background: #243841b3; }
+.dark .studio-grid > aside, .dark .studio-grid > main { border-color: #30434f; }
+.dark .studio-connection { background: #141c2e; border-color: #30434f; }
+.dark .reference-add { background: #163733; color: #75d9cf; border-color: #3d6a64; }
+</style>

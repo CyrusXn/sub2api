@@ -223,13 +223,18 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/ai-image',
     name: 'AIImage',
-    component: () => import('@/views/user/AIImageView.vue'),
+    redirect: { path: '/workspace', query: { tab: 'image' } }
+  },
+  {
+    path: '/workspace',
+    name: 'Workspace',
+    component: () => import('@/views/user/WorkspaceView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'AI Image',
-      titleKey: 'aiImage.title',
-      descriptionKey: 'aiImage.description'
+      title: 'Workspace',
+      titleKey: 'workspace.title',
+      descriptionKey: 'workspace.description'
     }
   },
   {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 import type { ApiKey } from '@/types'
 import { keysAPI } from '@/api'
@@ -220,9 +221,16 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
-const mountView = async () => {
+const mountView = async (path = '/keys') => {
+  const router = createRouter({ history: createMemoryHistory(), routes: [
+    { path: '/keys', component: { template: '<div />' } },
+    { path: '/workspace', component: { template: '<div />' } },
+  ] })
+  await router.push(path)
+  await router.isReady()
   const wrapper = mount(KeysView, {
     global: {
+      plugins: [router],
       stubs: {
         AppLayout: AppLayoutStub,
         TablePageLayout: TablePageLayoutStub,
@@ -605,6 +613,52 @@ describe('user KeysView column settings', () => {
 
     beforeEach(() => {
       getAvailableGroups.mockResolvedValue(availableGroups)
+    })
+
+    it('从工作台进入自动打开创建弹窗，成功后回到原视频 Tab', async () => {
+      const wrapper = await mountView('/keys?returnTo=/workspace&tab=video')
+      expect(wrapper.find('#key-form').exists()).toBe(true)
+      await wrapper.get('[data-tour="key-form-name"]').setValue('Video key')
+      await groupSelect(wrapper).vm.$emit('update:modelValue', 1)
+      vi.mocked(keysAPI.create).mockResolvedValue(createApiKey())
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.vm.$router.currentRoute.value.fullPath).toBe('/workspace?tab=video')
+    })
+
+    it('普通创建成功留在密钥列表，不回跳工作台', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-tour="key-form-name"]').setValue('Normal key')
+      await groupSelect(wrapper).vm.$emit('update:modelValue', 1)
+      vi.mocked(keysAPI.create).mockResolvedValue(createApiKey())
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.vm.$router.currentRoute.value.fullPath).toBe('/keys')
+      expect(wrapper.find('#key-form').exists()).toBe(false)
+    })
+
+    it('携带回跳参数时编辑现有密钥仍留在列表', async () => {
+      const wrapper = await mountView('/keys?returnTo=/workspace&tab=image')
+      await wrapper.get('[data-test="close-dialog"]').trigger('click')
+      await getButtonByText(wrapper, 'common.edit').trigger('click')
+      await groupSelect(wrapper).vm.$emit('update:modelValue', 1)
+      updateKey.mockResolvedValue(createApiKey())
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      expect(updateKey).toHaveBeenCalledOnce()
+      expect(wrapper.vm.$router.currentRoute.value.path).toBe('/keys')
+    })
+
+    it('不接受任意外部回跳地址，也不自动弹出创建窗口', async () => {
+      const wrapper = await mountView('/keys?returnTo=https://outside.example&tab=image')
+      expect(wrapper.find('#key-form').exists()).toBe(false)
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue('Safe key')
+      await groupSelect(wrapper).vm.$emit('update:modelValue', 1)
+      vi.mocked(keysAPI.create).mockResolvedValue(createApiKey())
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.vm.$router.currentRoute.value.path).toBe('/keys')
     })
 
     it('classifies all configured platforms and retains the complete table filter', async () => {

@@ -19,6 +19,70 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('密钥测试网关请求', () => {
   it.each([
+    ['https://relay.example/prefix/v1/', false, 'https://relay.example/prefix/v1beta/models/gemini-4-argon-high:generateContent'],
+    ['https://relay.example/v1', true, '/v1beta/models/gemini-4-argon-high:generateContent'],
+    ['https://other.example/v1', true, 'https://other.example/v1beta/models/gemini-4-argon-high:generateContent']
+  ])('Gemini 使用原生端点并保留路径前缀：%s', async (baseUrl, dev, expected) => {
+    vi.stubEnv('DEV', dev)
+    vi.stubEnv('VITE_DEV_PROXY_TARGET', 'https://relay.example')
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ candidates: [{ content: { parts: [
+      { text: '思考过程', thought: true }, { text: '我是 Gemini' }, { text: '。' }
+    ] }, finishReason: 'STOP' }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const opts = { ...options(), baseUrl, model: 'gemini-4-argon-high', protocol: 'gemini' as const,
+      messages: [{ role: 'user' as const, content: '你好' }, { role: 'assistant' as const, content: '您好' }] }
+    await streamKeyTest(opts)
+    expect(fetchMock).toHaveBeenCalledWith(expected, expect.objectContaining({
+      method: 'POST', credentials: 'omit', redirect: 'error', signal: opts.signal,
+      headers: expect.objectContaining({ 'x-goog-api-key': opts.apiKey, Accept: 'application/json' }),
+      body: JSON.stringify({ contents: [
+        { role: 'user', parts: [{ text: '你好' }] }, { role: 'model', parts: [{ text: '您好' }] }
+      ], generationConfig: { maxOutputTokens: 2048 } })
+    }))
+    expect(opts.onText.mock.calls).toEqual([['我是 Gemini。']])
+  })
+
+  it.each([
+    [{ candidates: [] }, 'empty'],
+    [{ candidates: [{ content: { parts: [{ text: '思考', thought: true }] } }] }, 'empty'],
+    [{ candidates: [{ content: { parts: {} } }] }, 'invalidResponse'],
+    [{ error: { message: 'private upstream detail' } }, 'streamError'],
+    [{ promptFeedback: { blockReason: 'SAFETY' } }, 'streamError']
+  ])('Gemini 异常 JSON 不会误报成功：%j', async (payload, code) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(payload)))
+    await expect(streamKeyTest({ ...options(), protocol: 'gemini' as const })).rejects.toMatchObject({ code, message: code })
+  })
+
+  it('Gemini 候选结构无效时返回统一响应错误', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ candidates: [null] })))
+    await expect(streamKeyTest({ ...options(), protocol: 'gemini' as const })).rejects.toMatchObject({ code: 'invalidResponse' })
+  })
+
+  it('Gemini HTTP 错误不回显敏感正文', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('private upstream detail', { status: 503 })))
+    await expect(streamKeyTest({ ...options(), protocol: 'gemini' as const })).rejects.toMatchObject({ code: 'http', status: 503, message: 'http' })
+  })
+
+  it.each([
+    new Response('<html>login</html>', { headers: { 'Content-Type': 'text/html' } }),
+    new Response('not-json', { headers: { 'Content-Type': 'application/json' } })
+  ])('Gemini 拒绝非 JSON 或损坏的响应', async response => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+    await expect(streamKeyTest({ ...options(), protocol: 'gemini' as const })).rejects.toMatchObject({ code: 'invalidResponse' })
+  })
+
+  it('Gemini 返回后已取消的请求不显示回复或成功', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => {
+      controller.abort()
+      return Response.json({ candidates: [{ content: { parts: [{ text: 'OK' }] } }] })
+    }))
+    const opts = { ...options(), protocol: 'gemini' as const, signal: controller.signal }
+    await expect(streamKeyTest(opts)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(opts.onText).not.toHaveBeenCalled()
+  })
+
+  it.each([
     [true, 'https://relay.example', '/v1/models'],
     [true, 'https://relay.example/v1/', '/v1/models'],
     [true, 'https://other.example', 'https://other.example/v1/models'],

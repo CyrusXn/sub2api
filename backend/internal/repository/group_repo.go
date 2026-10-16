@@ -457,7 +457,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 func (r *groupRepository) Delete(ctx context.Context, id int64) error {
 	_, err := r.client.Group.Delete().Where(group.IDEQ(id)).Exec(ctx)
 	if err != nil {
-		return translatePersistenceError(err, service.ErrGroupNotFound, nil)
+		return translatePersistenceError(geminiInteractionDeleteError(err), service.ErrGroupNotFound, nil)
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &id, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group delete failed: group=%d err=%v", id, err)
@@ -992,7 +992,7 @@ func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEm
 
 		// 软删除订阅：设置 deleted_at 而非硬删除
 		if _, err := exec.ExecContext(ctx, "UPDATE user_subscriptions SET deleted_at = NOW() WHERE group_id = $1 AND deleted_at IS NULL", id); err != nil {
-			return nil, err
+			return nil, geminiInteractionDeleteError(err)
 		}
 	}
 
@@ -1014,7 +1014,7 @@ func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEm
 
 	// 5. Soft-delete group itself.
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
-		return nil, err
+		return nil, geminiInteractionDeleteError(err)
 	}
 	// Lock and validate the text value before using JSONB operators. A legacy
 	// malformed setting must not prevent deletion or be silently replaced.

@@ -148,6 +148,59 @@ describe('AccountTestModal', () => {
     })
   })
 
+  it('defaults the prompt and prefers the latest model for the account platform', async () => {
+    getAvailableModelsMock.mockResolvedValue([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-6.1-sol', display_name: 'GPT-6.1 Sol' }
+    ])
+    const wrapper = mount(AccountTestModal, {
+      props: { show: true, account: buildAccount() },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } }
+    })
+
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-6.1-sol')
+    expect((wrapper.vm as any).testPrompt).toBe('你是谁')
+  })
+
+  it('posts custom prompt and renders the actual response as an assistant message', async () => {
+    const encoder = new TextEncoder()
+    const chunks = [
+      encoder.encode('data: {"type":"content","text":"我是测试账号返回的内容"}\n\n'),
+      encoder.encode('data: {"type":"test_complete","success":true}\n\n')
+    ]
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockImplementation(() => Promise.resolve(
+            chunks.length > 0
+              ? { done: false, value: chunks.shift() }
+              : { done: true, value: undefined }
+          ))
+        })
+      }
+    } as any)
+    const wrapper = mount(AccountTestModal, {
+      props: { show: true, account: buildAccount() },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } }
+    })
+
+    await flushPromises()
+    ;(wrapper.vm as any).testPrompt = '请介绍一下你自己'
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    const [, options] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(options.body)).toMatchObject({ prompt: '请介绍一下你自己' })
+    expect((wrapper.vm as any).messages).toEqual([
+      { role: 'user', content: '请介绍一下你自己' },
+      { role: 'assistant', content: '我是测试账号返回的内容' }
+    ])
+    expect(wrapper.text()).toContain('我是测试账号返回的内容')
+  })
+
   it('renders Chat Completions path status from test SSE', async () => {
     const encoder = new TextEncoder()
     const chunks = [
@@ -187,6 +240,6 @@ describe('AccountTestModal', () => {
     await (wrapper.vm as any).startTest()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('已通过 /v1/chat/completions 验证')
+    expect((wrapper.vm as any).outputLines.map((line: { text: string }) => line.text)).toContain('已通过 /v1/chat/completions 验证')
   })
 })

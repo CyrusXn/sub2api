@@ -119,6 +119,7 @@
               {{ props.loading ? t('common.loading') : emptyTextDisplay }}
             </div>
           </div>
+          <div v-if="$slots.footer" ref="footerRef"><slot name="footer" /></div>
         </div>
       </Transition>
     </Teleport>
@@ -197,6 +198,7 @@ const triggerRef = ref<HTMLButtonElement | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const dropdownRef = ref<HTMLElement | null>(null)
 const optionsListRef = ref<HTMLElement | null>(null)
+const footerRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<'bottom' | 'top'>('bottom')
 const triggerRect = ref<DOMRect | null>(null)
 const dropdownViewportPadding = 8
@@ -504,6 +506,20 @@ const onDropdownKeyDown = (e: KeyboardEvent) => {
       triggerRef.value?.focus()
       break
     case 'Tab':
+      // 有底部操作时保留搜索框与操作按钮之间的键盘路径。
+      if (footerRef.value) {
+        const footerButton = footerRef.value.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]')
+        if (!e.shiftKey && footerButton && !footerRef.value.contains(e.target as Node)) {
+          e.preventDefault()
+          footerButton.focus()
+          break
+        }
+        if (e.shiftKey && searchInputRef.value && footerRef.value.contains(e.target as Node)) {
+          e.preventDefault()
+          searchInputRef.value.focus()
+          break
+        }
+      }
       isOpen.value = false
       break
   }

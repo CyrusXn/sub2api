@@ -9,23 +9,23 @@ export class KeyTestError extends Error {
   }
 }
 
-function endpoint(baseUrl: string, path: string): string {
-  const base = (baseUrl.trim() || window.location.origin).replace(/\/+$/, '')
+function endpoint(baseUrl: string, path: string, version: '/v1' | '/v1beta' = '/v1'): string {
+  const base = (baseUrl.trim() || window.location.origin).replace(/\/+$/, '').replace(/\/v1(?:beta)?$/i, '')
   const devTarget = import.meta.env.VITE_DEV_PROXY_TARGET?.trim().replace(/\/+$/, '')
   // 仅本地且目标完全一致时复用 Vite 代理，避免真实中转站拒绝 localhost 跨域。
-  if (import.meta.env.DEV && devTarget && (base === devTarget || base === `${devTarget}/v1`)) {
-    return `/v1/${path}`
+  if (import.meta.env.DEV && devTarget && base === devTarget) {
+    return `${version}/${path}`
   }
-  return `${/\/v1$/i.test(base) ? base : `${base}/v1`}/${path}`
+  return `${base}${version}/${path}`
 }
 
 // 使用行内密钥访问网关，不能经过携带管理登录令牌的 apiClient。
-function request(baseUrl: string, apiKey: string, path: string, signal: AbortSignal, body?: unknown) {
-  return fetch(endpoint(baseUrl, path), {
+function request(baseUrl: string, apiKey: string, path: string, signal: AbortSignal, body?: unknown, version: '/v1' | '/v1beta' = '/v1') {
+  return fetch(endpoint(baseUrl, path, version), {
     method: body ? 'POST' : 'GET',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: body ? 'text/event-stream' : 'application/json',
+      ...(version === '/v1beta' ? { 'x-goog-api-key': apiKey } : { Authorization: `Bearer ${apiKey}` }),
+      Accept: body && version === '/v1' ? 'text/event-stream' : 'application/json',
       ...(body ? { 'Content-Type': 'application/json' } : {})
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -50,10 +50,44 @@ export async function streamKeyTest(options: {
   baseUrl: string
   apiKey: string
   model: string
+  protocol?: 'openai' | 'gemini'
   messages: TestMessage[]
   signal: AbortSignal
   onText: (text: string) => void
 }): Promise<void> {
+  // Gemini 按模型原生端点测试；保留其他调用者的 OpenAI 流式契约。
+  if (options.protocol === 'gemini') {
+    const response = await request(options.baseUrl, options.apiKey, `models/${encodeURIComponent(options.model)}:generateContent`, options.signal, {
+      contents: options.messages.map(message => ({
+        role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }]
+      })),
+      generationConfig: { maxOutputTokens: 2048 }
+    }, '/v1beta')
+    options.signal.throwIfAborted()
+    if (!response.ok) throw new KeyTestError('http', response.status)
+    if (!response.headers.get('content-type')?.includes('application/json')) throw new KeyTestError('invalidResponse')
+    let payload
+    try {
+      payload = await response.json()
+    } catch {
+      options.signal.throwIfAborted()
+      throw new KeyTestError('invalidResponse')
+    }
+    options.signal.throwIfAborted()
+    if (payload?.error || payload?.promptFeedback?.blockReason) throw new KeyTestError('streamError')
+    if (!Array.isArray(payload?.candidates)) throw new KeyTestError('invalidResponse')
+    if (!payload.candidates.length) throw new KeyTestError('empty')
+    const candidate = payload.candidates[0]
+    if (!candidate || typeof candidate !== 'object') throw new KeyTestError('invalidResponse')
+    if (candidate.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) throw new KeyTestError('streamError')
+    const parts = candidate.content?.parts
+    if (!Array.isArray(parts)) throw new KeyTestError('invalidResponse')
+    const text = parts.filter(part => part && !part.thought && typeof part.text === 'string').map(part => part.text).join('')
+    if (!text.trim()) throw new KeyTestError('empty')
+    options.onText(text)
+    options.signal.throwIfAborted()
+    return
+  }
   const response = await request(options.baseUrl, options.apiKey, 'chat/completions', options.signal, {
     model: options.model,
     messages: options.messages,

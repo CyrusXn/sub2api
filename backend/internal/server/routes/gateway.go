@@ -356,6 +356,11 @@ func RegisterGatewayRoutes(
 		gemini.GET("/cachedContents/:cacheID", h.Gateway.GeminiCachedContentsGet)
 		gemini.PATCH("/cachedContents/:cacheID", h.Gateway.GeminiCachedContentsPatch)
 		gemini.DELETE("/cachedContents/:cacheID", h.Gateway.GeminiCachedContentsDelete)
+		// Interactions 独立原生协议，不经过 Models 或 OpenAI 兼容转换。
+		gemini.POST("/interactions", h.Gateway.GeminiInteractionsCreate)
+		gemini.GET("/interactions/:interactionID", h.Gateway.GeminiInteractionsGet)
+		gemini.POST("/interactions/:interactionID/cancel", h.Gateway.GeminiInteractionsCancel)
+		gemini.DELETE("/interactions/:interactionID", h.Gateway.GeminiInteractionsDelete)
 	}
 
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform

@@ -2,7 +2,7 @@
   <BaseDialog
     :show="show"
     :title="t('admin.accounts.testAccountConnection')"
-    width="normal"
+    width="wide"
     @close="handleClose"
   >
     <div class="space-y-4">
@@ -77,8 +77,50 @@
         />
       </div>
 
-      <!-- Terminal Output -->
-      <div class="group relative">
+      <div v-else class="space-y-3">
+        <div
+          ref="conversationRef"
+          role="log"
+          aria-live="polite"
+          class="max-h-[min(42vh,360px)] min-h-[150px] space-y-3 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-900/50 sm:p-4"
+        >
+          <div v-if="messages.length === 0" class="flex min-h-[120px] items-center justify-center text-sm text-gray-400">
+            {{ t('admin.accounts.testConversationEmpty') }}
+          </div>
+          <div
+            v-for="(message, index) in messages"
+            :key="`${message.role}-${index}`"
+            :class="[
+              'max-w-[92%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-6 sm:max-w-[80%]',
+              message.role === 'user'
+                ? 'ml-auto bg-primary-500 text-white'
+                : 'mr-auto border border-gray-200 bg-white text-gray-800 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-100'
+            ]"
+          >
+            {{ message.content }}
+          </div>
+          <div
+            v-if="streamingContent"
+            class="mr-auto max-w-[92%] whitespace-pre-wrap rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm leading-6 text-gray-800 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-100 sm:max-w-[80%]"
+          >
+            {{ streamingContent }}<span class="animate-pulse">▍</span>
+          </div>
+        </div>
+        <TextArea
+          v-model="testPrompt"
+          :label="t('admin.accounts.testConversationInput')"
+          :placeholder="t('admin.accounts.testConversationPlaceholder')"
+          :disabled="status === 'connecting'"
+          rows="2"
+        />
+      </div>
+
+      <div v-if="!supportsImageTest && status === 'error'" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">
+        {{ errorMessage }}
+      </div>
+
+      <!-- Terminal Output for media-specific tests -->
+      <div v-if="supportsImageTest" class="group relative">
         <div
           ref="terminalRef"
           class="max-h-[240px] min-h-[120px] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 p-4 font-mono text-sm dark:border-gray-800 dark:bg-black"
@@ -189,7 +231,7 @@
           {{
             supportsImageTest
               ? t('admin.accounts.imageTestMode')
-              : t('admin.accounts.testPrompt')
+              : t('admin.accounts.testConversationInput')
           }}
         </span>
       </div>
@@ -242,7 +284,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -281,6 +323,12 @@ const status = ref<'idle' | 'connecting' | 'success' | 'error'>('idle')
 const outputLines = ref<OutputLine[]>([])
 const streamingContent = ref('')
 const errorMessage = ref('')
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+const messages = ref<ChatMessage[]>([])
+const conversationRef = ref<HTMLElement | null>(null)
 const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
@@ -295,6 +343,13 @@ const openAITestModeOptions = computed(() => [
 ])
 const previewImageUrl = ref('')
 const prioritizedGeminiModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gemini-2.0-flash']
+const defaultModelPreferences: Record<string, string[]> = {
+  openai: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol'],
+  anthropic: ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7'],
+  gemini: ['gemini-4', 'gemini-4-pro', 'gemini-3.1-pro', 'gemini-3.1-flash'],
+  antigravity: ['gemini-4', 'gemini-4-pro', 'claude-opus-5-5', 'claude-opus-5'],
+  grok: ['grok-4.7', 'grok-4.7-latest', 'grok-4.6', 'grok-4.6-latest']
+}
 const supportsGeminiImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
   if (!modelID.startsWith('gemini-') || !modelID.includes('-image')) return false
@@ -321,6 +376,24 @@ const sortTestModels = (models: ClaudeModel[]) => {
   })
 }
 
+const selectDefaultModel = (platform: string, models: ClaudeModel[]) => {
+  const platformPreferences = defaultModelPreferences[platform] || []
+  const familyPreferences = [
+    ...platformPreferences,
+    'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol',
+    'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7',
+    'gemini-4', 'gemini-4-pro', 'gemini-3.1-pro', 'gemini-3.1-flash',
+    'grok-4.7', 'grok-4.7-latest', 'grok-4.6', 'grok-4.6-latest'
+  ]
+  const preferredModel = familyPreferences
+    .map((id) => models.find((model) => {
+      const modelID = model.id.toLowerCase()
+      return modelID === id || modelID.endsWith(`/${id}`) || modelID.startsWith(`${id}-`)
+    }))
+    .find(Boolean)
+  return preferredModel?.id || models[0]?.id || ''
+}
+
 // Load available models when modal opens
 watch(
   () => props.show,
@@ -328,8 +401,15 @@ watch(
     if (newVal && props.account) {
       testPrompt.value = ''
       testMode.value = 'default'
-      resetState()
+      status.value = 'idle'
+      outputLines.value = []
+      streamingContent.value = ''
+      errorMessage.value = ''
+      generatedImages.value = []
+      previewImageUrl.value = ''
+      messages.value = []
       await loadAvailableModels()
+      if (!supportsImageTest.value) testPrompt.value = '你是谁'
     } else {
       abortStream()
     }
@@ -354,13 +434,7 @@ const loadAvailableModels = async () => {
       : models
     // Default selection by platform
     if (availableModels.value.length > 0) {
-      if (props.account.platform === 'gemini') {
-        selectedModelId.value = availableModels.value[0].id
-      } else {
-        // Try to select Sonnet as default, otherwise use first model
-        const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))
-        selectedModelId.value = sonnetModel?.id || availableModels.value[0].id
-      }
+      selectedModelId.value = selectDefaultModel(props.account.platform, availableModels.value)
     }
   } catch (error) {
     console.error('Failed to load available models:', error)
@@ -403,11 +477,19 @@ const scrollToBottom = async () => {
   if (terminalRef.value) {
     terminalRef.value.scrollTop = terminalRef.value.scrollHeight
   }
+  if (conversationRef.value) {
+    conversationRef.value.scrollTop = conversationRef.value.scrollHeight
+  }
 }
 
 const startTest = async () => {
   if (!props.account || !selectedModelId.value) return
 
+  const prompt = testPrompt.value.trim() || '你是谁'
+  if (!supportsImageTest.value) {
+    messages.value.push({ role: 'user', content: prompt })
+    testPrompt.value = ''
+  }
   resetState()
   status.value = 'connecting'
   addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
@@ -431,7 +513,8 @@ const startTest = async () => {
       },
       body: JSON.stringify({
         model_id: selectedModelId.value,
-        prompt: supportsImageTest.value ? testPrompt.value.trim() : '',
+        prompt,
+        messages: supportsImageTest.value ? undefined : messages.value,
         mode: isOpenAIAccount.value ? testMode.value : 'default'
       }),
       signal: abortController.signal
@@ -534,6 +617,9 @@ const handleEvent = (event: {
     case 'test_complete':
       // Move streaming content to output lines
       if (streamingContent.value) {
+        if (!supportsImageTest.value) {
+          messages.value.push({ role: 'assistant', content: streamingContent.value })
+        }
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
       }
@@ -566,6 +652,21 @@ const copyOutput = () => {
   const text = outputLines.value.map((l) => l.text).join('\n')
   copyToClipboard(text, t('admin.accounts.outputCopied'))
 }
+
+onMounted(async () => {
+  if (!props.show || !props.account) return
+  testPrompt.value = ''
+  testMode.value = 'default'
+  status.value = 'idle'
+  outputLines.value = []
+  streamingContent.value = ''
+  errorMessage.value = ''
+  generatedImages.value = []
+  previewImageUrl.value = ''
+  messages.value = []
+  await loadAvailableModels()
+  if (!supportsImageTest.value) testPrompt.value = '你是谁'
+})
 </script>
 
 <style>

@@ -185,7 +185,7 @@ export default {
       http403: 'Key, group, or client access is restricted',
       http429: 'Rate or concurrency limit reached; try again later',
       httpOther: 'Check the model, group configuration, and channel status',
-      invalidResponse: 'No valid streaming chat response. Check the relay URL and model protocol.',
+      invalidResponse: 'No valid chat response. Check the relay URL and model protocol.',
       streamError: 'The relay returned an error. Check model and group availability.',
       incomplete: 'The connection closed before the response completed. Please retry.',
       empty: 'The request ended without text. Check that the model supports text conversations.',

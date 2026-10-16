@@ -106,6 +106,7 @@ func provideCleanup(
 	usageCleanup *service.UsageCleanupService,
 	idempotencyCleanup *service.IdempotencyCleanupService,
 	geminiCachedContent *service.GeminiCachedContentService,
+	geminiInteraction *service.GeminiInteractionService,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -257,6 +258,12 @@ func provideCleanup(
 			{"GeminiCachedContentService", func() error {
 				if geminiCachedContent != nil {
 					geminiCachedContent.Stop()
+				}
+				return nil
+			}},
+			{"GeminiInteractionService", func() error {
+				if geminiInteraction != nil {
+					geminiInteraction.Stop()
 				}
 				return nil
 			}},

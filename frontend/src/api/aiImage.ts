@@ -61,13 +61,14 @@ export class AIImageAPIError extends Error {
   }
 }
 
-interface GenerateAIImageOptions {
+export interface GenerateAIImageOptions {
   baseURL: string
   apiKey: string
   prompt: string
   sizeTier: AIImageSizeTier
   referenceImages?: File[]
   signal?: AbortSignal
+  model?: string
 }
 
 interface OpenAIImageItem {
@@ -250,9 +251,9 @@ export async function generateAIImage(options: GenerateAIImageOptions): Promise<
 
   try {
     const requestBody = referenceImages.length
-      ? createEditRequestBody(options.prompt, options.sizeTier, referenceImages)
+      ? createEditRequestBody(options.prompt, options.sizeTier, referenceImages, options.model)
       : JSON.stringify({
-          model: AI_IMAGE_MODEL,
+          model: options.model || AI_IMAGE_MODEL,
           prompt: options.prompt,
           n: 1,
           size: options.sizeTier,
@@ -305,9 +306,9 @@ export async function generateAIImage(options: GenerateAIImageOptions): Promise<
   }
 }
 
-function createEditRequestBody(prompt: string, sizeTier: AIImageSizeTier, referenceImages: File[]): FormData {
+function createEditRequestBody(prompt: string, sizeTier: AIImageSizeTier, referenceImages: File[], model = AI_IMAGE_MODEL): FormData {
   const body = new FormData()
-  body.set('model', AI_IMAGE_MODEL)
+  body.set('model', model)
   body.set('prompt', prompt)
   body.set('n', '1')
   body.set('size', sizeTier)

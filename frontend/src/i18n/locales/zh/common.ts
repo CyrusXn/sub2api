@@ -168,6 +168,7 @@ export default {
     announcements: '公告',
     apiKeys: 'API 密钥',
     aiImage: 'AI 生图',
+    workspace: '创作工作台',
     batchImage: '批量生图',
     usage: '使用记录',
     redeem: '兑换',

@@ -20,6 +20,25 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestAccountTestPayloadsUseCustomPrompt(t *testing.T) {
+	claudePayload, err := createTestPayloadWithPrompt("claude-opus-5-5", "请介绍自己")
+	if err != nil {
+		t.Fatalf("create Claude payload: %v", err)
+	}
+	claudeMessages := claudePayload["messages"].([]map[string]any)
+	claudeContent := claudeMessages[0]["content"].([]map[string]any)
+	if got := claudeContent[0]["text"]; got != "请介绍自己" {
+		t.Fatalf("Claude prompt = %v", got)
+	}
+
+	responsesPayload := createOpenAITestPayload("gpt-6.1-sol", true, "请介绍自己")
+	responsesInput := responsesPayload["input"].([]map[string]any)
+	responsesContent := responsesInput[0]["content"].([]map[string]any)
+	if got := responsesContent[0]["text"]; got != "请介绍自己" {
+		t.Fatalf("Responses prompt = %v", got)
+	}
+}
+
 // --- shared test helpers ---
 
 type queuedHTTPUpstream struct {

@@ -134,6 +134,7 @@ async function send() {
   try {
     await streamKeyTest({
       baseUrl: props.baseUrl, apiKey: props.apiKey.key, model: selectedModel, messages, signal: controller.signal,
+      protocol: /^gemini-/i.test(selectedModel) ? 'gemini' : 'openai',
       onText(text) {
         if (controller.signal.aborted) return
         if (turn.firstTextMs === null) turn.firstTextMs = performance.now() - startedAt

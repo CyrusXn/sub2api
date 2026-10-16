@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import KeyTestModal from '../KeyTestModal.vue'
 import Select from '@/components/common/Select.vue'
-import zh from '@/i18n/locales/zh'
+import zh from '@/i18n/locales/zh/dashboard'
 import type { ApiKey } from '@/types'
 
 vi.mock('vue-i18n', () => ({
@@ -68,6 +68,22 @@ afterEach(async () => {
 })
 
 describe('密钥测试对话', () => {
+  it('Gemini 模型测试走原生 generateContent 并展示实际回复', async () => {
+    modelIds = ['gemini-4-argon-high']
+    const view = await openModal()
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, init: RequestInit) => {
+      requests.push({ url, init })
+      return Response.json({ candidates: [{ content: { parts: [{ text: '我是 Gemini。' }] }, finishReason: 'STOP' }] })
+    }))
+    await send()
+    expect(requests[1].url).toBe('https://relay.example/v1beta/models/gemini-4-argon-high:generateContent')
+    expect(JSON.parse(requests[1].init.body as string)).toEqual({
+      contents: [{ role: 'user', parts: [{ text: testPrompt }] }], generationConfig: { maxOutputTokens: 2048 }
+    })
+    expect(view.get('[role="log"]').text()).toContain('我是 Gemini。')
+    expect(view.text()).toContain('测试成功 · 当前模型可用')
+  })
+
   it('移除自由输入，使用可搜索下拉框选择实际模型，GPT 默认 sol', async () => {
     modelIds = ['gpt-5.5', 'gpt-5.6-astra', 'gpt-5.6-sol', 'claude-sonnet-test']
     const view = await openModal()

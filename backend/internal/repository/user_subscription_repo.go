@@ -165,7 +165,7 @@ func (r *userSubscriptionRepository) Delete(ctx context.Context, id int64) error
 	// Match GORM semantics: deleting a missing row is not an error.
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserSubscription.Delete().Where(usersubscription.IDEQ(id)).Exec(ctx)
-	return err
+	return geminiInteractionDeleteError(err)
 }
 
 func (r *userSubscriptionRepository) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*service.UserSubscription, error) {
@@ -551,7 +551,7 @@ func (r *userSubscriptionRepository) CountActiveByGroupID(ctx context.Context, g
 func (r *userSubscriptionRepository) DeleteByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
 	n, err := client.UserSubscription.Delete().Where(usersubscription.GroupIDEQ(groupID)).Exec(ctx)
-	return int64(n), err
+	return int64(n), geminiInteractionDeleteError(err)
 }
 
 func (r *userSubscriptionRepository) attachUserSubscriptionRelations(ctx context.Context, subs []service.UserSubscription) error {

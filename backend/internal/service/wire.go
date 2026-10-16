@@ -733,6 +733,15 @@ func ProvideGeminiCachedContentService(repo GeminiCachedContentRepository, compa
 	return svc
 }
 
+// ProvideGeminiInteractionService 仅在允许副作用的节点恢复原生任务与结算。
+func ProvideGeminiInteractionService(repo GeminiInteractionRepository, compat *GeminiMessagesCompatService, gateway *GatewayService, keys *APIKeyService, cfg *config.Config) *GeminiInteractionService {
+	svc := NewGeminiInteractionService(repo, compat, gateway, keys, cfg)
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
+	}
+	return svc
+}
+
 // ProvideScheduledTestService creates ScheduledTestService.
 func ProvideScheduledTestService(
 	planRepo ScheduledTestPlanRepository,
@@ -996,6 +1005,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(GrokOAuthTokenService), new(*GrokOAuthService)),
 	NewGeminiOAuthService,
 	ProvideGeminiCachedContentService,
+	ProvideGeminiInteractionService,
 	NewGeminiQuotaService,
 	NewCompositeTokenCacheInvalidator,
 	wire.Bind(new(TokenCacheInvalidator), new(*CompositeTokenCacheInvalidator)),

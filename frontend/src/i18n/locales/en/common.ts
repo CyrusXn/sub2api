@@ -168,6 +168,7 @@ export default {
     announcements: 'Announcements',
     apiKeys: 'API Keys',
     aiImage: 'AI Images',
+    workspace: 'Creation Workspace',
     batchImage: 'Batch Images',
     usage: 'Usage',
     redeem: 'Redeem',
