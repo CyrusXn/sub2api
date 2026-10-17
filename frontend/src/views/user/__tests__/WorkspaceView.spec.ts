@@ -44,13 +44,95 @@ beforeEach(() => {
     return new Response('data: {"choices":[{"delta":{"content":"你好"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
   }))
 })
-afterEach(() => { wrapper?.unmount(); wrapper = undefined; document.body.replaceChildren(); vi.clearAllMocks(); vi.unstubAllGlobals() })
+afterEach(() => { wrapper?.unmount(); wrapper = undefined; document.body.replaceChildren(); vi.clearAllMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 const selectedValue = (view: ReturnType<typeof mount>, id: string) => {
   return view.findAllComponents(Select).find(component => component.props('id') === id)?.props('modelValue')
 }
 
 describe('创作工作台', () => {
+  it('移除内容区介绍，保留创作方式切换', async () => {
+    const { view } = await mountView()
+    expect(view.find('.workspace-header').exists()).toBe(false)
+    expect(view.text()).not.toContain('workspace.eyebrow')
+    expect(view.text()).not.toContain('workspace.subtitle')
+    expect(view.findAll('.workspace-tabs button')).toHaveLength(3)
+  })
+
+  it('首字计时忽略空事件，只记录首个正文且不随后续片段变化', async () => {
+    const { view } = await mountView()
+    let clock = 100
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    let stream!: ReadableStreamDefaultController<Uint8Array>
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(new ReadableStream({ start(controller) { stream = controller } }), { headers: { 'Content-Type': 'text/event-stream' } }))
+    const emit = async (event: string) => { stream.enqueue(new TextEncoder().encode(`data: ${event}\n\n`)); await flushPromises() }
+    await view.get('[data-test="submit"]').trigger('click')
+    await flushPromises()
+    clock = 600
+    await emit('{"choices":[{"delta":{"role":"assistant","content":"","reasoning_content":"思考"}}]}')
+    expect(view.find('.first-text-time').exists()).toBe(false)
+    clock = 1350
+    await emit('{"choices":[{"delta":{"content":"你好"}}]}')
+    expect(view.get('.message.assistant small .first-text-time').text()).toContain('keys.testModal.firstText {"seconds":"1.25"}')
+    clock = 3100
+    await emit('{"choices":[{"delta":{"content":"，世界"}}]}')
+    expect(view.get('.first-text-time').text()).toContain('"seconds":"1.25"')
+    await emit('[DONE]')
+    expect(view.get('.message.assistant').text()).toContain('你好，世界')
+    expect(view.find('.message.user .first-text-time').exists()).toBe(false)
+  })
+
+  it('多轮首字各自计时，恢复历史保留计时且不向上游发送显示元数据', async () => {
+    const { view } = await mountView()
+    let clock = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    for (const elapsed of [600, 1250]) {
+      vi.mocked(fetch).mockImplementationOnce(async () => {
+        clock += elapsed
+        return new Response('data: {"choices":[{"delta":{"content":"你好"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+      })
+      await view.get('[data-test="submit"]').trigger('click')
+      await flushPromises()
+    }
+    expect(view.findAll('.first-text-time').map(item => item.text())).toEqual([
+      'keys.testModal.firstTextMs {"milliseconds":600}', 'keys.testModal.firstText {"seconds":"1.25"}'
+    ])
+    const calls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/chat/completions'))
+    expect(JSON.parse(String(calls[1][1]?.body)).messages[1]).toEqual({ role: 'assistant', content: '你好' })
+    await view.get('.new-chat').trigger('click')
+    expect(view.find('.first-text-time').exists()).toBe(false)
+    await view.findAll('.history-item')[1].trigger('click')
+    expect(view.findAll('.first-text-time')).toHaveLength(1)
+    expect(view.get('.first-text-time').text()).toContain('"milliseconds":600')
+  })
+
+  it.each(['error', 'cancel'])('已有首字后 %s 恢复原对话和计时，迟到正文不再写入', async action => {
+    const { view } = await mountView()
+    let clock = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    await view.get('[data-test="submit"]').trigger('click')
+    await flushPromises()
+    expect(view.get('.first-text-time').text()).toContain('"milliseconds":0')
+    let stream!: ReadableStreamDefaultController<Uint8Array>
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(new ReadableStream({ start(controller) { stream = controller } }), { headers: { 'Content-Type': 'text/event-stream' } }))
+    await view.get('[data-test="submit"]').trigger('click')
+    await flushPromises()
+    clock = 2000
+    stream.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"未完成"}}]}\n\n'))
+    await flushPromises()
+    expect(view.findAll('.first-text-time')).toHaveLength(2)
+    if (action === 'cancel') {
+      await view.get('.outline-button').trigger('click')
+      stream.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"迟到"}}]}\n\ndata: [DONE]\n\n'))
+    } else stream.error(new Error('stream failed'))
+    await flushPromises()
+    expect(view.findAll('.first-text-time')).toHaveLength(1)
+    expect(view.get('.first-text-time').text()).toContain('"milliseconds":0')
+    expect(view.findAll('.message')).toHaveLength(2)
+    expect(view.text()).not.toContain('未完成')
+    expect(view.text()).not.toContain('迟到')
+  })
+
   it('离开生图 Tab 隐藏完整组件并保留表单', async () => {
     const { view } = await mountView('/workspace?tab=image')
     await view.get('#ai-image-free-prompt').setValue('保留生图输入')
@@ -353,7 +435,7 @@ describe('创作工作台', () => {
     const { view } = await mountView()
     const count = vi.mocked(fetch).mock.calls.length
     window.dispatchEvent(new Event('focus'))
-    await view.get('h1').trigger('click')
+    await view.get('.workspace-page').trigger('click')
     await flushPromises()
     for (const tab of ['image', 'video', 'chat']) {
       await view.get(`[data-tab="${tab}"]`).trigger('click')

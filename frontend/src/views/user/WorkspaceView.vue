@@ -1,14 +1,6 @@
 <template>
   <AppLayout>
     <div class="workspace-page">
-      <header class="workspace-header">
-        <div>
-          <p class="eyebrow">{{ t('workspace.eyebrow') }}</p>
-          <h1>{{ t('workspace.title') }}</h1>
-          <p class="subtitle">{{ t('workspace.subtitle') }}</p>
-        </div>
-      </header>
-
       <nav class="workspace-tabs" :aria-label="t('workspace.tabsLabel')">
         <button v-for="item in tabs" :key="item.id" type="button" :data-tab="item.id" :class="{ active: tab === item.id }" :aria-pressed="tab === item.id" :disabled="imageBusy" @click="switchTab(item.id)">
           <Icon :name="item.icon" size="sm" /> {{ item.label }}
@@ -62,7 +54,13 @@
         <section class="canvas-column">
           <div class="preview-panel panel" aria-live="polite" :aria-busy="busy">
             <div v-if="tab === 'chat' && state.messages.length" class="conversation">
-              <article v-for="(message, index) in state.messages" :key="index" class="message" :class="message.role"><small>{{ t(message.role === 'user' ? 'workspace.you' : 'workspace.assistant') }}</small><div>{{ message.content }}</div></article>
+              <article v-for="(message, index) in state.messages" :key="index" class="message" :class="message.role">
+                <small>
+                  {{ t(message.role === 'user' ? 'workspace.you' : 'workspace.assistant') }}
+                  <span v-if="message.role === 'assistant' && message.firstTextMs != null" class="first-text-time">{{ message.firstTextMs < 1000 ? t('keys.testModal.firstTextMs', { milliseconds: Math.round(message.firstTextMs) }) : t('keys.testModal.firstText', { seconds: (message.firstTextMs / 1000).toFixed(2) }) }}</span>
+                </small>
+                <div>{{ message.content }}</div>
+              </article>
               <div v-if="busy" class="inline-progress"><span class="loader" /> {{ t('workspace.working') }}</div>
             </div>
             <div v-else-if="busy" class="empty-state"><span class="loader" /><strong>{{ statusText || t('workspace.working') }}</strong></div>
@@ -106,8 +104,9 @@ import { KeyTestError, type TestMessage } from '@/api/keyTest'
 import { useAppStore } from '@/stores/app'
 import { getWorkspaceTab } from '@/utils/workspaceNavigation'
 
-interface TabState { prompt: string; output: string; resultPrompt: string; messages: TestMessage[] }
-interface HistoryItem { id: number; prompt: string; model: string; keyId: number; output: string; messages: TestMessage[]; createdAt: string }
+interface WorkspaceMessage extends TestMessage { firstTextMs?: number }
+interface TabState { prompt: string; output: string; resultPrompt: string; messages: WorkspaceMessage[] }
+interface HistoryItem { id: number; prompt: string; model: string; keyId: number; output: string; messages: WorkspaceMessage[]; createdAt: string }
 const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
@@ -251,7 +250,7 @@ async function submit(): Promise<void> {
   const prompt = target.prompt.trim()
   const abort = new AbortController()
   const previousMessages = target.messages.map(message => ({ ...message }))
-  let pendingMessages: TestMessage[] | undefined
+  let pendingMessages: WorkspaceMessage[] | undefined
   const restorePreviousMessages = () => {
     if (currentTab === 'chat' && target.messages === pendingMessages) target.messages = previousMessages
   }
@@ -261,12 +260,15 @@ async function submit(): Promise<void> {
   error.value = ''
   try {
     if (currentTab === 'chat') {
-      const messages: TestMessage[] = [...target.messages, { role: 'user', content: prompt }]
-      target.messages = [...messages, { role: 'assistant', content: '' }]
+      const messages: TestMessage[] = [...target.messages.map(({ role, content }) => ({ role, content })), { role: 'user', content: prompt }]
+      target.messages = [...target.messages, { role: 'user', content: prompt }, { role: 'assistant', content: '' }]
       pendingMessages = target.messages
       const assistant = target.messages[target.messages.length - 1]
+      const startedAt = performance.now()
       await streamWorkspaceChat({ selection: current, messages, signal: abort.signal, onText: text => {
-        if (!abort.signal.aborted) assistant.content += text
+        if (abort.signal.aborted || !text) return
+        if (assistant.firstTextMs == null) assistant.firstTextMs = performance.now() - startedAt
+        assistant.content += text
       } })
     } else {
       const result = await generateWorkspaceVideo({ selection: current, prompt, duration: duration.value, aspectRatio: videoRatio.value, resolution: resolution.value, referenceVideoURL: referenceVideoURL.value.trim() || undefined, signal: abort.signal, onStatus: status => {
@@ -313,10 +315,6 @@ onUnmounted(() => {
 
 <style scoped>
 .workspace-page { --accent: #138f87; --accent-soft: #e7f7f4; --surface: #fff; --canvas: #fbfdfd; --border: #dce7eb; --ink: #243841; --muted: #70838e; min-height: calc(100vh - 7rem); color: var(--ink); }
-.workspace-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
-.eyebrow { margin: 0 0 .3rem; color: var(--accent); font-size: .65rem; font-weight: 700; letter-spacing: .16em; }
-h1 { margin: 0; font-size: clamp(1.5rem, 2.6vw, 2rem); font-weight: 750; letter-spacing: -.03em; }
-.subtitle { margin: .4rem 0 0; color: var(--muted); font-size: .85rem; }
 .key-label-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .key-status { display: inline-flex; align-items: center; gap: .3rem; border-radius: .4rem; padding: .3rem .45rem; color: var(--muted); font-size: .65rem; font-weight: 650; }
 .key-status.matching { color: #a16207; background: #fef3c7; border: 1px solid #fcd34d; }.key-status.ready { color: var(--accent); background: var(--accent-soft); }
@@ -353,6 +351,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .loader { display: inline-block; flex-shrink: 0; width: 1.6rem; height: 1.6rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 .conversation { align-self: start; width: 100%; max-height: 38rem; overflow-y: auto; }.message { margin: 0 0 1.3rem; padding: .85rem; border: 1px solid var(--border); border-radius: .65rem; background: var(--surface); font-size: .85rem; line-height: 1.75; }.message.user { margin-left: 10%; background: var(--accent-soft); border-color: #a6d9d3; }.message small { display: block; margin-bottom: .35rem; font-size: .65rem; color: var(--accent); }.message div { white-space: pre-wrap; overflow-wrap: anywhere; }
 .inline-progress { display: flex; align-items: center; gap: .6rem; color: var(--muted); font-size: .75rem; }
+.first-text-time { margin-left: .6rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .chat-composer { display: flex; align-items: end; gap: .5rem; padding: .6rem; }.chat-composer textarea { border: 0; resize: none; background: transparent; }.chat-composer .primary-button { flex-shrink: 0; }
 .media-result { display: grid; gap: 1rem; width: 100%; justify-items: center; }.media-result img, .media-result video { display: block; max-width: 100%; max-height: 38rem; border-radius: .5rem; object-fit: contain; }.media-result a { display: inline-flex; align-items: center; gap: .35rem; color: var(--accent); font-size: .78rem; }
 .history-panel { padding: 1.1rem; }.history-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }.history-heading h2 { margin: 0; font-size: 1rem; font-weight: 700; }.history-heading span { border: 1px solid var(--border); border-radius: .4rem; padding: .15rem .5rem; color: var(--accent); font-size: .7rem; }.history-panel > .text-button { margin-top: .7rem; }
@@ -364,5 +363,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .loader, .matching-spinner { animation: none; } }
 @media (max-width: 1280px) { .workspace-grid { grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr); }.history-panel { grid-column: 1 / -1; }.history-empty { min-height: 7rem; }.history-item { display: inline-grid; width: calc(50% - .35rem); margin-right: .35rem; } }
-@media (max-width: 760px) { .workspace-header { align-items: start; flex-direction: column; }.workspace-tabs { width: 100%; }.workspace-tabs button { flex: 1; justify-content: center; padding-inline: .4rem; }.workspace-grid { grid-template-columns: minmax(0, 1fr); }.preview-panel { min-height: 22rem; }.history-panel { grid-column: auto; }.history-item { width: 100%; }.conversation { max-height: 28rem; }.chat-composer { align-items: stretch; flex-direction: column; }.control-panel { gap: .7rem; } }
+@media (max-width: 760px) { .workspace-tabs { width: 100%; }.workspace-tabs button { flex: 1; justify-content: center; padding-inline: .4rem; }.workspace-grid { grid-template-columns: minmax(0, 1fr); }.preview-panel { min-height: 22rem; }.history-panel { grid-column: auto; }.history-item { width: 100%; }.conversation { max-height: 28rem; }.chat-composer { align-items: stretch; flex-direction: column; }.control-panel { gap: .7rem; } }
 </style>
