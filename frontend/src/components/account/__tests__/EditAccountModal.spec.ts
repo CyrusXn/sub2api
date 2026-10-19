@@ -299,6 +299,7 @@ function buildOpenAISetupTokenAccount() {
 function buildFailedUpstreamBillingAccount(manualRateMultiplier?: number) {
   const account = buildAccount()
   account.extra = {
+    upstream_billing_probe_enabled: true,
     upstream_billing_probe: {
       status: 'failed',
       data: {
@@ -1430,6 +1431,94 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_manual_rate_multiplier).toBeNull()
+  })
+
+  it.each([undefined, 0, 0.25])('未修改手动倍率 %s 时普通保存不携带倍率指令', async manualRate => {
+    const account = buildFailedUpstreamBillingAccount(manualRate)
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+
+    await wrapper.get('textarea').setValue('只修改备注')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('upstream_billing_manual_rate_multiplier')
+  })
+
+  it.each(['base_url', 'api_key', 'proxy', 'headers', 'disable_probe', 'enable_sync'])(
+    '修改 %s 时不把旧探测的手动倍率写到新身份', async field => {
+      const account = buildFailedUpstreamBillingAccount(0.25)
+      account.extra.upstream_billing_probe_enabled = true
+      if (field === 'headers') {
+        account.credentials.header_override_enabled = true
+        account.credentials.header_overrides = { 'x-test': 'same-upstream' }
+      }
+      updateAccountMock.mockReset().mockResolvedValue(account)
+      checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+      const wrapper = mountModal(account)
+      await wrapper.get('[data-testid="upstream-billing-manual-rate-input"]').setValue('0.2')
+      if (field === 'base_url') {
+        await wrapper.get('input[placeholder="https://api.openai.com"]').setValue('https://8888.name')
+      } else if (field === 'api_key') {
+        await wrapper.get('input[placeholder="sk-proj-..."]').setValue('sk-new-test')
+      } else if (field === 'proxy') {
+        wrapper.findComponent({ name: 'ProxySelector' }).vm.$emit('update:modelValue', 9)
+      } else if (field === 'headers') {
+        const label = wrapper.findAll('label').find(item => item.text() === 'admin.accounts.headerOverride.title')!
+        ;(label.element.parentElement!.parentElement!.querySelector('button') as HTMLButtonElement).click()
+      } else if (field === 'disable_probe') {
+        await wrapper.get('[data-testid="upstream-billing-auto-probe"]').trigger('click')
+      } else {
+        await wrapper.get('[data-testid="upstream-billing-rate-sync"]').trigger('click')
+      }
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+      expect(updateAccountMock).toHaveBeenCalledTimes(1)
+      const payload = updateAccountMock.mock.calls[0]?.[1]
+      expect(payload).not.toHaveProperty('upstream_billing_manual_rate_multiplier')
+      if (field === 'base_url') expect(payload?.credentials.base_url).toBe('https://8888.name')
+      if (field === 'api_key') expect(payload?.credentials.api_key).toBe('sk-new-test')
+      if (field === 'proxy') expect(payload?.proxy_id).toBe(9)
+    }
+  )
+
+  it('相同上游身份仍允许显式设置零倍率', async () => {
+    const account = buildFailedUpstreamBillingAccount(0.25)
+    account.extra.upstream_billing_probe_enabled = true
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="upstream-billing-manual-rate-input"]').setValue('0')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_manual_rate_multiplier).toBe(0)
+  })
+
+  it('失败快照没有手动倍率时可以只修改 Base URL', async () => {
+    const account = buildFailedUpstreamBillingAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('input[placeholder="https://api.openai.com"]').setValue('https://8888.name')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload?.credentials.base_url).toBe('https://8888.name')
+    expect(payload).not.toHaveProperty('upstream_billing_manual_rate_multiplier')
+  })
+
+  it('密钥已脱敏且请求头顺序变化不应阻止相同身份修改倍率', async () => {
+    const account = buildFailedUpstreamBillingAccount(0.25)
+    delete account.credentials.api_key
+    account.credentials_status = { has_api_key: true }
+    account.credentials.header_override_enabled = true
+    account.credentials.header_overrides = { 'x-z': 'z', 'x-a': 'a' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="upstream-billing-manual-rate-input"]').setValue('0.2')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_manual_rate_multiplier).toBe(0.2)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_key')
   })
 
   it('keeps the last automatic rate as a hint and omits the manual field outside failed probes', async () => {

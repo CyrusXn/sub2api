@@ -5443,14 +5443,6 @@ const handleSubmit = async () => {
       updatePayload.upstream_subscription_rate = { ...subscriptionRate }
       if (subscriptionRate.enabled) upstreamBillingAutoProbeEnabled.value = true
     }
-    // 通过独立更新字段交给后端原子修改快照，避免覆盖并发探测结果。
-    if (upstreamBillingManualRateEditable.value) {
-      const manualRateMultiplier = upstreamBillingManualRateMultiplier.value
-      updatePayload.upstream_billing_manual_rate_multiplier =
-        typeof manualRateMultiplier === 'number' && Number.isFinite(manualRateMultiplier)
-          ? manualRateMultiplier
-          : null
-    }
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
     if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0
@@ -6197,6 +6189,25 @@ const handleSubmit = async () => {
         delete newExtra.upstream_request_id_header
       }
       updatePayload.extra = newExtra
+    }
+
+    // null 也是倍率清除指令；普通保存不应携带它，更不能把旧快照的倍率用于新上游身份。
+    if (upstreamBillingManualRateEditable.value && upstreamBillingAutoProbeEnabled.value && !upstreamBillingRateSyncEnabled.value) {
+      const value = upstreamBillingManualRateMultiplier.value
+      const nextManualRate = typeof value === 'number' && Number.isFinite(value) ? value : null
+      const previousManualRate = upstreamBillingSnapshot.value?.manual_rate_multiplier ?? null
+      const previousCredentials = (props.account.credentials || {}) as Record<string, unknown>
+      const nextCredentials = (updatePayload.credentials || previousCredentials) as Record<string, unknown>
+      const identityValue = (value: unknown) => value && typeof value === 'object'
+        ? Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+        : value
+      const identityChanged = (updatePayload.proxy_id || 0) !== (props.account.proxy_id || 0) || [
+        'api_key', 'base_url', 'login_username', 'login_password', 'web_login_username', 'web_login_password',
+        HEADER_OVERRIDE_ENABLED_CREDENTIAL_KEY, HEADER_OVERRIDES_CREDENTIAL_KEY
+      ].some(key => JSON.stringify(identityValue(nextCredentials[key])) !== JSON.stringify(identityValue(previousCredentials[key])))
+      if (nextManualRate !== previousManualRate && !identityChanged) {
+        updatePayload.upstream_billing_manual_rate_multiplier = nextManualRate
+      }
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {
