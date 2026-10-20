@@ -101,7 +101,6 @@ import WorkspaceConnection from '@/components/workspace/WorkspaceConnection.vue'
 import WorkspaceImageStudio from '@/components/workspace/WorkspaceImageStudio.vue'
 import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceModels, modelMatchesTab, streamWorkspaceChat, validateWorkspaceReferenceVideoURL, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey, type WorkspaceSelection, type WorkspaceTab } from '@/api/workspace'
 import { KeyTestError, type TestMessage } from '@/api/keyTest'
-import { useAppStore } from '@/stores/app'
 import { getWorkspaceTab } from '@/utils/workspaceNavigation'
 
 interface WorkspaceMessage extends TestMessage { firstTextMs?: number }
@@ -110,7 +109,6 @@ interface HistoryItem { id: number; prompt: string; model: string; keyId: number
 const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
-const appStore = useAppStore()
 const tab = ref<WorkspaceTab>(getWorkspaceTab(route.query.tab))
 const keys = ref<WorkspaceKey[]>([])
 const selectedKeyId = ref('')
@@ -173,9 +171,8 @@ async function loadSelection(preserve = false): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const settings = await appStore.fetchPublicSettings()
-    abort.signal.throwIfAborted()
-    const loaded = await loadWorkspaceKeys(settings?.api_base_url || window.location.origin, abort.signal)
+    // 本站工作台沿用当前访问线路，避免直连页面跨域请求默认代理端点。
+    const loaded = await loadWorkspaceKeys(window.location.origin, abort.signal)
     abort.signal.throwIfAborted()
     keys.value = loaded
     await loadWorkspaceModels(keys.value, abort.signal)

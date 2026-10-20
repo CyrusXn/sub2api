@@ -51,6 +51,41 @@ const selectedValue = (view: ReturnType<typeof mount>, id: string) => {
 }
 
 describe('创作工作台', () => {
+  it('默认端点与页面域名不同时，模型和对话仍请求当前页面域名', async () => {
+    const { view } = await mountView()
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/models')).map(([url]) => url))
+      .toEqual([`${window.location.origin}/v1/models`, `${window.location.origin}/v1/models`])
+    await view.get('[data-test="submit"]').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes('/chat/completions'))?.[0])
+      .toBe(`${window.location.origin}/v1/chat/completions`)
+  })
+
+  it('模型加载失败明确提示而非无匹配，切 Tab 保留提示，刷新成功后恢复', async () => {
+    const modelFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockRejectedValue(new TypeError('private network detail'))
+    const { view } = await mountView('/workspace?tab=image')
+    expect(view.get('.key-label-row [role="status"]').text()).toBe('workspace.modelsLoadFailed')
+    expect(view.get('[role="alert"]').text()).toBe('workspace.modelsLoadError')
+    expect(view.find('[data-test="create-key"]').exists()).toBe(false)
+    expect(view.text()).not.toContain('private network detail')
+    await view.get('[data-tab="chat"]').trigger('click')
+    expect(view.get('[role="alert"]').text()).toBe('workspace.modelsLoadError')
+    vi.mocked(fetch).mockImplementation(modelFetch)
+    await view.get('button[title="workspace.refresh"]').trigger('click')
+    await flushPromises()
+    expect(view.find('[role="alert"]').exists()).toBe(false)
+    expect(selectedValue(view, 'workspace-model')).toBe('gpt-5.6-sol')
+  })
+
+  it('部分模型加载失败不阻塞其他 Key 匹配，同时提示刷新', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('network failed'))
+    const { view } = await mountView('/workspace?tab=image')
+    expect(selectedValue(view, 'workspace-model')).toBe('grok-imagine-image')
+    expect(view.get('.key-label-row [role="status"]').text()).toBe('workspace.matched')
+    expect(view.get('[role="alert"]').text()).toBe('workspace.modelsLoadError')
+  })
+
   it('移除内容区介绍，保留创作方式切换', async () => {
     const { view } = await mountView()
     expect(view.find('.workspace-header').exists()).toBe(false)
@@ -336,7 +371,7 @@ describe('创作工作台', () => {
     await view.get('[data-test="submit"]').trigger('click')
     await flushPromises()
     const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes(':generateContent'))!
-    expect(call[0]).toBe('https://relay.example/v1beta/models/gemini-4-argon-high:generateContent')
+    expect(call[0]).toBe(`${window.location.origin}/v1beta/models/gemini-4-argon-high:generateContent`)
     expect(JSON.parse(String(call[1]?.body))).toEqual({ contents: [{ role: 'user', parts: [{ text: '你是谁' }] }], generationConfig: { maxOutputTokens: 2048 } })
     expect(view.get('.message.assistant').text()).toContain('我是 Gemini')
   })

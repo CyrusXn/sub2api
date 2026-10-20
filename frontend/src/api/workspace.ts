@@ -14,6 +14,7 @@ export interface WorkspaceKey {
   models: string[]
   allowImageGeneration: boolean
   modelsLoaded?: boolean
+  modelsLoadFailed?: boolean
 }
 
 export interface WorkspaceSelection {
@@ -98,10 +99,12 @@ export async function loadWorkspaceModels(keys: WorkspaceKey[], signal?: AbortSi
       const timeout = window.setTimeout(() => abort.abort(), 8000)
       try {
         key.models = await fetchKeyTestModels(key.baseUrl, key.key, abort.signal)
+        key.modelsLoadFailed = false
       } catch {
         signal?.throwIfAborted()
         // 单个 Key 失败或超时不阻塞其他 Key，也不在切 Tab 时反复重试。
         key.models = []
+        key.modelsLoadFailed = true
       } finally {
         window.clearTimeout(timeout)
         signal?.removeEventListener('abort', onAbort)

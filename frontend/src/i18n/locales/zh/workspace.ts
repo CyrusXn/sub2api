@@ -23,6 +23,8 @@ export default {
     matching: '正在匹配…',
     matched: '已匹配',
     noMatch: '未匹配到模型',
+    modelsLoadFailed: '模型加载失败',
+    modelsLoadError: '部分或全部密钥的模型列表加载失败，请检查网络或密钥权限后点击“刷新模型”重试；这不代表没有匹配模型。',
     selectKey: '请选择 API Key',
     noModel: '当前密钥暂无适合的模型',
     noModelHint: '请切换密钥，或创建绑定对应分组的新密钥。',

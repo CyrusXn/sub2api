@@ -31,6 +31,21 @@ describe('EndpointPopover', () => {
     vi.clearAllMocks()
   })
 
+  it('直连与默认端点使用相同标题和绿色标签，随后展示地址', () => {
+    const wrapper = mount(EndpointPopover, {
+      props: {
+        apiBaseUrl: 'https://api.example.com',
+        customEndpoints: [{ name: '直连', endpoint: 'https://ai.example.com', description: '直连服务器' }],
+      },
+    })
+    const titles = wrapper.findAll('span.font-medium.text-gray-600')
+    expect(titles.map(item => item.text())).toEqual(['API 端点', 'API 端点'])
+    const badges = wrapper.findAll('span.text-primary-600')
+    expect(badges.map(item => item.text())).toEqual(['默认', '直连'])
+    expect(badges[1].classes()).toEqual(badges[0].classes())
+    expect(wrapper.findAll('code').map(item => item.text())).toEqual(['https://api.example.com', 'https://ai.example.com'])
+  })
+
   it('将说明提示渲染到 URL 上方而不是旧的 title 图标上', () => {
     const wrapper = mount(EndpointPopover, {
       props: {

@@ -4,7 +4,7 @@
       <label for="workspace-key">{{ t('workspace.apiKey') }}</label>
       <span class="key-status" :class="{ matching: loading, ready: matched && !loading }" role="status" aria-live="polite">
         <span v-if="loading" class="matching-spinner" aria-hidden="true" /><Icon v-else-if="matched" name="check" size="xs" />
-        {{ t(loading ? 'workspace.matching' : matched ? 'workspace.matched' : keys.length ? 'workspace.noMatch' : 'workspace.noKey') }}
+        {{ t(loading ? 'workspace.matching' : matched ? 'workspace.matched' : modelsLoadError ? 'workspace.modelsLoadFailed' : keys.length ? 'workspace.noMatch' : 'workspace.noKey') }}
       </span>
     </div>
     <Select id="workspace-key" :model-value="keyId" :options="keyOptions" :searchable="true" :disabled="loading || busy" :aria-label="t('workspace.apiKey')" :placeholder="t('workspace.selectKey')" @update:model-value="emit('update:keyId', $event)" @change="emit('key-change')">
@@ -21,8 +21,8 @@
     </div>
     <Select id="workspace-model" :model-value="model" :options="modelOptions" :searchable="true" :creatable="showAll" :disabled="loading || busy || !models.length && !showAll" :aria-label="t('workspace.model')" :placeholder="t('workspace.noModel')" @update:model-value="emit('update:model', $event)" @change="emit('model-change')" />
     <p v-if="matched && tab === 'chat'" class="protocol-hint">{{ t('workspace.protocol') }}<code>{{ /^gemini-/i.test(model) ? 'Gemini · generateContent' : 'OpenAI · chat/completions' }}</code></p>
-    <div v-if="!loading && !matched" class="key-guide"><p>{{ t(keys.length ? 'workspace.noModelHint' : 'workspace.noKey') }}</p><button type="button" class="outline-button" data-test="create-key" @click="emit('create-key')"><Icon name="key" size="sm" />{{ t('workspace.createKey') }}</button></div>
-    <p v-if="error || videoModelError" class="error-message" role="alert">{{ error || videoModelError }}</p>
+    <div v-if="!loading && !matched && !modelsLoadError && !error" class="key-guide"><p>{{ t(keys.length ? 'workspace.noModelHint' : 'workspace.noKey') }}</p><button type="button" class="outline-button" data-test="create-key" @click="emit('create-key')"><Icon name="key" size="sm" />{{ t('workspace.createKey') }}</button></div>
+    <p v-if="error || videoModelError || modelsLoadError" class="error-message" role="alert">{{ error || videoModelError || modelsLoadError }}</p>
   </div>
 </template>
 
@@ -39,6 +39,7 @@ const emit = defineEmits<{
   (event: 'all-keys-change', value: boolean): void
 }>()
 const { t } = useI18n()
+const modelsLoadError = computed(() => !props.loading && props.keys.some(key => key.modelsLoadFailed) ? t('workspace.modelsLoadError') : '')
 const keyOptions = computed(() => props.keys.filter(key => props.showAll || workspaceModelsForKey(key, props.tab).length > 0).map(key => ({ value: String(key.id), label: `${key.name} · ${key.groupName}` })))
 const models = computed(() => {
   const key = props.keys.find(key => String(key.id) === props.keyId)
