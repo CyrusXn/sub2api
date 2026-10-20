@@ -1071,7 +1071,7 @@
     <UseKeyModal
       :show="showUseKeyModal"
       :api-key="selectedKey?.key || ''"
-      :base-url="publicSettings?.api_base_url || ''"
+      :base-url="pageOrigin"
       :platform="selectedKey?.group?.platform || null"
       :claude-code-only="selectedKey?.group?.claude_code_only || false"
       :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
@@ -1266,6 +1266,7 @@ interface GroupOption {
 const appStore = useAppStore()
 const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
+const pageOrigin = window.location.origin
 
 const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
@@ -2037,7 +2038,7 @@ const importToCcswitch = (row: ApiKey) => {
 }
 
 const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
-  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
+  const baseUrl = pageOrigin
   const platform = row.group?.platform || 'anthropic'
 
   const usageScript = CC_SWITCH_USAGE_SCRIPT

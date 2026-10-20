@@ -306,6 +306,56 @@ describe('user KeysView column settings', () => {
     isCurrentStep.mockReturnValue(false)
   })
 
+  it.each(['https://ai.example.com', 'https://api.example.com', 'http://localhost:5173'])(
+    '使用密钥配置跟随页面地址 %s，默认端点展示不变', async (origin) => {
+      vi.stubGlobal('location', new URL(`${origin}/keys?tab=all`))
+      getPublicSettings.mockResolvedValue({ api_base_url: 'https://default.example.com' })
+      const wrapper = await mountView()
+      try {
+        await getButtonByText(wrapper, 'keys.useKey').trigger('click')
+        expect(wrapper.findComponent({ name: 'UseKeyModal' }).props('baseUrl')).toBe(origin)
+        expect(wrapper.findComponent({ name: 'EndpointPopover' }).props('apiBaseUrl'))
+          .toBe('https://default.example.com')
+      } finally {
+        wrapper.unmount()
+        vi.unstubAllGlobals()
+      }
+    }
+  )
+
+  it.each([
+    ['anthropic', 'claude', ''],
+    ['openai', 'codex', ''],
+    ['gemini', 'gemini', ''],
+    ['grok', 'grokbuild', '/v1'],
+    ['antigravity', 'claude', '/antigravity'],
+    ['antigravity', 'gemini', '/antigravity'],
+  ] as const)('CC Switch 的 %s/%s 导入使用页面地址并保留平台路径', async (platform, client, suffix) => {
+    const origin = 'https://ai.example.com:8443'
+    vi.stubGlobal('location', new URL(`${origin}/keys`))
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://default.example.com' })
+    const key = { ...createApiKey(), group: { platform } } as ApiKey
+    listKeys.mockResolvedValue({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = await mountView()
+    try {
+      await getButtonByText(wrapper, 'keys.importToCcSwitch').trigger('click')
+      if (platform === 'antigravity') {
+        await getButtonByText(wrapper, client === 'gemini' ? 'keys.ccsClientSelect.geminiCli' : 'keys.ccsClientSelect.claudeCode').trigger('click')
+      }
+      expect(open).toHaveBeenCalledTimes(1)
+      const params = new URL(String(open.mock.calls[0][0])).searchParams
+      expect(params.get('homepage')).toBe(origin)
+      expect(params.get('endpoint')).toBe(`${origin}${suffix}`)
+      expect(params.get('app')).toBe(client)
+    } finally {
+      wrapper.unmount()
+      vi.restoreAllMocks()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('操作栏按顺序显示五个入口，禁用和删除收进更多，测试使用当前行密钥', async () => {
     const wrapper = await mountView()
     const actions = wrapper.get('[data-test="row-actions"]')
