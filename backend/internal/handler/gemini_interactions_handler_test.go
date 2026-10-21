@@ -176,6 +176,34 @@ func newInteractionEnv(t *testing.T) (*cachedBillingEnv, *interactionHandlerRepo
 	return e, repo, u
 }
 
+func TestGeminiInteractionsCreateImageGenerationGate(t *testing.T) {
+	for _, scenario := range []string{"image model", "account alias", "text model", "image enabled"} {
+		t.Run(scenario, func(t *testing.T) {
+			e, repo, upstream := newInteractionEnv(t)
+			e.apiKey.Group.AllowImageGeneration = scenario == "image enabled"
+			model := "gemini-3-pro-image"
+			if scenario == "text model" {
+				model = "gemini-2.5-pro"
+			}
+			if scenario == "account alias" {
+				model = "draw-alias"
+				for _, account := range e.accounts {
+					account.Credentials["model_mapping"] = map[string]any{model: "gemini-3-pro-image"}
+				}
+			}
+			rec := e.serve(http.MethodPost, "/v1beta/interactions", `{"model":"`+model+`","input":"test"}`, nil, e.h.GeminiInteractionsCreate)
+			if scenario == "text model" || scenario == "image enabled" {
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				require.Len(t, upstream.calls, 1)
+			} else {
+				require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+				require.Empty(t, upstream.calls)
+				require.Empty(t, repo.records, "门禁拒绝不得持久化或预扣费用")
+			}
+		})
+	}
+}
+
 type interactionUserGroupRateRepo struct {
 	service.UserGroupRateRepository
 	userID, groupID int64

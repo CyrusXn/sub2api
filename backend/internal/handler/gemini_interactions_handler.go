@@ -182,6 +182,10 @@ func (h *GatewayHandler) GeminiInteractionsCreate(c *gin.Context) {
 	if mapping.Mapped {
 		routingModel = mapping.MappedModel
 	}
+	if geminiImageGenerationRejected(c, key, body, model, routingModel) {
+		googleError(c, http.StatusBadRequest, service.ImageGenerationPermissionMessage())
+		return
+	}
 	helper := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
 	started := false
 	userRelease, err := helper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &started)
@@ -238,6 +242,11 @@ func (h *GatewayHandler) GeminiInteractionsCreate(c *gin.Context) {
 		return
 	}
 	upstreamModel := account.GetMappedModel(routingModel)
+	// 账号别名映射后再校验，且只限制创建，不影响既有任务恢复与结算。
+	if geminiImageGenerationRejected(c, key, body, model, routingModel, upstreamModel) {
+		googleError(c, http.StatusBadRequest, service.ImageGenerationPermissionMessage())
+		return
+	}
 	if !service.IsSafeGeminiModelPathSegment(strings.TrimPrefix(upstreamModel, "models/")) {
 		googleError(c, http.StatusServiceUnavailable, "Invalid upstream model configuration")
 		return

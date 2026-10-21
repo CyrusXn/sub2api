@@ -146,6 +146,75 @@ func TestOpenAIDefaultLowRateOrderingAndFailover(t *testing.T) {
 	}
 }
 
+func TestOpenAILegacyBatchLowRateKeepsCheapestSticky(t *testing.T) {
+	for _, scenario := range []string{"expensive peer", "excluded cheaper peer", "cooled cheaper peer", "unsupported cheaper peer", "available cheaper peer", "full sticky spillover"} {
+		t.Run(scenario, func(t *testing.T) {
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			now := time.Now()
+			peer := upstreamCostTestAccount(71, UpstreamBillingProbeStatusOK, 0.02, now.Add(-time.Minute), 30*time.Minute)
+			sticky := upstreamCostTestAccount(72, UpstreamBillingProbeStatusOK, 0.02, now.Add(-time.Minute), 30*time.Minute)
+			thirdRate := 0.8
+			if scenario != "expensive peer" && scenario != "full sticky spillover" {
+				thirdRate = 0.01
+			}
+			third := upstreamCostTestAccount(73, UpstreamBillingProbeStatusOK, thirdRate, now.Add(-time.Minute), 30*time.Minute)
+			for i, account := range []*Account{peer, sticky, third} {
+				account.Status, account.Schedulable, account.Concurrency, account.Priority = StatusActive, true, 1, i
+				account.GroupIDs = []int64{1}
+			}
+			excluded := map[int64]struct{}{}
+			if scenario == "excluded cheaper peer" {
+				excluded[third.ID] = struct{}{}
+			}
+			if scenario == "cooled cheaper peer" {
+				until := now.Add(time.Minute)
+				third.TempUnschedulableUntil = &until
+			}
+			if scenario == "unsupported cheaper peer" {
+				third.Credentials = map[string]any{"model_mapping": map[string]any{"gpt-4o": "gpt-4o"}}
+			}
+			cfg := &config.Config{}
+			cfg.Gateway.Scheduling.LoadBatchEnabled = true
+			concurrency := schedulerTestConcurrencyCache{}
+			if scenario == "full sticky spillover" {
+				third.Priority = -1
+				cfg.Gateway.Scheduling.StickySessionMaxWaiting = 1
+				concurrency.acquireResults = map[int64]bool{sticky.ID: false}
+				concurrency.waitCounts = map[int64]int{sticky.ID: 1}
+			}
+			cache := &schedulerTestGatewayCache{}
+			svc := &OpenAIGatewayService{
+				accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{*peer, *sticky, *third}},
+				cfg:         cfg, cache: cache,
+				concurrencyService: NewConcurrencyService(concurrency),
+			}
+			groupID := int64(1)
+			require.NoError(t, svc.setStickySessionAccountID(context.Background(), &groupID, "session", sticky.ID, time.Hour))
+			selection, _, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "session", "gpt-test", excluded, OpenAIUpstreamTransportAny, false)
+			require.NoError(t, err)
+			wantID := sticky.ID
+			if scenario == "available cheaper peer" {
+				wantID = third.ID
+			}
+			if scenario == "full sticky spillover" {
+				wantID = peer.ID
+			}
+			require.Equal(t, wantID, selection.Account.ID, "仅严格更便宜的可用候选可以覆盖粘性")
+			boundID, err := svc.getStickySessionAccountID(context.Background(), &groupID, "session")
+			require.NoError(t, err)
+			wantBoundID := wantID
+			if scenario == "full sticky spillover" {
+				wantBoundID = sticky.ID
+			}
+			require.Equal(t, wantBoundID, boundID)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
 func TestAdvancedCostSchedulerUsesTopKOverflowWhenPreferredAccountIsKnownFull(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
