@@ -1,6 +1,7 @@
 """使用临时目录及命令替身验证发布失败和清理边界，不连接服务器。"""
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -9,6 +10,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseSafetyTests(unittest.TestCase):
+    def test_docker_go_version_satisfies_module_requirement(self):
+        project = ROOT.parent.parent
+        image_version = re.search(r'^ARG GOLANG_IMAGE=golang:(\d+\.\d+\.\d+)-',
+                                  (project / 'Dockerfile').read_text(), re.M)
+        module_version = re.search(r'^go (\d+\.\d+\.\d+)$',
+                                   (project / 'backend/go.mod').read_text(), re.M)
+        self.assertIsNotNone(image_version)
+        self.assertIsNotNone(module_version)
+        self.assertGreaterEqual(tuple(map(int, image_version[1].split('.'))),
+                                tuple(map(int, module_version[1].split('.'))),
+                                '发布镜像 Go 版本不能低于 go.mod 要求')
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
