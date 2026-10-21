@@ -36,8 +36,8 @@ import type {
   OpenCodeGoUsageState
 } from '@/types'
 
-export async function listUpstreamSites(): Promise<UpstreamSiteCredentialSummary[]> {
-  const { data } = await apiClient.get<{ items: UpstreamSiteCredentialSummary[] }>('/admin/accounts/upstream-sites')
+export async function listUpstreamSites(params?: { include_history?: boolean }): Promise<UpstreamSiteCredentialSummary[]> {
+  const { data } = await apiClient.get<{ items: UpstreamSiteCredentialSummary[] }>('/admin/accounts/upstream-sites', { params })
   return data.items
 }
 

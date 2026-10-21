@@ -85,6 +85,12 @@ func (r *dashboardAggregationRepository) populateBusinessLedger(ctx context.Cont
 			// 日内最后一次采集未必是零点余额，不能搭配整日充值冒充精确实账。
 			ledger.RangeStatus = "inexact_boundary"
 		}
+		if sameSites && openedAt.Valid && closedAt.Valid {
+			// 保留零值和负值，并显式携带快照时间说明日内边界误差。
+			consumption := opening.Float64 + result.RangeUpstreamRechargeTotal - closing.Float64
+			profit := result.Range.ActualCost - consumption
+			ledger.RangeConsumptionEstimate, ledger.RangeProfitEstimate = &consumption, &profit
+		}
 		if sameSites && exactBoundaries {
 			consumption := opening.Float64 + result.RangeUpstreamRechargeTotal - closing.Float64
 			profit := result.Range.ActualCost - consumption

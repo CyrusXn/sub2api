@@ -404,7 +404,6 @@
                 :global-probe-enabled="upstreamBillingProbeGloballyEnabled"
                 :now="upstreamBillingNow"
                 :probing="probingUpstreamBilling.has(row.id)"
-                :change-direction="upstreamBillingChangeDirections.get(row.id) ?? null"
                 @probe="handleProbeUpstreamBilling(row)"
               />
             </div>
@@ -657,7 +656,6 @@ const togglingSchedulable = ref<number | null>(null)
 const menu = reactive<{show:boolean, acc:Account|null, anchorRect:DOMRect|null}>({ show: false, acc: null, anchorRect: null })
 const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
-const upstreamBillingChangeDirections = reactive(new Map<number, 'up' | 'down'>())
 // 同一页面会话中，每个已过期快照只静默探测一次，失败也不循环打上游。
 const attemptedExpiredUpstreamBilling = new Set<number>()
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
@@ -2505,20 +2503,9 @@ const patchAccountInList = (updatedAccount: Account) => {
   accounts.value = nextAccounts
   syncAccountRefs(mergedAccount)
 }
-const effectiveUpstreamBillingRate = (snapshot?: UpstreamBillingProbeSnapshot) => {
-  const value = snapshot?.data?.effective_rate_multiplier
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
-}
 const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBillingProbeSnapshot) => {
   const account = accounts.value.find(item => item.id === accountID)
   if (!account) return
-  const previousRate = effectiveUpstreamBillingRate(account.extra?.upstream_billing_probe)
-  const nextRate = effectiveUpstreamBillingRate(snapshot)
-  if (previousRate != null && nextRate != null && previousRate !== nextRate) {
-    upstreamBillingChangeDirections.set(accountID, nextRate > previousRate ? 'up' : 'down')
-  } else {
-    upstreamBillingChangeDirections.delete(accountID)
-  }
   // 仅使用后端确认已写入账号表的同步倍率，避免把只读探测值误当成结算倍率。
   const syncedRate = snapshot.synced_rate_multiplier
   const rateMultiplier = typeof syncedRate === 'number' && Number.isFinite(syncedRate) && syncedRate >= 0

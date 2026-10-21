@@ -31,6 +31,11 @@ type stubOpenAIAccountRepo struct {
 	accounts []Account
 }
 
+func (r stubOpenAIAccountRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
+	// 通用转发替身允许故障冷却写入，持久化断言由专用 repo 替身覆盖。
+	return nil
+}
+
 type tempUnschedulableOpenAIAccountRepo struct {
 	stubOpenAIAccountRepo
 	modelRateLimitAccountID int64

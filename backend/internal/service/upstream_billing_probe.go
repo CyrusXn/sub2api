@@ -136,7 +136,15 @@ type UpstreamBillingProbeSnapshot struct {
 	// to what" without a separate history table.
 	SyncedRateMultiplier *float64 `json:"synced_rate_multiplier,omitempty"`
 	// ManualRateMultiplier 仅在失败探测时作为管理员兜底，不代表上游自动声明值。
-	ManualRateMultiplier *float64 `json:"manual_rate_multiplier,omitempty"`
+	ManualRateMultiplier *float64                   `json:"manual_rate_multiplier,omitempty"`
+	RateChange           *UpstreamBillingRateChange `json:"rate_change,omitempty"`
+}
+
+// UpstreamBillingRateChange 保留最近一次实际变化，不随相同结果或失败探测消失。
+type UpstreamBillingRateChange struct {
+	From      float64   `json:"from"`
+	To        float64   `json:"to"`
+	ChangedAt time.Time `json:"changed_at"`
 }
 
 // UpstreamAccountBalanceSnapshot 独立记录网页登录余额，避免余额失败覆盖已成功的倍率。
@@ -2101,6 +2109,18 @@ func (s *UpstreamBillingProbeService) updateSnapshot(
 	writer, ok := s.accountRepo.(upstreamBillingProbeSnapshotWriter)
 	if !ok {
 		return ErrUpstreamBillingProbeUnavailable
+	}
+	if previous := decodeUpstreamBillingProbeSnapshot(account.Extra); previous != nil && snapshot.Status != UpstreamBillingProbeStatusUnsupported {
+		snapshot.RateChange = previous.RateChange
+		before, hasBefore := numberFromAny(previous.Data["effective_rate_multiplier"])
+		// 网页探测失败会清除 data，但最近变化的目标值仍是最后一个已知自动倍率。
+		if !hasBefore && previous.RateChange != nil {
+			before, hasBefore = previous.RateChange.To, true
+		}
+		after, hasAfter := numberFromAny(snapshot.Data["effective_rate_multiplier"])
+		if snapshot.Status == UpstreamBillingProbeStatusOK && hasBefore && hasAfter && before >= 0 && after >= 0 && before != after {
+			snapshot.RateChange = &UpstreamBillingRateChange{From: before, To: after, ChangedAt: snapshot.LastAttemptAt}
+		}
 	}
 	s.observeSubscriptionRate(ctx, account, snapshot)
 	if err := writer.UpdateUpstreamBillingProbeSnapshot(ctx, account, snapshot, rateMultiplier); err != nil {

@@ -109,6 +109,43 @@ func upstreamCostTestOAuthAccount(id int64) *Account {
 	return &Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 }
 
+func TestOpenAIDefaultLowRateOrderingAndFailover(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(strconv.FormatBool(batch), func(t *testing.T) {
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			now := time.Now()
+			cheap := upstreamCostTestAccount(71, UpstreamBillingProbeStatusOK, 0.02, now.Add(-time.Minute), 30*time.Minute)
+			middle := upstreamCostTestAccount(72, UpstreamBillingProbeStatusOK, 0.2, now.Add(-time.Minute), 30*time.Minute)
+			expensive := upstreamCostTestAccount(73, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+			for i, account := range []*Account{cheap, middle, expensive} {
+				account.Status, account.Schedulable, account.Concurrency, account.Priority = StatusActive, true, 1, 10-i
+				account.GroupIDs = []int64{1}
+			}
+			cfg := &config.Config{}
+			cfg.Gateway.Scheduling.LoadBatchEnabled = batch
+			svc := &OpenAIGatewayService{
+				accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{*cheap, *middle, *expensive}},
+				cfg:         cfg, cache: &schedulerTestGatewayCache{sessionBindings: map[string]int64{"session": expensive.ID}},
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+			}
+			groupID := int64(1)
+			excluded := make(map[int64]struct{})
+			for _, expected := range []int64{cheap.ID, middle.ID, expensive.ID} {
+				selection, _, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "session", "gpt-test", excluded, OpenAIUpstreamTransportAny, false)
+				require.NoError(t, err)
+				require.Equal(t, expected, selection.Account.ID, "倍率应优先于优先级和普通会话粘性")
+				if selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				excluded[expected] = struct{}{}
+			}
+			_, _, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "session", "gpt-test", excluded, OpenAIUpstreamTransportAny, false)
+			require.ErrorIs(t, err, ErrNoAvailableAccounts)
+		})
+	}
+}
+
 func TestAdvancedCostSchedulerUsesTopKOverflowWhenPreferredAccountIsKnownFull(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()

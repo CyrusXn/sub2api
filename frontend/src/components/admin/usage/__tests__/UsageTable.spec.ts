@@ -120,6 +120,7 @@ const DataTableStub = {
         <slot name="cell-reasoning_effort" :row="row" :value="row.reasoning_effort" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
+        <slot name="cell-cache_rate" :row="row" />
         <slot name="cell-cost" :row="row" />
         <slot name="cell-upstream_cost" :row="row" />
         <slot name="cell-latency" :row="row" />
@@ -159,6 +160,23 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
+  it('缓存率使用全部输入，不含输出；区分零命中和无数据', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          { ...baseImageRow, input_tokens: 200, cache_creation_tokens: 100, cache_read_tokens: 700, output_tokens: 9000 },
+          { ...baseImageRow, request_id: 'no-cache', input_tokens: 100 },
+          { ...baseImageRow, request_id: 'all-cache', cache_read_tokens: 100 },
+          { ...baseImageRow, request_id: 'no-input', output_tokens: 100 },
+        ],
+        columns: [{ key: 'cache_rate', label: '缓存率' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.findAll('[data-testid="usage-cache-rate"]').map(cell => cell.text())).toEqual(['70.0%', '0.0%', '100.0%', '—'])
+    expect(wrapper.get('[data-testid="usage-cache-rate"]').attributes('title')).toContain('usage.cacheRateHint')
+  })
+
   it('shows output TPS in the latency cell using total duration', () => {
     const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 1000, duration_ms: 20_000, first_token_ms: 10_000 }
     const wrapper = mount(UsageTable, {

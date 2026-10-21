@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -56,3 +57,49 @@ func TestBusinessLedgerBoundaryAccounting(t *testing.T) {
 }
 
 func ledgerTestFloat(value float64) *float64 { return &value }
+
+func TestBusinessLedgerSnapshotEstimates(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		opening, closing any
+		sameSites        bool
+		want             *float64
+	}{
+		{"日内快照保留估值", 100.0, 80.0, true, ledgerTestFloat(30)},
+		{"零消费不是缺失", 70.0, 80.0, true, ledgerTestFloat(0)},
+		{"负消费不裁剪", 100.0, 180.0, true, ledgerTestFloat(-70)},
+		{"缺少期初不估算", nil, 80.0, true, nil},
+		{"缺少期末不估算", 100.0, nil, true, nil},
+		{"站点变化不估算", 100.0, 80.0, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			repo := newDashboardAggregationRepositoryWithSQL(db)
+			start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+			end := start.AddDate(0, 0, 2)
+			mock.ExpectQuery(`(?s)WITH current_assets.*dashboard_business_asset_daily`).
+				WillReturnRows(sqlmock.NewRows([]string{"cash", "subscription", "total", "known", "unknown", "opening", "closing", "opened_at", "closed_at", "same_sites", "exact_boundaries"}).
+					AddRow(80.0, 0.0, 80.0, 80.0, 0, tc.opening, tc.closing, start.Add(-time.Minute), end.Add(-time.Minute), tc.sameSites, false))
+			result := &service.DashboardBusinessSummary{UpstreamRechargeTotal: 100, RangeUpstreamRechargeTotal: 10}
+			result.Range.ActualCost = 5
+			require.NoError(t, repo.populateBusinessLedger(context.Background(), start, end, result))
+			require.Nil(t, result.Ledger.RangeConsumption)
+			raw, err := json.Marshal(result.Ledger)
+			require.NoError(t, err)
+			var ledger map[string]any
+			require.NoError(t, json.Unmarshal(raw, &ledger))
+			require.Contains(t, ledger, "range_consumption_estimate")
+			require.Contains(t, ledger, "range_profit_estimate")
+			if tc.want == nil {
+				require.Nil(t, ledger["range_consumption_estimate"])
+				require.Nil(t, ledger["range_profit_estimate"])
+			} else {
+				require.Equal(t, *tc.want, ledger["range_consumption_estimate"])
+				require.Equal(t, 5-*tc.want, ledger["range_profit_estimate"])
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

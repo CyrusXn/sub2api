@@ -54,6 +54,7 @@ type DashboardBusinessSummary struct {
 	RangeUpstreamBalanceTotal *float64 `json:"range_upstream_balance_total"`
 	// RangeBalanceSnapshotDate 上述两个余额快照对应的自然日，便于前端说明"截至某日"。
 	RangeBalanceSnapshotDate *time.Time                     `json:"range_balance_snapshot_date"`
+	RangeBalanceCapturedAt   *time.Time                     `json:"range_balance_captured_at"`
 	Lifetime                 DashboardBusinessTotals        `json:"lifetime"`
 	Range                    DashboardBusinessTotals        `json:"range"`
 	Daily                    []DashboardBusinessDailyPoint  `json:"daily"`
@@ -85,7 +86,10 @@ type DashboardBusinessLedger struct {
 	ClosingCapturedAt           *time.Time `json:"closing_captured_at"`
 	RangeConsumption            *float64   `json:"range_consumption"`
 	RangeProfit                 *float64   `json:"range_profit"`
-	RangeStatus                 string     `json:"range_status"`
+	// 日内快照估值单独返回，不能冒充精确日期边界的实账。
+	RangeConsumptionEstimate *float64 `json:"range_consumption_estimate"`
+	RangeProfitEstimate      *float64 `json:"range_profit_estimate"`
+	RangeStatus              string   `json:"range_status"`
 }
 
 type DashboardLowBalanceAccount struct {

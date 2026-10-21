@@ -509,7 +509,7 @@ func TestOpenAIPoolModeTempRule_StopsSameAccountRetryAndIsolatesBlockToModel(t *
 	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
 }
 
-func TestOpenAIPoolModeRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.T) {
+func TestOpenAIPoolModeRetryable5xx_CreatesModelTransientBlock(t *testing.T) {
 	repo := &errorPolicyRepoStub{}
 	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	gateway := &OpenAIGatewayService{rateLimitService: rateLimitService}
@@ -535,7 +535,7 @@ func TestOpenAIPoolModeRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.
 		require.False(t, shouldDisable)
 	}
 
-	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
+	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
 }
 
 func TestOpenAIPoolModeNonRetryable5xx_StillCreatesModelTransientBlock(t *testing.T) {

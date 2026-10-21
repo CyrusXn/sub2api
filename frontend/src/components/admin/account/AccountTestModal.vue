@@ -2,7 +2,7 @@
   <BaseDialog
     :show="show"
     :title="t('admin.accounts.testAccountConnection')"
-    width="normal"
+    width="wide"
     @close="handleClose"
   >
     <div class="space-y-4">
@@ -41,15 +41,24 @@
         </span>
       </div>
 
+      <div class="tabs grid grid-cols-2" role="tablist" :aria-label="t('admin.accounts.testTabsLabel')">
+        <button v-for="tab in testTabs" :key="tab.value" type="button" role="tab"
+          :data-test="`${tab.value}-tab`" :aria-selected="activeTab === tab.value"
+          :disabled="running" class="tab" :class="activeTab === tab.value ? 'tab-active' : ''"
+          @click="switchTab(tab.value)">
+          {{ tab.label }}
+        </button>
+      </div>
+
       <!-- Grok: mode first, then optional model / mode params -->
-      <div v-if="isGrokAccount" class="space-y-1.5">
+      <div v-if="isGrokAccount && !isChat" class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.grok.testMode') }}
         </label>
         <Select
           v-model="grokTestMode"
           :options="grokTestModeOptions"
-          :disabled="status === 'connecting'"
+          :disabled="running"
         />
         <p class="text-xs text-gray-500 dark:text-gray-400">
           {{ t('admin.accounts.grok.testModeHint') }}
@@ -63,21 +72,21 @@
         <Select
           v-model="selectedModelId"
           :options="modelOptionsForMode"
-          :disabled="loadingModels || status === 'connecting'"
+          :disabled="loadingModels || running"
           value-key="id"
           label-key="display_name"
           :placeholder="loadingModels ? t('common.loading') + '...' : t('admin.accounts.selectTestModel')"
         />
       </div>
 
-      <div v-if="isOpenAIAccount" class="space-y-1.5">
+      <div v-if="isOpenAIAccount && !isChat" class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.openai.testMode') }}
         </label>
         <Select
           v-model="testMode"
           :options="openAITestModeOptions"
-          :disabled="status === 'connecting'"
+          :disabled="running"
         />
       </div>
 
@@ -87,12 +96,12 @@
           :label="promptInputLabel"
           :placeholder="promptInputPlaceholder"
           :hint="promptInputHint"
-          :disabled="status === 'connecting'"
+          :disabled="running"
           rows="3"
         />
       </div>
       <p
-        v-else-if="isGrokAccount && promptInputHint"
+        v-else-if="!isChat && isGrokAccount && promptInputHint"
         class="text-xs text-gray-500 dark:text-gray-400"
       >
         {{ promptInputHint }}
@@ -107,7 +116,7 @@
           <button
             type="button"
             class="btn btn-secondary btn-sm shrink-0"
-            :disabled="status === 'connecting'"
+            :disabled="running"
             @click="imageFileInput?.click()"
           >
             {{ t('admin.accounts.grok.chooseImageFile') }}
@@ -124,7 +133,7 @@
             type="file"
             accept="image/png,image/jpeg,image/webp,image/gif"
             class="hidden"
-            :disabled="status === 'connecting'"
+            :disabled="running"
             @change="onImageFileChange"
           />
         </div>
@@ -146,7 +155,7 @@
           <button
             type="button"
             class="btn btn-secondary btn-sm shrink-0"
-            :disabled="status === 'connecting'"
+            :disabled="running"
             @click="audioFileInput?.click()"
           >
             {{ t('admin.accounts.grok.chooseAudioFile') }}
@@ -163,15 +172,41 @@
             type="file"
             accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm"
             class="hidden"
-            :disabled="status === 'connecting'"
+            :disabled="running"
             @change="onAudioFileChange"
           />
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.grok.audioUploadHint') }}</p>
       </div>
 
-      <!-- Terminal Output -->
-      <div class="group relative">
+      <div v-if="isChat" class="space-y-3">
+        <div ref="conversationRef" role="log" aria-live="polite"
+          class="h-[min(42vh,360px)] min-h-[180px] space-y-3 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-900/50 sm:p-4">
+          <div v-if="messages.length === 0 && !pendingPrompt" class="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-gray-400">
+            <Icon name="chat" size="lg" class="text-primary-500" />
+            <p>{{ t('admin.accounts.testConversationEmpty') }}</p>
+            <p class="text-xs">{{ t('admin.accounts.testConversationEphemeral') }}</p>
+          </div>
+          <div v-for="(message, index) in messages" :key="`${message.role}-${index}`"
+            class="max-w-[92%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-6 sm:max-w-[80%]"
+            :class="message.role === 'user' ? 'ml-auto bg-primary-500 text-white' : 'mr-auto border border-gray-200 bg-white text-gray-800 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-100'">
+            {{ message.content }}
+          </div>
+          <div v-if="pendingPrompt" class="ml-auto max-w-[92%] whitespace-pre-wrap rounded-2xl bg-primary-500 px-3 py-2 text-sm leading-6 text-white sm:max-w-[80%]">{{ pendingPrompt }}</div>
+          <div v-if="streamingContent" class="mr-auto max-w-[92%] whitespace-pre-wrap rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm leading-6 text-gray-800 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-100 sm:max-w-[80%]">
+            {{ streamingContent }}<span v-if="running" class="animate-pulse">▍</span>
+          </div>
+          <p v-else-if="running" role="status" class="text-xs text-gray-400">{{ t('admin.accounts.connectingToApi') }}</p>
+          <p v-if="pendingPrompt && !running && status === 'idle'" class="text-xs text-gray-400">{{ t('admin.accounts.testStopped') }}</p>
+        </div>
+        <TextArea v-model="testPrompt" :label="t('admin.accounts.testConversationInput')"
+          :placeholder="t('admin.accounts.testConversationPlaceholder')"
+          :disabled="running || loadingModels || !selectedModelId" rows="2" />
+        <div v-if="status === 'error'" role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{{ errorMessage }}</div>
+      </div>
+
+      <!-- 探针保留完整媒体诊断，对话单独展示消息。 -->
+      <div v-else class="group relative">
         <div
           ref="terminalRef"
           class="max-h-[240px] min-h-[120px] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 p-4 font-mono text-sm dark:border-gray-800 dark:bg-black"
@@ -327,6 +362,14 @@
           {{ t('common.close') }}
         </button>
         <button
+          v-if="running" type="button" data-test="stop-test" class="btn btn-secondary" @click="stopTest"
+        >{{ t('admin.accounts.stopTest') }}</button>
+        <button v-if="isChat" type="button" data-test="send-test" class="btn btn-primary"
+          :disabled="!canStartTest" @click="startTest">
+          <Icon name="chat" size="sm" />{{ t('admin.accounts.sendTestMessage') }}
+        </button>
+        <button
+          v-else
           @click="startTest"
           :disabled="!canStartTest"
           :class="[
@@ -365,7 +408,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -375,6 +418,9 @@ import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
+import { modelMatchesTab } from '@/api/workspace'
+import { normalizeUserFacingErrorMessage } from '@/utils/userFacingMessage'
+import { compareTestModelIds } from '@/utils/testModelDefaults'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -404,6 +450,17 @@ const status = ref<'idle' | 'connecting' | 'success' | 'error'>('idle')
 const outputLines = ref<OutputLine[]>([])
 const streamingContent = ref('')
 const errorMessage = ref('')
+interface ChatMessage { role: 'user' | 'assistant'; content: string }
+const messages = ref<ChatMessage[]>([])
+const pendingPrompt = ref('')
+const running = ref(false)
+const activeTab = ref<'probe' | 'chat'>('probe')
+const isChat = computed(() => activeTab.value === 'chat')
+const testTabs = computed(() => [
+  { value: 'probe' as const, label: t('admin.accounts.testProbeTab') },
+  { value: 'chat' as const, label: t('admin.accounts.testChatTab') }
+])
+const conversationRef = ref<HTMLElement | null>(null)
 const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
@@ -437,7 +494,6 @@ const grokTestModeOptions = computed(() => [
   { value: 'stt', label: t('admin.accounts.grok.testModeSTT') },
   { value: 'realtime', label: t('admin.accounts.grok.testModeRealtime') }
 ])
-const prioritizedGeminiModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gemini-2.0-flash']
 const supportsGeminiImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
   if (!modelID.startsWith('gemini-') || !modelID.includes('-image')) return false
@@ -478,11 +534,13 @@ const supportsImageTest = computed(
 
 // Model select only when the mode needs a model.
 const showModelSelect = computed(() => {
+  if (isChat.value) return true
   if (!isGrokAccount.value) return true
   return grokTestMode.value === 'text' || grokTestMode.value === 'image' || grokTestMode.value === 'video'
 })
 
 const modelOptionsForMode = computed(() => {
+  if (isChat.value) return availableModels.value.filter(model => modelMatchesTab(model.id, 'chat'))
   if (!isGrokAccount.value) return availableModels.value
   if (grokTestMode.value === 'image') {
     return availableModels.value.filter((m) => isGrokImageModel(m.id))
@@ -497,6 +555,7 @@ const modelOptionsForMode = computed(() => {
 })
 
 const supportsPromptInput = computed(() => {
+  if (isChat.value) return false
   if (!isGrokAccount.value) {
     return supportsImageTest.value
   }
@@ -509,9 +568,9 @@ const supportsPromptInput = computed(() => {
 })
 
 const supportsImageUpload = computed(
-  () => isGrokAccount.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')
+  () => !isChat.value && isGrokAccount.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')
 )
-const supportsAudioUpload = computed(() => isGrokAccount.value && grokTestMode.value === 'stt')
+const supportsAudioUpload = computed(() => !isChat.value && isGrokAccount.value && grokTestMode.value === 'stt')
 const imageUploadLabel = computed(() =>
   grokTestMode.value === 'video'
     ? t('admin.accounts.grok.videoFirstFrameLabel')
@@ -651,6 +710,7 @@ const promptInputHint = computed(() => {
 })
 
 const testModeSummary = computed(() => {
+  if (isChat.value) return t('admin.accounts.testConversationEphemeral')
   if (isGrokAccount.value) {
     switch (grokTestMode.value) {
       case 'video':
@@ -674,7 +734,8 @@ const testModeSummary = computed(() => {
 })
 
 const canStartTest = computed(() => {
-  if (status.value === 'connecting') return false
+  if (running.value || loadingModels.value) return false
+  if (isChat.value) return Boolean(testPrompt.value.trim()) && modelOptionsForMode.value.some(model => model.id === selectedModelId.value)
   if (isGrokAccount.value) {
     if (
       grokTestMode.value === 'search' ||
@@ -688,17 +749,6 @@ const canStartTest = computed(() => {
   }
   return Boolean(selectedModelId.value)
 })
-
-const sortTestModels = (models: ClaudeModel[]) => {
-  const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
-
-  return [...models].sort((a, b) => {
-    const aPriority = priorityMap.get(a.id) ?? Number.MAX_SAFE_INTEGER
-    const bPriority = priorityMap.get(b.id) ?? Number.MAX_SAFE_INTEGER
-    if (aPriority !== bPriority) return aPriority - bPriority
-    return 0
-  })
-}
 
 // Load available models when modal opens
 const applyDefaultPromptForMode = () => {
@@ -722,35 +772,8 @@ const pickDefaultModelForMode = () => {
     return
   }
   if (opts.some((m) => m.id === selectedModelId.value)) return
-  if (grokTestMode.value === 'text') {
-    const preferred =
-      opts.find((m) => m.id.includes('grok-4.5')) ||
-      opts.find((m) => m.id === 'grok') ||
-      opts[0]
-    selectedModelId.value = preferred.id
-    return
-  }
   selectedModelId.value = opts[0].id
 }
-
-watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.account) {
-      testPrompt.value = ''
-      testMode.value = 'default'
-      grokTestMode.value = 'text'
-      resetState()
-      await loadAvailableModels()
-      if (isGrokAccount.value) {
-        pickDefaultModelForMode()
-        applyDefaultPromptForMode()
-      }
-    } else {
-      abortStream()
-    }
-  }
-)
 
 watch(grokTestMode, () => {
   if (!isGrokAccount.value) return
@@ -760,33 +783,31 @@ watch(grokTestMode, () => {
   applyDefaultPromptForMode()
 })
 
+watch(selectedModelId, () => {
+  messages.value = []
+  resetState()
+  applyDefaultPromptForMode()
+})
+
 const loadAvailableModels = async () => {
   if (!props.account) return
-
+  const account = props.account
+  const loadId = ++modelLoadId
   loadingModels.value = true
   selectedModelId.value = '' // Reset selection before loading
   try {
-    const models = await adminAPI.accounts.getAvailableModels(props.account.id)
-    availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
-      ? sortTestModels(models)
-      : models
-    // Default selection by platform
-    if (availableModels.value.length > 0) {
-      if (props.account.platform === 'gemini') {
-        selectedModelId.value = availableModels.value[0].id
-      } else {
-        // Try to select Sonnet as default, otherwise use first model
-        const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))
-        selectedModelId.value = sonnetModel?.id || availableModels.value[0].id
-      }
-    }
-  } catch (error) {
-    console.error('Failed to load available models:', error)
+    const models = await adminAPI.accounts.getAvailableModels(account.id)
+    if (loadId !== modelLoadId) return
+    availableModels.value = [...models].sort((a, b) => compareTestModelIds(a.id, b.id))
+    pickDefaultModelForMode()
+    applyDefaultPromptForMode()
+  } catch {
+    if (loadId !== modelLoadId) return
     // Fallback to empty list
     availableModels.value = []
     selectedModelId.value = ''
   } finally {
-    loadingModels.value = false
+    if (loadId === modelLoadId) loadingModels.value = false
   }
 }
 
@@ -799,10 +820,11 @@ const resetState = () => {
   generatedAudios.value = []
   generatedVideos.value = []
   previewImageUrl.value = ''
+  pendingPrompt.value = ''
 }
 
 const handleClose = () => {
-  abortStream()
+  clearSession()
   emit('close')
 }
 
@@ -811,6 +833,32 @@ const abortStream = () => {
     abortController.abort()
     abortController = null
   }
+  running.value = false
+}
+
+const stopTest = () => {
+  abortStream()
+  status.value = 'idle'
+}
+
+const clearSession = () => {
+  abortStream()
+  ++modelLoadId
+  loadingModels.value = false
+  messages.value = []
+  testPrompt.value = ''
+  clearMediaUploads()
+  resetState()
+}
+
+const switchTab = (tab: 'probe' | 'chat') => {
+  if (running.value || activeTab.value === tab) return
+  activeTab.value = tab
+  resetState()
+  clearMediaUploads()
+  testPrompt.value = isChat.value ? '你是谁' : ''
+  pickDefaultModelForMode()
+  applyDefaultPromptForMode()
 }
 
 const addLine = (text: string, className: string = 'text-gray-300') => {
@@ -823,25 +871,37 @@ const scrollToBottom = async () => {
   if (terminalRef.value) {
     terminalRef.value.scrollTop = terminalRef.value.scrollHeight
   }
+  if (conversationRef.value) {
+    conversationRef.value.scrollTop = conversationRef.value.scrollHeight
+  }
 }
 
 const startTest = async () => {
-  if (!props.account || !canStartTest.value) return
+  if (!props.show || !props.account || !canStartTest.value) return
 
+  const prompt = isChat.value || supportsPromptInput.value ? testPrompt.value.trim() : ''
   resetState()
+  if (isChat.value) {
+    pendingPrompt.value = prompt
+    testPrompt.value = ''
+  }
   status.value = 'connecting'
+  running.value = true
   addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
   addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-gray-400')
-  if (isGrokAccount.value) {
+  if (isGrokAccount.value && !isChat.value) {
     const modeLabel =
       grokTestModeOptions.value.find((o) => o.value === grokTestMode.value)?.label || grokTestMode.value
     addLine(t('admin.accounts.grok.selectedTestMode', { mode: modeLabel }), 'text-gray-400')
   }
   addLine('', 'text-gray-300')
 
-  abortStream()
-
-  abortController = new AbortController()
+  const controller = new AbortController()
+  abortController = controller
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  let timedOut = false
+  const timeout = setTimeout(() => { timedOut = true; controller.abort() }, 120000)
+  const isCurrent = () => abortController === controller && !controller.signal.aborted
 
   try {
     const requestBody: {
@@ -850,29 +910,31 @@ const startTest = async () => {
       mode?: string
       image_data_url?: string
       audio_data_url?: string
+      messages?: ChatMessage[]
     } = {
       model_id: showModelSelect.value ? selectedModelId.value : '',
-      prompt: supportsPromptInput.value ? testPrompt.value.trim() : ''
+      prompt
     }
+    if (isChat.value) requestBody.messages = [...messages.value, { role: 'user', content: prompt }]
     if (isOpenAIAccount.value) {
-      requestBody.mode = testMode.value
+      requestBody.mode = isChat.value ? 'default' : testMode.value
     }
     if (isGrokAccount.value) {
       // Always send explicit Grok mode. search/tts/stt/realtime are standalone
       // endpoints (no free-form model select). text/image/video use optional model.
-      requestBody.mode = grokTestMode.value
+      requestBody.mode = isChat.value ? 'text' : grokTestMode.value
       if (
-        grokTestMode.value === 'search' ||
+        !isChat.value && (grokTestMode.value === 'search' ||
         grokTestMode.value === 'tts' ||
         grokTestMode.value === 'stt' ||
-        grokTestMode.value === 'realtime'
+        grokTestMode.value === 'realtime')
       ) {
         requestBody.model_id = ''
       }
-      if (uploadImageDataURL.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')) {
+      if (!isChat.value && uploadImageDataURL.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')) {
         requestBody.image_data_url = uploadImageDataURL.value
       }
-      if (uploadAudioDataURL.value && grokTestMode.value === 'stt') {
+      if (!isChat.value && uploadAudioDataURL.value && grokTestMode.value === 'stt') {
         requestBody.audio_data_url = uploadAudioDataURL.value
       }
     }
@@ -889,52 +951,66 @@ const startTest = async () => {
         [ADMIN_UI_REQUEST_HEADER]: '1'
       },
       body: JSON.stringify(requestBody),
-      signal: abortController.signal
+      signal: controller.signal
     })
 
+    if (!isCurrent()) return
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
 
-    const reader = response.body?.getReader()
+    reader = response.body?.getReader()
     if (!reader) {
       throw new Error(t('admin.accounts.grok.noResponseBody'))
     }
 
     const decoder = new TextDecoder()
     let buffer = ''
+    const processLine = (line: string) => {
+      if (!line.startsWith('data:')) return
+      const jsonStr = line.slice(5).trim()
+      if (jsonStr) handleEvent(JSON.parse(jsonStr))
+    }
 
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
+      if (!isCurrent()) return
+      if (done) {
+        buffer += decoder.decode()
+        if (buffer.trim()) processLine(buffer)
+        break
+      }
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
 
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6).trim()
-          if (jsonStr) {
-            try {
-              const event = JSON.parse(jsonStr)
-              handleEvent(event)
-            } catch (e) {
-              console.error('Failed to parse SSE event:', e)
-            }
-          }
-        }
+        processLine(line)
       }
     }
-  } catch (error: unknown) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      status.value = 'idle'
-      return
+    if (status.value === 'connecting') throw new Error(t('admin.accounts.testStreamIncomplete'))
+    if (isChat.value && status.value === 'success') {
+      if (!streamingContent.value.trim()) throw new Error(t('admin.accounts.testStreamIncomplete'))
+      // 只有完整成功的问答进入下轮上下文，失败或停止的片段仅供当前查看。
+      messages.value.push({ role: 'user', content: prompt }, { role: 'assistant', content: streamingContent.value })
+      pendingPrompt.value = ''
+      streamingContent.value = ''
     }
+  } catch {
+    if (abortController !== controller) return
     status.value = 'error'
-    const msg = error instanceof Error ? error.message : t('common.unknownError')
+    const msg = timedOut ? t('admin.accounts.testTimeout') : t('admin.accounts.testRequestFailed')
     errorMessage.value = msg
     addLine(t('admin.accounts.errorPrefix', { message: msg }), 'text-red-400')
+  } finally {
+    clearTimeout(timeout)
+    await reader?.cancel().catch(() => {})
+    reader?.releaseLock()
+    if (abortController === controller) {
+      abortController = null
+      running.value = false
+    }
   }
 }
 
@@ -956,7 +1032,7 @@ const handleEvent = (event: {
         addLine(t('admin.accounts.usingModel', { model: event.model }), 'text-cyan-400')
       }
       addLine(
-        isGrokAccount.value
+        !isChat.value && isGrokAccount.value
           ? grokTestMode.value === 'video'
             ? t('admin.accounts.sendingVideoRequest')
             : grokTestMode.value === 'image'
@@ -1026,22 +1102,22 @@ const handleEvent = (event: {
       // Move streaming content to output lines
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
-        streamingContent.value = ''
+        if (!isChat.value) streamingContent.value = ''
       }
       if (event.success) {
         status.value = 'success'
       } else {
         status.value = 'error'
-        errorMessage.value = event.error || t('admin.accounts.testFailed')
+        errorMessage.value = normalizeUserFacingErrorMessage(event.error, t('admin.accounts.testFailed'))
       }
       break
 
     case 'error':
       status.value = 'error'
-      errorMessage.value = event.error || t('common.unknownError')
+      errorMessage.value = normalizeUserFacingErrorMessage(event.error, t('common.unknownError'))
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
-        streamingContent.value = ''
+        if (!isChat.value) streamingContent.value = ''
       }
       break
   }
@@ -1051,6 +1127,18 @@ const copyOutput = () => {
   const text = outputLines.value.map((l) => l.text).join('\n')
   copyToClipboard(text, t('admin.accounts.outputCopied'))
 }
+
+let modelLoadId = 0
+watch(() => [props.show, props.account?.id] as const, async ([show]) => {
+  clearSession()
+  activeTab.value = 'probe'
+  testMode.value = 'default'
+  grokTestMode.value = 'text'
+  availableModels.value = []
+  selectedModelId.value = ''
+  if (show && props.account) await loadAvailableModels()
+}, { immediate: true })
+onUnmounted(clearSession)
 </script>
 
 <style>

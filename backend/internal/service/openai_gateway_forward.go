@@ -19,6 +19,11 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	identityBody, identityErr := applyOpenAIPlainChatIdentity(c, account, body, nil)
+	if identityErr != nil {
+		return nil, identityErr
+	}
+	body = identityBody
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -924,6 +929,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			if reason == "invalid_encrypted_content" && recoverInvalidEncryptedContent(attempt) {
 				continue
+			}
+			// 有调度器接管的请求应立即切号；仅直连单账号调用保留旧重连预算。
+			// 上方已拦截输出/取消，避免将已经交付的工具调用重放到另一个账号。
+			if retryable && account.Platform == PlatformOpenAI && s.accountRepo != nil && ctx.Err() == nil {
+				s.coolOpenAIAccountModelAfterFailure(ctx, account, upstreamModel)
+				return nil, newOpenAIUpstreamFailoverError(http.StatusBadGateway, nil,
+					[]byte(`{"error":{"type":"server_error","message":"Upstream connection failed"}}`), "", false)
 			}
 			if retryable && attempt < maxAttempts {
 				backoff := s.openAIWSRetryBackoff(attempt)

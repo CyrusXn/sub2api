@@ -224,6 +224,7 @@
           :label="t('channelMonitorV2.metrics.cacheRate')"
           :value="formatPercent(snapshot.metrics.cache_rate)"
           :detail="t('channelMonitorV2.metrics.cacheDetail')"
+          :title="t('channelMonitorV2.metrics.cacheRateHint')"
           :state="snapshot.health.cache || snapshot.health.overall"
         />
         <MetricCell

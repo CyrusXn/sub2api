@@ -21,7 +21,7 @@ func (h *AccountHandler) ListUpstreamSites(c *gin.Context) {
 		response.ErrorFrom(c, service.ErrUpstreamSiteCredentialUnavailable)
 		return
 	}
-	sites, err := h.upstreamSiteCredentials.List(c.Request.Context())
+	sites, err := h.upstreamSiteCredentials.List(c.Request.Context(), c.Query("include_history") == "true")
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

@@ -782,7 +782,7 @@ func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseFallbackHTTP(t *testin
 	require.Empty(t, rec.Body.String(), "未产出 token 前上游断连时不应写入下游半截流")
 }
 
-func TestOpenAIGatewayService_Forward_WSv2RetryFiveTimesThenFallbackHTTP(t *testing.T) {
+func TestOpenAIGatewayService_Forward_WSv2ManagedFailureSwitchesAccountImmediately(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	var wsAttempts atomic.Int32
@@ -835,6 +835,7 @@ func TestOpenAIGatewayService_Forward_WSv2RetryFiveTimesThenFallbackHTTP(t *test
 	cfg.Gateway.OpenAIWS.FallbackCooldownSeconds = 1
 
 	svc := &OpenAIGatewayService{
+		accountRepo:      &tempUnschedulableOpenAIAccountRepo{},
 		cfg:              cfg,
 		httpUpstream:     upstream,
 		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
@@ -861,7 +862,11 @@ func TestOpenAIGatewayService_Forward_WSv2RetryFiveTimesThenFallbackHTTP(t *test
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Nil(t, upstream.lastReq, "WS 重连耗尽后不应再回退 HTTP")
-	require.Equal(t, int32(openAIWSReconnectRetryLimit+1), wsAttempts.Load())
+	require.Equal(t, int32(1), wsAttempts.Load(), "上游 WS 故障应交回调度器切号，不在原账号重连五次")
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.False(t, c.Writer.Written(), "切号前不应提交错误响应")
+	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.3-codex"))
 }
 
 func TestOpenAIGatewayService_Forward_WSv2PolicyViolationFastFallbackHTTP(t *testing.T) {

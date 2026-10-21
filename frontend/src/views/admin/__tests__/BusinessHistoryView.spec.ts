@@ -27,7 +27,8 @@ vi.mock('vue-chartjs', () => ({
 const response = {
   profit_history: [
     { bucket_date: '2026-08-16', cumulative_profit: 13081.93, daily_profit: null, captured_at: '2026-08-16T15:59:30Z', status: 'snapshot' },
-    { bucket_date: '2026-08-17', cumulative_profit: 13581.93, daily_profit: 500, captured_at: '2026-08-17T02:00:00Z', status: 'current' }
+    { bucket_date: '2026-08-17', cumulative_profit: 13581.93, daily_profit: 500, captured_at: '2026-08-17T02:00:00Z', status: 'current' },
+    { bucket_date: '2026-07-08', cumulative_profit: 10, daily_profit: 1, captured_at: '2026-07-08T02:00:00Z', status: 'snapshot' }
   ],
   // 实账样例故意与请求估算不同，防止卡片退回估算口径。
   ledger: {
@@ -36,7 +37,8 @@ const response = {
     lifetime_consumption_estimate: 8254.07, lifetime_profit_estimate: -8174.07,
     opening_balance: 700, closing_balance: 660.25,
     opening_captured_at: '2026-07-08T15:59:00Z', closing_captured_at: '2026-08-17T02:00:00Z',
-    range_consumption: 1274.31, range_profit: -1254.31, range_status: 'available'
+    range_consumption: null, range_profit: null, range_status: 'inexact_boundary',
+    range_consumption_estimate: 1274.31, range_profit_estimate: -1254.31
   },
   upstream_recharge_total: 8932.97,
   user_balance_total: 321.45,
@@ -45,6 +47,7 @@ const response = {
   range_user_balance_total: 300.5,
   range_upstream_balance_total: 660.25,
   range_balance_snapshot_date: '2026-08-16T00:00:00Z',
+  range_balance_captured_at: '2026-08-16T15:59:30Z',
   lifetime: {
     recharge_amount: 500,
     total_requests: 999,
@@ -107,24 +110,34 @@ describe('BusinessHistoryView', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('默认从 2026 年 7 月 9 日查询并展示范围内经营指标与全部上游充值总额', async () => {
+  it('北京时间跨日时默认结束日不随浏览器当地日期偏移', async () => {
+    vi.setSystemTime(new Date('2026-08-17T00:30:00+08:00'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(getBusinessSummary).toHaveBeenCalledWith({ start_date: '2026-07-09', end_date: '2026-08-17' })
+    wrapper.unmount()
+  })
+
+  it('默认从 2026 年 7 月 9 日查询，所有卡片使用同一区间口径', async () => {
     const wrapper = mountView()
     await flushPromises()
 
     expect(getBusinessSummary).toHaveBeenCalledWith({ start_date: '2026-07-09', end_date: '2026-08-17' })
     expect(wrapper.get('[data-test="range-requests"]').text()).toContain('123')
     expect(wrapper.get('[data-test="range-tokens"]').text()).toContain('2.00K')
-    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥80.00')
-    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥70.00')
+    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥20.00')
+    expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥18.00')
     expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥120.00')
     expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥300.50')
-    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('¥8,932.97')
-    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('¥678.90')
-    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥8,254.07')
-    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥-8,174.07')
-    expect(wrapper.get('[data-test="ledger-lifetime-consumption"]').text()).toBe('¥8,254.07')
-    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotAsOf')
-    expect(wrapper.get('[data-test="upstream-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.currentBalanceHint')
+    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('¥1,234.56')
+    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('¥660.25')
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥1,274.31')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥-1,254.31')
+    expect(wrapper.get('[data-test="recharge-difference"]').text()).toBe('¥-1,114.56')
+    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.snapshotTime')
+    expect(wrapper.get('[data-test="upstream-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.snapshotTime')
+    expect(wrapper.get('[data-test="ledger-status"]').text()).toContain('admin.businessHistory.ledgerInexactBoundary')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('700')
   })
@@ -181,26 +194,24 @@ describe('BusinessHistoryView', () => {
     expect((chart.props('data') as any).labels).toEqual(['2026-08-16', '2026-08-17'])
   })
 
-  it('余额弹窗显示每站现金与订阅合计，未知资产不能计为零', async () => {
-    assets.mockResolvedValue([
-      { site_id: 1, site_name: '站点甲', domain: 'a.example.com', cash_balance: 10, subscription_balance: 20, total_balance: 30, balance_known: true },
-      { site_id: 2, site_name: '站点乙', domain: 'b.example.com', cash_balance: 5, subscription_balance: null, total_balance: null, balance_known: false }
-    ])
+  it('余额弹窗使用所选结束日快照，不拿当前逐站余额冒充历史', async () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.get('[data-test="open-balance-details"]').trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('[data-test="balance-detail-row"]')).toHaveLength(2)
-    expect(wrapper.get('[data-test="balance-detail-total"]').text()).toBe('--')
+    expect(assets).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="balance-detail-total"]').text()).toBe('¥660.25')
+    expect(wrapper.get('[data-test="details-dialog"]').text()).toContain('admin.businessHistory.historicalBalanceDetailsNotice')
   })
 
-  it('充值弹窗不带日期筛选，按站点列出充值记录', async () => {
+  it('充值弹窗使用已查询日期，输入框尚未查询的修改不影响明细', async () => {
     rechargeSummary.mockResolvedValue({ total_amount: 80, sites: [{ site_id: 1, site_name: '站点甲', total_amount: 80, items: [{ id: 1, occurred_at: '2026-08-16T01:00:00Z', amount: 80, record_type: 'recharge', note: '余额增量自动识别' }] }] })
     const wrapper = mountView()
     await flushPromises()
+    await wrapper.get('[data-test="history-start-date"]').setValue('2026-08-01')
     await wrapper.get('[data-test="open-recharge-details"]').trigger('click')
     await flushPromises()
-    expect(rechargeSummary).toHaveBeenCalledWith({})
+    expect(rechargeSummary).toHaveBeenCalledWith({ start_time: '2026-07-09T00:00:00+08:00', end_time: '2026-08-17T23:59:59.999999+08:00' })
     expect(wrapper.get('[data-test="recharge-detail-row"]').text()).toContain('¥80.00')
     expect(wrapper.get('[data-test="details-dialog"]').text()).toContain('站点甲')
   })
@@ -210,27 +221,28 @@ describe('BusinessHistoryView', () => {
     await flushPromises()
     await wrapper.get('[data-test="open-profit-details"]').trigger('click')
     const rows = wrapper.findAll('[data-test="profit-detail-row"]')
+    expect(rows).toHaveLength(2)
     expect(rows[0].text()).toContain('2026-08-17')
     expect(rows[0].text()).toContain('¥500.00')
     expect(rows[0].text()).toContain('¥13,581.93')
     expect(rows[1].text()).toContain('--')
   })
 
-  it('历史边界缺失不阻止累计公式，当前余额仍参与计算', async () => {
+  it('历史边界缺失显示空值，不用当前余额或累计收益替代', async () => {
     getBusinessSummary.mockResolvedValue({
       ...response,
       range_user_balance_total: null,
       range_upstream_balance_total: null,
       range_balance_snapshot_date: null,
-      ledger: { ...response.ledger, opening_balance: null, closing_balance: null, range_consumption: null, range_profit: null, range_status: 'missing_boundary' }
+      ledger: { ...response.ledger, opening_balance: null, closing_balance: null, range_consumption: null, range_profit: null, range_consumption_estimate: null, range_profit_estimate: null, range_status: 'missing_boundary' }
     })
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥8,254.07')
-    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥-8,174.07')
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('--')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('--')
     expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('--')
-    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('¥678.90')
+    expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('--')
     expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotEmpty')
   })
 
@@ -250,6 +262,41 @@ describe('BusinessHistoryView', () => {
     expect(datasets[1].label).toBe('admin.businessHistory.profitLegendExcludingAdmin')
     expect(datasets[1].data).toEqual([4, 7])
     expect((chart.props('options') as any).plugins.legend.display).toBe(true)
+  })
+
+  it('零估值和零充值差额正常显示，不视为缺失', async () => {
+    getBusinessSummary.mockResolvedValue({
+      ...response,
+      range_upstream_recharge_total: 120,
+      ledger: { ...response.ledger, range_consumption_estimate: 0, range_profit_estimate: 0 }
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥0.00')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥0.00')
+    expect(wrapper.get('[data-test="recharge-difference"]').text()).toBe('¥0.00')
+  })
+
+  it('站点范围变化时不以请求收益参考代替账本估值', async () => {
+    getBusinessSummary.mockResolvedValue({ ...response, ledger: {
+      ...response.ledger, range_status: 'site_scope_changed', range_consumption_estimate: null, range_profit_estimate: null
+    } })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('--')
+    expect(wrapper.get('[data-test="total-profit"]').text()).toBe('--')
+    expect(wrapper.get('[data-test="ledger-status"]').text()).toBe('admin.businessHistory.ledgerScopeChanged')
+  })
+
+  it('查询失败后保留上次成功区间，不把旧数字标成新日期', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    getBusinessSummary.mockRejectedValueOnce(new Error('读取失败'))
+    await wrapper.get('[data-test="history-start-date"]').setValue('2026-08-01')
+    await wrapper.get('[data-test="history-query"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="applied-range"]').text()).toBe('2026-07-09 ～ 2026-08-17')
+    expect(notifications.showError).toHaveBeenCalled()
   })
 
   it('没有每日汇总时显示历史暂无统计数据', async () => {

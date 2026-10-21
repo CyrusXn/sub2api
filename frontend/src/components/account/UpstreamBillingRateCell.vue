@@ -51,6 +51,7 @@
           </p>
         </template>
         <p v-else>{{ statusLabel || '-' }}</p>
+        <p v-if="rateChange" data-testid="upstream-billing-change-detail">{{ rateChangeDetail }}</p>
         <p
           v-if="probeEnabled && globalProbeEnabled !== false && nextProbeAt"
           data-testid="upstream-billing-next-probe"
@@ -81,18 +82,18 @@
       {{ t('admin.accounts.upstreamBilling.manualSource') }}
     </span>
     <span
-      v-if="hasEffectiveRate && changeDirection === 'up'"
+      v-if="changeDirection === 'up'"
       data-testid="upstream-billing-change-up"
       class="inline-flex items-center text-red-600 dark:text-red-400"
-      :title="t('admin.accounts.upstreamBilling.rateIncreased')"
+      :title="rateChangeDetail"
     >
       <Icon name="arrowUp" size="xs" />
     </span>
     <span
-      v-else-if="hasEffectiveRate && changeDirection === 'down'"
+      v-else-if="changeDirection === 'down'"
       data-testid="upstream-billing-change-down"
       class="inline-flex items-center text-emerald-600 dark:text-emerald-400"
-      :title="t('admin.accounts.upstreamBilling.rateDecreased')"
+      :title="rateChangeDetail"
     >
       <Icon name="arrowDown" size="xs" />
     </span>
@@ -127,10 +128,8 @@ const props = withDefaults(defineProps<{
   now: number
   probing?: boolean
   globalProbeEnabled?: boolean
-  changeDirection?: 'up' | 'down' | null
 }>(), {
-  globalProbeEnabled: true,
-  changeDirection: null
+  globalProbeEnabled: true
 })
 
 defineEmits<{
@@ -150,6 +149,24 @@ const manualRate = computed(() => {
     : null
 })
 const hasManualRate = computed(() => manualRate.value != null)
+// 变化记录来自持久化快照，相同结果、探测失败和页面重载均不清除。
+const rateChange = computed(() => {
+  const change = snapshot.value?.rate_change
+  if (!change || !Number.isFinite(change.from) || change.from < 0 ||
+    !Number.isFinite(change.to) || change.to < 0 || change.from === change.to ||
+    !Number.isFinite(Date.parse(change.changed_at))) return null
+  return change
+})
+const changeDirection = computed(() => rateChange.value
+  ? (rateChange.value.to > rateChange.value.from ? 'up' : 'down')
+  : null)
+const rateChangeDetail = computed(() => rateChange.value
+  ? t('admin.accounts.upstreamBilling.rateChangeDetail', {
+      from: formatMultiplier(rateChange.value.from),
+      to: formatMultiplier(rateChange.value.to),
+      time: formatDate(rateChange.value.changed_at)
+    })
+  : '')
 const probeEnabled = computed(() => props.account.extra?.upstream_billing_probe_enabled === true)
 const nextProbeAt = computed(() => {
   const value = snapshot.value?.next_probe_at
@@ -254,8 +271,8 @@ const statusClass = computed(() => {
 const hasEffectiveRate = computed(() => effectiveRate.value !== '-')
 const effectiveRateClass = computed(() => {
   if (hasManualRate.value) return 'rounded bg-amber-50 px-1.5 py-0.5 font-mono text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-  if (props.changeDirection === 'up') return 'font-mono text-red-600 dark:text-red-400'
-  if (props.changeDirection === 'down') return 'font-mono text-emerald-600 dark:text-emerald-400'
+  if (changeDirection.value === 'up') return 'font-mono text-red-600 dark:text-red-400'
+  if (changeDirection.value === 'down') return 'font-mono text-emerald-600 dark:text-emerald-400'
   return 'font-mono text-gray-800 dark:text-gray-200'
 })
 const primaryValue = computed(() => hasEffectiveRate.value ? effectiveRate.value : statusLabel.value || '-')

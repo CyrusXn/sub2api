@@ -109,6 +109,12 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 				WHERE b.bucket_date = $2::date - 1 AND b.balance_captured_at IS NOT NULL
 				ORDER BY b.bucket_date DESC
 				LIMIT 1
+			),
+			(
+				SELECT b.balance_captured_at
+				FROM dashboard_business_daily b
+				WHERE b.bucket_date = $2::date - 1 AND b.balance_captured_at IS NOT NULL
+				LIMIT 1
 			)
 		FROM dashboard_business_daily
 	`
@@ -118,7 +124,7 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	var lifetimeAdminUpstream, rangeAdminUpstream float64
 	// 余额类指标只有每日快照，区间内可能一天都没采集到，用 NULL 承载"暂无数据"。
 	var rangeUserBalance, rangeUpstreamBalance sql.NullFloat64
-	var rangeBalanceSnapshotDate sql.NullTime
+	var rangeBalanceSnapshotDate, rangeBalanceCapturedAt sql.NullTime
 	values := []any{
 		&result.UpstreamRechargeTotal,
 		&result.UserBalanceTotal,
@@ -153,6 +159,7 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 		&rangeUserBalance,
 		&rangeUpstreamBalance,
 		&rangeBalanceSnapshotDate,
+		&rangeBalanceCapturedAt,
 	}
 	// 日桶与充值事件使用独立参数，避免 PostgreSQL 将同一参数推断成 date 后丢失北京时间偏移。
 	startDate, endDate := start.Format("2006-01-02"), end.Format("2006-01-02")
@@ -172,6 +179,9 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	if rangeBalanceSnapshotDate.Valid {
 		snapshotDate := rangeBalanceSnapshotDate.Time
 		result.RangeBalanceSnapshotDate = &snapshotDate
+	}
+	if rangeBalanceCapturedAt.Valid {
+		result.RangeBalanceCapturedAt = &rangeBalanceCapturedAt.Time
 	}
 
 	rows, err := r.sql.QueryContext(ctx, `

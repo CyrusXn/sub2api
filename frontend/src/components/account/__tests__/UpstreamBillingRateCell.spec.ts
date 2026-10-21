@@ -307,33 +307,73 @@ describe('UpstreamBillingRateCell', () => {
   })
 
   it('shows a red up arrow for increases and a green down arrow for decreases', async () => {
+    const account = makeAccount({
+      extra: {
+        upstream_billing_probe: {
+          status: 'ok', data: billingData,
+          received_at: '2026-07-13T00:00:00Z', fresh_until: '2026-07-14T00:00:00Z',
+          last_attempt_at: '2026-07-13T00:00:00Z', next_probe_at: '2026-07-13T00:30:00Z',
+          rate_change: { from: 0.5, to: 0.9, changed_at: '2026-07-13T00:00:00Z' }
+        }
+      }
+    })
     const wrapper = mount(UpstreamBillingRateCell, {
       props: {
-        account: makeAccount({
-          extra: {
-            upstream_billing_probe: {
-              status: 'ok',
-              data: billingData,
-              received_at: '2026-07-13T00:00:00Z',
-              fresh_until: '2026-07-14T00:00:00Z',
-              last_attempt_at: '2026-07-13T00:00:00Z',
-              next_probe_at: '2026-07-13T00:30:00Z'
-            }
-          }
-        }),
-        now: Date.now(),
-        changeDirection: 'up'
+        account,
+        now: Date.now()
       }
     })
 
     expect(wrapper.get('[data-testid="upstream-billing-change-up"]').classes()).toContain('text-red-600')
     expect(wrapper.get('[data-testid="upstream-billing-change-up"]').findComponent(Icon).props('name')).toBe('arrowUp')
 
-    await wrapper.setProps({ changeDirection: 'down' })
+    await wrapper.setProps({ account: {
+      ...account,
+      extra: { upstream_billing_probe: {
+        ...account.extra!.upstream_billing_probe!,
+        rate_change: { from: 0.9, to: 0.5, changed_at: '2026-07-13T00:30:00Z' }
+      } }
+    } })
 
     expect(wrapper.find('[data-testid="upstream-billing-change-up"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="upstream-billing-change-down"]').classes()).toContain('text-emerald-600')
     expect(wrapper.get('[data-testid="upstream-billing-change-down"]').findComponent(Icon).props('name')).toBe('arrowDown')
+  })
+
+  it('重新打开页面仍展示已保存的下降记录、原倍率和检测时间', async () => {
+    const account = makeAccount({
+      extra: {
+        upstream_billing_probe: {
+          status: 'ok',
+          data: { ...billingData, resolved_rate_multiplier: 0.23, effective_rate_multiplier: 0.23, peak_rate_enabled: false },
+          received_at: '2026-07-13T00:00:00Z',
+          fresh_until: '2026-07-14T00:00:00Z',
+          last_attempt_at: '2026-07-13T00:00:00Z',
+          next_probe_at: '2026-07-13T01:00:00Z',
+          rate_change: { from: 0.25, to: 0.23, changed_at: '2026-07-12T23:00:00Z' }
+        }
+      }
+    })
+    const wrapper = mount(UpstreamBillingRateCell, { props: { account, now: Date.now() } })
+    const arrow = wrapper.get('[data-testid="upstream-billing-change-down"]')
+    expect(arrow.attributes('title')).toContain('0.25')
+    expect(arrow.attributes('title')).toContain('0.23')
+    expect(arrow.attributes('title')).toContain('07')
+    await wrapper.setProps({ account: {
+      ...account,
+      extra: { upstream_billing_probe: {
+        ...account.extra!.upstream_billing_probe!, status: 'failed', manual_rate_multiplier: 0.2
+      } }
+    } })
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.2x')
+    expect(wrapper.find('[data-testid="upstream-billing-manual-badge"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="upstream-billing-change-down"]').attributes('title')).toContain('0.23')
+    await wrapper.setProps({ now: Date.parse('2026-07-15T00:00:00Z') })
+    expect(wrapper.find('[data-testid="upstream-billing-change-down"]').exists()).toBe(true)
+    wrapper.unmount()
+    const reopened = mount(UpstreamBillingRateCell, { props: { account, now: Date.now() } })
+    expect(reopened.find('[data-testid="upstream-billing-change-down"]').exists()).toBe(true)
+    reopened.unmount()
   })
 
   it('fails neutral for malformed data and timestamps', async () => {

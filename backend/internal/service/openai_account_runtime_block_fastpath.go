@@ -101,9 +101,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		scheduleOllamaCloudUsageActivity(s.deferredService, account)
 		scheduleOpenCodeGoUsageActivity(s.deferredService, account)
 	}
-	// Capacity shedding describes this request, not account health. Keep the
-	// account schedulable while the request-local retry budget handles recovery.
+	// 容量不足不永久摘号，但本模型短暂冷却，后续请求优先使用其他账号。
 	if account != nil && account.Platform == PlatformOpenAI && isOpenAIRequestScopedCapacityShed("", responseBody) {
+		s.coolOpenAIAccountModelAfterFailure(ctx, account, firstNonEmpty(canonicalModel...))
 		return false
 	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
@@ -152,6 +152,10 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		s.rateLimitService.maybeHandleOpenAITeamLinkedError(stateCtx, account, statusCode, responseBody)
 	}
 	stateCtx = withTempUnschedulableModel(stateCtx, canonicalModel)
+	if account.Platform == PlatformOpenAI && len(canonicalModel) > 0 {
+		// 网关已完成账号映射，模型不可用冷却不能再次沿映射链跳到另一个模型。
+		stateCtx = context.WithValue(stateCtx, canonicalUpstreamErrorModelContextKey{}, strings.TrimSpace(canonicalModel[0]))
+	}
 	if s.rateLimitService != nil && len(canonicalModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, canonicalModel[0], statusCode, responseBody) {
 		return true
 	}
@@ -170,38 +174,44 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	if statusCode == http.StatusTooManyRequests {
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
 	}
-	if s.rateLimitService == nil {
-		return false
+	shouldDisable := false
+	if s.rateLimitService != nil {
+		shouldDisable = s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
 	}
-	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
 	tempModel := tempUnschedulableModel(stateCtx, nil)
 	modelTempMatched := tempModel != "" && tempUnschedRulesApply(account, statusCode, responseBody, tempModel) &&
 		len(matchTempUnschedulableRules(account, statusCode, responseBody)) > 0
 	if shouldDisable && !modelTempMatched {
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
-	// Pool-mode retryable upstream errors are already bounded by the request-local
-	// same-account retry budget. Recording the generic account+model transient
-	// cooldown here would block the next approved retry before that budget is used.
-	poolModeRetryable := account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
-	if !shouldDisable && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
-		shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) && !poolModeRetryable {
-		model := ""
-		if len(canonicalModel) > 0 {
-			model = canonicalModel[0]
-		}
-		decision := s.recordOpenAIAccountModelTransientFailure(account, model, time.Now())
-		if decision.FailureStreak > 0 {
-			slog.Warn("openai_model_transient_state",
-				"account_id", account.ID,
-				"model", openAIAccountModelTransientModel(model),
-				"failure_streak", decision.FailureStreak,
-				"cooldown_ms", decision.Cooldown.Milliseconds(),
-				"block_scope", "account_model",
-			)
-		}
+	if !shouldDisable && account.Platform == PlatformOpenAI &&
+		(statusCode == http.StatusTooManyRequests || statusCode == 529 || shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody)) {
+		s.coolOpenAIAccountModelAfterFailure(stateCtx, account, firstNonEmpty(canonicalModel...))
 	}
 	return shouldDisable
+}
+
+func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Context, account *Account, canonicalModel string) {
+	decision := s.recordOpenAIAccountModelTransientFailure(account, canonicalModel, time.Now())
+	if decision.FailureStreak == 0 {
+		return
+	}
+	slog.Warn("openai_model_transient_state", "account_id", account.ID,
+		"model", openAIAccountModelTransientModel(canonicalModel), "failure_streak", decision.FailureStreak,
+		"cooldown_ms", decision.Cooldown.Milliseconds(), "block_scope", "account_model")
+	// 复用模型限流的共享快照，使客户端重连落到另一实例时也避开故障账号。
+	// 本地冷却先行，持久化失败仍保留本实例保护；不能缩短已知的更长冷却。
+	if s.accountRepo == nil {
+		return
+	}
+	if existing := account.modelRateLimitResetAt(canonicalModel); existing != nil && existing.After(decision.BlockUntil) {
+		return
+	}
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	if err := s.accountRepo.SetModelRateLimit(stateCtx, account.ID, canonicalModel, decision.BlockUntil, "openai_model_transient"); err != nil {
+		slog.Warn("openai_model_transient_persist_failed", "account_id", account.ID, "error", err)
+	}
 }
 
 func shouldCooldownOpenAITransientUpstreamError(statusCode int, responseBody []byte) bool {

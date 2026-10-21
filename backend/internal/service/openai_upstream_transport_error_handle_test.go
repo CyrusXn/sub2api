@@ -17,13 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// openaiTransportAccountRepoStub records SetTempUnschedulable calls. It embeds the
-// (nil) AccountRepository interface so any other method call would panic — the
-// helper under test must only touch SetTempUnschedulable. tempUnschedCall is shared
-// with antigravity_internal500_penalty_test.go (same package).
+// 持久网络故障记录整号冷却；瞬时故障记录模型冷却，避免下一请求重复命中。
 type openaiTransportAccountRepoStub struct {
 	AccountRepository
 	tempUnschedCalls []tempUnschedCall
+}
+
+func (r *openaiTransportAccountRepoStub) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
+	return nil
 }
 
 func (r *openaiTransportAccountRepoStub) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
@@ -127,6 +128,18 @@ func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t 
 	require.Empty(t, repo.tempUnschedCalls)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 	require.Equal(t, 0, rec.Body.Len())
+}
+
+func TestHandleOpenAIUpstreamTransportError_TransientCoolsAttemptedModel(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 5192, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	c, _ := newOpenAITransportErrTestContext()
+	SetOpsUpstreamModel(c, "upstream-model")
+	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, errors.New("connection reset by peer"), false)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "upstream-model"))
+	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "other-model"))
 }
 
 // context.Canceled means the client disconnected — do NOT fail over to another

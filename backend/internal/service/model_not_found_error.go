@@ -3,6 +3,8 @@ package service
 import (
 	"net/http"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 var upstreamModelNotFoundKeywords = []string{"model not found", "unknown model", "not found"}
@@ -39,7 +41,12 @@ func isOpenAICodexPlanGatedModelError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusBadRequest {
 		return false
 	}
-	normalized := normalizeModelNotFoundBody(body)
+	// 只信任明确的错误字段，不能因上游回显了用户输入就冷却健康账号。
+	message := firstNonEmpty(extractUpstreamErrorMessage(body), gjson.GetBytes(body, "response.error.message").String())
+	if message == "" && !gjson.ValidBytes(body) {
+		message = string(body)
+	}
+	normalized := normalizeModelNotFoundBody([]byte(message))
 	if normalized == "" {
 		return false
 	}

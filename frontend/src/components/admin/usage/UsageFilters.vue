@@ -667,7 +667,7 @@ onMounted(async () => {
   try {
     const [gs, sites] = await Promise.all([
       adminAPI.groups.list(1, 1000),
-      adminAPI.accounts.listUpstreamSites(),
+      adminAPI.accounts.listUpstreamSites({ include_history: true }),
     ])
     groupOptions.value = gs.items.map((g: any) => ({ value: g.id, label: g.name }))
     upstreamSites.value = sites.map((site) => ({ host: site.host, account_ids: site.account_ids }))

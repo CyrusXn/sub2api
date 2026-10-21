@@ -34,7 +34,10 @@ func NewDashboardHandler(dashboardService *service.DashboardService, aggregation
 // parseTimeRange parses start_date, end_date query parameters
 // Uses user's timezone if provided, otherwise falls back to server timezone
 func parseTimeRange(c *gin.Context) (time.Time, time.Time) {
-	userTZ := c.Query("timezone") // Get user's timezone from request
+	return parseTimeRangeInTimezone(c, c.Query("timezone"))
+}
+
+func parseTimeRangeInTimezone(c *gin.Context, userTZ string) (time.Time, time.Time) {
 	now := timezone.NowInUserLocation(userTZ)
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
@@ -220,7 +223,8 @@ func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
 
 // GetBusinessSummary 返回不会随 usage_logs 清理丢失的经营汇总。
 func (h *DashboardHandler) GetBusinessSummary(c *gin.Context) {
-	start, end := parseTimeRange(c)
+	// 永久日账按业务时区生成，不能让浏览器时区改变同一日期的充值边界。
+	start, end := parseTimeRangeInTimezone(c, timezone.Name())
 	summary, err := h.dashboardService.GetBusinessSummary(c.Request.Context(), start, end)
 	if err != nil {
 		response.InternalError(c, "读取历史经营汇总失败")

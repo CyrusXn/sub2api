@@ -112,6 +112,8 @@ describe('RelayPulseMatrix', () => {
     })
 
     const cells = wrapper.findAll('.pulse-cell')
+    expect(wrapper.findAll('.matrix-header span').find(span => span.text() === '缓存率')?.attributes('title'))
+      .toBe('channelMonitorV2.metrics.cacheRateHint')
     expect(cells).toHaveLength(3)
     // Hover tooltip content (privacy-safe: no absolute request/error counts)
     const tip = cells[0].text()
@@ -139,6 +141,22 @@ describe('RelayPulseMatrix', () => {
     // No click-to-open modal
     await cells[0].trigger('click')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+
+    const resetButton = wrapper.findAll('button').find(button => button.text() === '重置缩放')!
+    const originalAxis = wrapper.get('.pulse-axis').text()
+    for (const selector of ['.dimension-cell strong', '.summary-value', '.matrix-header', '.matrix-scroll']) {
+      const event = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+      wrapper.get(selector).element.dispatchEvent(event)
+      await wrapper.vm.$nextTick()
+      expect(event.defaultPrevented).toBe(false)
+      expect(resetButton.attributes('disabled')).toBeDefined()
+      expect(wrapper.get('.pulse-axis').text()).toBe(originalAxis)
+    }
+    const zoomEvent = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    cells[0].element.dispatchEvent(zoomEvent)
+    await wrapper.vm.$nextTick()
+    expect(zoomEvent.defaultPrevented).toBe(true)
+    expect(resetButton.attributes('disabled')).toBeUndefined()
   })
 })
 

@@ -1102,6 +1102,11 @@ export interface UpstreamBillingProbeSnapshot {
   }
   status: UpstreamBillingProbeStatus
   data?: UpstreamBillingData
+  rate_change?: {
+    from: number
+    to: number
+    changed_at: string
+  }
   manual_rate_multiplier?: number
   balance?: UpstreamAccountBalanceSnapshot
   received_at?: string

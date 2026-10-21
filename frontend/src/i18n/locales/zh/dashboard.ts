@@ -386,6 +386,8 @@ export default {
     upstreamTotalTokens: '上游总 Token',
     originalTokenCount: '原始 Token 口径',
     cacheTotal: '缓存',
+    cacheRate: '缓存率',
+    cacheRateHint: '缓存读取 Token ÷（普通输入 + 缓存创建 + 缓存读取 Token），不含输出 Token；无输入数据时显示 —。',
     cacheBreakdown: '缓存 Token 明细',
     cacheCreationTokensLabel: '缓存创建',
     cacheReadTokensLabel: '缓存读取',

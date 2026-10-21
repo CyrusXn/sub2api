@@ -1446,6 +1446,18 @@ func formatTestConversation(messages []TestAccountMessage, fallback string) stri
 	return builder.String()
 }
 
+func lastTestUserPrompt(messages []TestAccountMessage, fallback string) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if content := strings.TrimSpace(messages[i].Content); content != "" {
+			if messages[i].Role == "user" {
+				return content
+			}
+			return ""
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -1472,11 +1484,13 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	var req TestAccountRequest
 	// Allow empty body, model_id is optional
 	_ = c.ShouldBindJSON(&req)
+	lastUserPrompt := lastTestUserPrompt(req.Messages, req.Prompt)
 	req.Prompt = formatTestConversation(req.Messages, req.Prompt)
 
 	opts := service.AccountTestOptions{
-		ImageDataURL: req.ImageDataURL,
-		AudioDataURL: req.AudioDataURL,
+		ImageDataURL:   req.ImageDataURL,
+		AudioDataURL:   req.AudioDataURL,
+		LastUserPrompt: &lastUserPrompt,
 	}
 
 	// Use AccountTestService to test the account with SSE streaming

@@ -65,7 +65,7 @@ type ResolvedUpstreamSiteCredential struct {
 }
 
 type UpstreamSiteCredentialRepository interface {
-	ListSites(ctx context.Context) ([]UpstreamSiteCredentialSummary, error)
+	ListSites(ctx context.Context, includeHistory bool) ([]UpstreamSiteCredentialSummary, error)
 	GetByHost(ctx context.Context, host string) (*UpstreamSiteCredential, error)
 	Upsert(ctx context.Context, credential *UpstreamSiteCredential) error
 	Delete(ctx context.Context, host string) error
@@ -83,11 +83,11 @@ func NewUpstreamSiteCredentialService(
 	return &UpstreamSiteCredentialService{repo: repo, encryptor: encryptor}
 }
 
-func (s *UpstreamSiteCredentialService) List(ctx context.Context) ([]UpstreamSiteCredentialSummary, error) {
+func (s *UpstreamSiteCredentialService) List(ctx context.Context, includeHistory bool) ([]UpstreamSiteCredentialSummary, error) {
 	if s == nil || s.repo == nil {
 		return nil, ErrUpstreamSiteCredentialUnavailable
 	}
-	sites, err := s.repo.ListSites(ctx)
+	sites, err := s.repo.ListSites(ctx, includeHistory)
 	if err != nil {
 		return nil, err
 	}

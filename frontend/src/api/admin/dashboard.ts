@@ -87,6 +87,8 @@ export interface DashboardBusinessLedger {
   closing_captured_at: string | null
   range_consumption: number | null
   range_profit: number | null
+  range_consumption_estimate: number | null
+  range_profit_estimate: number | null
   range_status: 'available' | 'missing_boundary' | 'site_scope_changed' | 'inexact_boundary'
 }
 
@@ -106,6 +108,7 @@ export interface DashboardBusinessSummary {
   range_upstream_balance_total: number | null
   // 上述余额快照对应的自然日。
   range_balance_snapshot_date: string | null
+  range_balance_captured_at: string | null
   lifetime: DashboardBusinessTotals
   range: DashboardBusinessTotals
   daily: DashboardBusinessDailyPoint[]

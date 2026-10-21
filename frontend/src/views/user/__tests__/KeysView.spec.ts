@@ -307,13 +307,15 @@ describe('user KeysView column settings', () => {
   })
 
   it.each(['https://ai.example.com', 'https://api.example.com', 'http://localhost:5173'])(
-    '使用密钥配置跟随页面地址 %s，默认端点展示不变', async (origin) => {
+    '使用和测试密钥均跟随页面地址 %s，默认端点展示不变', async (origin) => {
       vi.stubGlobal('location', new URL(`${origin}/keys?tab=all`))
       getPublicSettings.mockResolvedValue({ api_base_url: 'https://default.example.com' })
       const wrapper = await mountView()
       try {
         await getButtonByText(wrapper, 'keys.useKey').trigger('click')
         expect(wrapper.findComponent({ name: 'UseKeyModal' }).props('baseUrl')).toBe(origin)
+        await getButtonByText(wrapper, 'keys.testModal.action').trigger('click')
+        expect(wrapper.findComponent({ name: 'KeyTestModal' }).props('baseUrl')).toBe(origin)
         expect(wrapper.findComponent({ name: 'EndpointPopover' }).props('apiBaseUrl'))
           .toBe('https://default.example.com')
       } finally {

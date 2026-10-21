@@ -44,7 +44,7 @@
             <span>{{ t('channelMonitorV2.metrics.successRate') }}</span>
             <span>{{ t('channelMonitorV2.metrics.ttft') }}</span>
             <span v-if="showThroughput">{{ t('channelMonitorV2.metrics.tps') }}</span>
-            <span>{{ t('channelMonitorV2.metrics.cacheRate') }}</span>
+            <span class="cursor-help" :title="t('channelMonitorV2.metrics.cacheRateHint')">{{ t('channelMonitorV2.metrics.cacheRate') }}</span>
             <span class="pulse-axis flex justify-between gap-3">
               <i class="not-italic">{{ axisStart }}</i>
               <i class="not-italic">{{ axisEnd }}</i>
@@ -79,7 +79,7 @@
             <strong
               class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300"
             >
-              {{ formatPercent(entry.row.metrics.cache_rate) }}
+              <span class="cursor-help" :title="t('channelMonitorV2.metrics.cacheRateHint')">{{ formatPercent(entry.row.metrics.cache_rate) }}</span>
             </strong>
             <div class="pulse-track grid items-stretch" :style="pulseStyle">
               <span
@@ -310,19 +310,12 @@ const alignedRows = computed(() => {
 })
 
 function onMatrixWheel(event: WheelEvent) {
-  const track = scrollRef.value
   const target = event.target as HTMLElement | null
   const pulse = target?.closest('.pulse-track') as HTMLElement | null
-  const overMatrix = Boolean(target?.closest('.matrix-scroll'))
-  // Plain vertical wheel over the matrix zooms X (narrower range → wider cells).
-  // Shift+wheel or horizontal delta pans; leave non-matrix page scroll alone.
-  const isPan = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)
-  if (!overMatrix && !pulse) return
-  // When not zoomed and user scrolls vertically outside pulse, still zoom if over matrix body.
-  if (!overMatrix && !isPan) return
+  // 名称、指标和表头保留原生滚动，只有时间色块区域接管缩放和平移。
+  if (!pulse) return
   event.preventDefault()
-  const ratioEl = pulse || track
-  const ratio = clientXRatio(event.clientX, ratioEl)
+  const ratio = clientXRatio(event.clientX, pulse)
   zoom.value = applyWheelZoom(zoom.value, event, ratio)
 }
 

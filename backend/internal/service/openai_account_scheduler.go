@@ -1913,7 +1913,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 			}
 		}
 
-		lowUpstreamRatePriorityEnabled := false
+		lowUpstreamRatePriorityEnabled := true
 		oauthSchedulingRateMultiplier := parseOpenAIOAuthSchedulingRateMultiplier(nil)
 		enabled := false
 		stickyWeightedEnabled := false
@@ -1925,7 +1925,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 			defer cancel()
 
 			if values, err := repo.GetMultiple(dbCtx, openAIAdvancedSchedulerRuntimeSettingKeys()); err == nil {
-				lowUpstreamRatePriorityEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "true")
+				lowUpstreamRatePriorityEnabled = !strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "false")
 				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(values)
 				enabled = strings.EqualFold(strings.TrimSpace(values[openAIAdvancedSchedulerSettingKey]), "true")
 				stickyWeightedEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled]), "true")
@@ -1942,7 +1942,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 						fallbackValues[key] = value
 					}
 				}
-				lowUpstreamRatePriorityEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "true")
+				lowUpstreamRatePriorityEnabled = !strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "false")
 				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(fallbackValues)
 				enabled = strings.EqualFold(strings.TrimSpace(fallbackValues[openAIAdvancedSchedulerSettingKey]), "true")
 				stickyWeightedEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled]), "true")
@@ -2528,6 +2528,15 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 	if success {
 		s.openaiOAuth429RetryStartedAt.Delete(accountID)
 		s.clearOpenAIAccountModelTransientState(accountID, normalizeOpenAIAccountModelTransientModel(model))
+	} else if s != nil && account.Platform == PlatformOpenAI && len(observedErr) > 0 {
+		var failoverErr *UpstreamFailoverError
+		// 空响应等未经过 HTTP 错误处理的故障也要冷却；请求或供应商级错误不归因到账号。
+		if errors.As(observedErr[0], &failoverErr) && failoverErr != nil &&
+			failoverErr.Scope != GatewayFailureScopeRequest && failoverErr.Scope != GatewayFailureScopeProvider &&
+			(failoverErr.StatusCode == 429 || failoverErr.StatusCode >= 500) &&
+			!s.getOpenAIAccountModelTransientState().isBlocked(accountID, normalizeOpenAIAccountModelTransientModel(model), time.Now()) {
+			s.coolOpenAIAccountModelAfterFailure(context.Background(), account, model)
+		}
 	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {

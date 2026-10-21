@@ -58,6 +58,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import { fetchKeyTestModels, KeyTestError, streamKeyTest } from '@/api/keyTest'
+import { compareTestModelIds } from '@/utils/testModelDefaults'
 import type { ApiKey } from '@/types'
 
 const props = defineProps<{ apiKey: ApiKey; baseUrl: string }>()
@@ -104,11 +105,9 @@ async function loadModels() {
   modelError.value = ''
   const timeout = setTimeout(() => controller.abort(), 15000)
   try {
-    models.value = await fetchKeyTestModels(props.baseUrl, props.apiKey.key, controller.signal)
-    // 只选择分组实际返回的模型，GPT 优先 sol，其余优先文字模型。
-    model.value = models.value.find(id => id === 'gpt-5.6-sol')
-      || models.value.find(id => /^gpt-.*-sol(?:$|-)/i.test(id))
-      || models.value.find(id => !/image|imagine|video|audio|tts|whisper|embedding|rerank/i.test(id))
+    models.value = (await fetchKeyTestModels(props.baseUrl, props.apiKey.key, controller.signal)).sort(compareTestModelIds)
+    // 只在实际返回的文字模型中选择最高版本，不把媒体模型作为对话默认值。
+    model.value = models.value.find(id => !/image|imagine|video|audio|tts|whisper|embedding|rerank/i.test(id))
       || models.value[0] || ''
     if (!models.value.length) modelError.value = t('keys.testModal.noModels')
   } catch (error) {

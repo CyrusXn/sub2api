@@ -386,7 +386,7 @@ func TestRateLimitService_HandleUpstreamError_CodexPlanGatedModelRespectsModelMa
 	require.Equal(t, "gpt-5.6-sol-upstream", repo.modelRateLimitCalls[0].scope)
 }
 
-func TestRateLimitService_HandleUpstreamError_CodexPlanGatedModelIgnoresAPIKeyAccount(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_CodexPlanGatedModelCoolsAPIKeyAccount(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &RateLimitService{accountRepo: repo}
 	account := openAICodexPlanGatedOAuthAccount()
@@ -401,8 +401,66 @@ func TestRateLimitService_HandleUpstreamError_CodexPlanGatedModelIgnoresAPIKeyAc
 		"gpt-5.6-sol",
 	)
 
-	require.False(t, handled)
-	require.Empty(t, repo.modelRateLimitCalls)
+	require.True(t, handled)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.6-sol", repo.modelRateLimitCalls[0].scope)
+}
+
+func TestHandleOpenAITransientError_PersistsFirstModelCooldown(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 5190, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusBadGateway, nil,
+		[]byte(`{"error":{"message":"temporary failure"}}`), "gpt-test")
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-test", repo.modelRateLimitCalls[0].scope)
+	require.WithinDuration(t, time.Now().Add(openAIModelTransientShortCooldown), repo.modelRateLimitCalls[0].resetAt, time.Second)
+}
+
+func TestHandleOpenAITransientError_PersistFailureKeepsLocalCooldown(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{modelRateLimitErr: errors.New("write failed")}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 5193, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusBadGateway, nil,
+		[]byte(`{"error":{"message":"temporary failure"}}`), "gpt-test")
+	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-test"))
+}
+
+func TestHandleOpenAIModelNotFound_CanonicalModelIsNotMappedTwice(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound} {
+		repo := &modelNotFoundAccountRepoStub{}
+		svc := &OpenAIGatewayService{accountRepo: repo, rateLimitService: &RateLimitService{accountRepo: repo}}
+		account := &Account{ID: 5195, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"model_mapping": map[string]any{"public-a": "upstream-a", "upstream-a": "upstream-b"}}}
+		svc.handleOpenAIAccountUpstreamError(context.Background(), account, status, nil,
+			[]byte(`{"error":{"code":"model_not_found","message":"model not found"}}`), account.GetMappedModel("public-a"))
+		require.Len(t, repo.modelRateLimitCalls, 1)
+		require.Equal(t, "upstream-a", repo.modelRateLimitCalls[0].scope, "status %d 的冷却应命中实际请求模型", status)
+	}
+}
+
+func TestRateLimitService_HandleUpstreamError_Model400OnlyUsesAuthoritativeError(t *testing.T) {
+	for _, tc := range []struct {
+		body    string
+		handled bool
+	}{
+		{`{"error":{"code":"model_not_found","message":"unknown model"}}`, true},
+		{`{"detail":"The 'gpt-test' model is not supported when using Codex with a ChatGPT account."}`, true},
+		{`{"error":{"message":"Invalid tools schema"}}`, false},
+		{`{"error":{"message":"Invalid input"},"echo":"The 'gpt-test' model is not supported when using Codex with a ChatGPT account."}`, false},
+	} {
+		repo := &modelNotFoundAccountRepoStub{}
+		svc := &RateLimitService{accountRepo: repo}
+		account := openAICodexPlanGatedOAuthAccount()
+		account.Type = AccountTypeAPIKey
+		handled := svc.HandleUpstreamModelNotFound(context.Background(), account, "gpt-test", http.StatusBadRequest, []byte(tc.body))
+		require.Equal(t, tc.handled, handled, tc.body)
+		if tc.handled {
+			require.Len(t, repo.modelRateLimitCalls, 1)
+		} else {
+			require.Empty(t, repo.modelRateLimitCalls)
+		}
+	}
 }
 
 func TestRateLimitService_HandleUpstreamError_CodexPlanGatedImageModelSkipsCooldown(t *testing.T) {

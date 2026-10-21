@@ -225,6 +225,14 @@
           </div>
         </template>
 
+        <template #cell-cache_rate="{ row }">
+          <span
+            data-testid="usage-cache-rate"
+            class="cursor-help whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300"
+            :title="t('usage.cacheRateHint')"
+          >{{ formatCacheRate(row) }}</span>
+        </template>
+
         <template #cell-cost="{ row }">
           <div class="text-sm">
             <div class="flex items-center gap-1.5">
@@ -667,6 +675,10 @@ const emit = defineEmits<{
   ipGeoBatchFailed: []
 }>()
 const { t } = useI18n()
+const formatCacheRate = (row: AdminUsageLog): string => {
+  const totalInput = (row.input_tokens || 0) + (row.cache_creation_tokens || 0) + (row.cache_read_tokens || 0)
+  return totalInput > 0 ? `${((row.cache_read_tokens || 0) / totalInput * 100).toFixed(1)}%` : '—'
+}
 const { copyToClipboard } = useClipboard()
 const appStore = useAppStore()
 const copiedRequestId = ref<string | null>(null)

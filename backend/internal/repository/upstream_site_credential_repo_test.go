@@ -16,7 +16,7 @@ func TestUpstreamSiteCredentialRepositoryListSitesGroupsAccountsByHost(t *testin
 	t.Cleanup(func() { _ = db.Close() })
 	repo := NewUpstreamSiteCredentialRepository(db)
 
-	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteAccountsQuery)).WillReturnRows(
+	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteAccountsQuery)).WithArgs(false).WillReturnRows(
 		sqlmock.NewRows([]string{"id", "name", "base_url"}).
 			AddRow(12, "VoVo Plus", "https://vovoapi.com/v1").
 			AddRow(14, "VoVo Image", "https://VOVOAPI.com").
@@ -27,7 +27,7 @@ func TestUpstreamSiteCredentialRepositoryListSitesGroupsAccountsByHost(t *testin
 			AddRow("vovoapi.com", "VoVo", "admin@example.com", "ciphertext"),
 	)
 
-	sites, err := repo.ListSites(context.Background())
+	sites, err := repo.ListSites(context.Background(), false)
 
 	require.NoError(t, err)
 	require.Len(t, sites, 2)
@@ -40,6 +40,34 @@ func TestUpstreamSiteCredentialRepositoryListSitesGroupsAccountsByHost(t *testin
 	require.Equal(t, "admin@example.com", sites[1].LoginUsername)
 	require.Equal(t, "VoVo", sites[1].DisplayName)
 	require.True(t, sites[1].HasPassword)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpstreamSiteAccountsQueryDoesNotRestrictPlatformOrModel(t *testing.T) {
+	// 站点归属来自域名，不能按协议、模型或账号类型丢掉同站点请求。
+	require.NotContains(t, upstreamSiteAccountsQuery, "platform =")
+	require.NotContains(t, upstreamSiteAccountsQuery, "type =")
+	require.NotContains(t, upstreamSiteAccountsQuery, "model =")
+	require.Contains(t, upstreamSiteAccountsQuery, "WHERE ($1 OR deleted_at IS NULL)")
+}
+
+func TestUpstreamSiteCredentialRepositoryHistoryIncludesAllAccountIDs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := NewUpstreamSiteCredentialRepository(db)
+	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteAccountsQuery)).WithArgs(true).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "base_url"}).
+			AddRow(1, "Claude", "https://relay.example/v1").
+			AddRow(2, "Gemini（历史账号）", "https://relay.example/v1beta").
+			AddRow(3, "Grok", "https://RELAY.example").
+			AddRow(4, "国模", "https://relay.example/api"))
+	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteCredentialsQuery)).
+		WillReturnRows(sqlmock.NewRows([]string{"host", "display_name", "login_username", "password_encrypted"}))
+	sites, err := repo.ListSites(context.Background(), true)
+	require.NoError(t, err)
+	require.Len(t, sites, 1)
+	require.Equal(t, []int64{1, 2, 3, 4}, sites[0].AccountIDs)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

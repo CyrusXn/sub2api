@@ -108,12 +108,11 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 	entry.lastFailure = now
 	entry.lastTouched = now
 
-	cooldown := time.Duration(0)
+	// 首次故障就短暂避开该账号，防止下一次客户端重连再次命中。
+	cooldown := openAIModelTransientShortCooldown
 	switch {
 	case entry.failureStreak >= 3:
 		cooldown = openAIModelTransientLongCooldown
-	case entry.failureStreak == 2:
-		cooldown = openAIModelTransientShortCooldown
 	}
 	if cooldown > 0 {
 		entry.blockUntil = now.Add(cooldown)

@@ -913,8 +913,12 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsStickyHit(ctx 
 
 	// 1. 尝试粘性会话命中
 	// Try sticky session hit
-	if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
-		return account, true, nil
+	// 低倍率模式先比较候选价格，普通会话粘性不能抢在更便宜的健康账号前。
+	// previous_response_id 的归属约束已在外层单独处理。
+	if !preferLowUpstreamRate {
+		if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
+			return account, true, nil
+		}
 	}
 
 	// 2. 获取可调度的 OpenAI 账号
@@ -930,6 +934,14 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsStickyHit(ctx 
 
 	if selected == nil {
 		return nil, false, noAvailableOpenAISelectionError(requestedModel, compactBlocked, filterStats.summary(""))
+	}
+	if preferLowUpstreamRate {
+		if sticky := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); sticky != nil {
+			order := newOpenAILegacyUpstreamRateOrder([]*Account{sticky, selected}, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
+			if order.compare(sticky, selected) <= 0 {
+				return sticky, true, nil
+			}
+		}
 	}
 
 	hydrated, err := s.hydrateSelectedAccount(ctx, selected)
@@ -1145,7 +1157,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	cfg := s.schedulingConfig()
-	preferLowUpstreamRate := useUpstreamTokenCost && s.isOpenAILowUpstreamRatePriorityEnabled(ctx)
+	preferLowUpstreamRate := platform == PlatformOpenAI && useUpstreamTokenCost && s.isOpenAILowUpstreamRatePriorityEnabled(ctx)
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
 	var stickyAccountID int64
 	if sessionHash != "" && s.cache != nil {
@@ -1191,6 +1203,14 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if len(accounts) == 0 {
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
+	if preferLowUpstreamRate {
+		pool := make([]*Account, 0, len(accounts))
+		for i := range accounts {
+			pool = append(pool, &accounts[i])
+		}
+		// 同倍率没有价格先后，继续沿用粘性，避免无意义迁移会话。
+		preferLowUpstreamRate = newOpenAILegacyUpstreamRateOrder(pool, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx)).enabled
+	}
 
 	isExcluded := func(accountID int64) bool {
 		if excludedIDs == nil {
@@ -1206,7 +1226,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	// rewriting the durable binding here would make a short burst migrate the
 	// whole conversation to a cache-cold account.
 	stickySpillover := false
-	if sessionHash != "" {
+	if sessionHash != "" && !preferLowUpstreamRate {
 		accountID := stickyAccountID
 		if accountID > 0 && !isExcluded(accountID) {
 			account, err := s.getSchedulableAccount(ctx, accountID)

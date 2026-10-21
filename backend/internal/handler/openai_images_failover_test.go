@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -25,6 +26,10 @@ import (
 type openAIImagesFailoverAccountRepo struct {
 	service.AccountRepository
 	accounts []service.Account
+}
+
+func (r openAIImagesFailoverAccountRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
+	return nil
 }
 
 func (r openAIImagesFailoverAccountRepo) GetByID(_ context.Context, id int64) (*service.Account, error) {

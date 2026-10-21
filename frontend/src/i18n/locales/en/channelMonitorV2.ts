@@ -45,6 +45,7 @@ export default {
       ttftP50: 'First token P50',
       durationP50: 'Duration P50',
       cacheRate: 'Cache rate',
+      cacheRateHint: 'Cache-read tokens ÷ (uncached input + cache-creation + cache-read tokens) for successfully billed requests. Calculated from token totals, not request success rate.',
       cacheDetail: 'Read cache share',
       successRate: 'Success rate',
       successRateValue: 'Success rate {value}',

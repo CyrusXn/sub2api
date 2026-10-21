@@ -237,7 +237,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// 分组隔离（默认不允许未分组 Key 调度）
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
-		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "true",
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
@@ -928,7 +928,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpaySource = NormalizeVisibleMethodSource("wxpay", settings[SettingPaymentVisibleMethodWxpaySource])
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
-	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
+	result.OpenAILowUpstreamRatePriorityEnabled = !strings.EqualFold(strings.TrimSpace(settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "false")
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings)
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"

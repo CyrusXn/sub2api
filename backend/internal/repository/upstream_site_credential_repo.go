@@ -14,9 +14,7 @@ import (
 const upstreamSiteAccountsQuery = `
 SELECT id, name, credentials->>'base_url'
 FROM accounts
-WHERE platform = 'openai'
-  AND type = 'apikey'
-  AND deleted_at IS NULL
+WHERE ($1 OR deleted_at IS NULL)
   AND COALESCE(credentials->>'base_url', '') <> ''
 ORDER BY id`
 
@@ -49,8 +47,9 @@ func NewUpstreamSiteCredentialRepository(db *sql.DB) service.UpstreamSiteCredent
 	return &upstreamSiteCredentialRepository{db: db}
 }
 
-func (r *upstreamSiteCredentialRepository) ListSites(ctx context.Context) ([]service.UpstreamSiteCredentialSummary, error) {
-	rows, err := r.db.QueryContext(ctx, upstreamSiteAccountsQuery)
+func (r *upstreamSiteCredentialRepository) ListSites(ctx context.Context, includeHistory bool) ([]service.UpstreamSiteCredentialSummary, error) {
+	// 使用记录需要保留软删除账号的归属；管理列表仍只显示现存账号。
+	rows, err := r.db.QueryContext(ctx, upstreamSiteAccountsQuery, includeHistory)
 	if err != nil {
 		return nil, fmt.Errorf("list upstream site accounts: %w", err)
 	}

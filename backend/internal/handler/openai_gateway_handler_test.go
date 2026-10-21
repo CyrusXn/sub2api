@@ -2275,6 +2275,11 @@ func (s *openAIWSFailoverHandlerAccountRepoStub) SetRateLimited(ctx context.Cont
 	return nil
 }
 
+func (s *openAIWSFailoverHandlerAccountRepoStub) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
+	// 本组 handler 测试验证请求序列；共享状态持久化由 service 测试单独覆盖。
+	return nil
+}
+
 type openAIWSUsageHandlerUsageLogRepoStub struct {
 	service.UsageLogRepository
 	created chan *service.UsageLog
@@ -2438,7 +2443,7 @@ func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(t *testing.T) {
+func TestOpenAIResponses_APIKeyPassthroughPool5xxSwitchesImmediatelyThenExhaustsMaxSwitches(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	groupID := int64(4203)
 	accounts := []service.Account{
@@ -2522,13 +2527,13 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(
 
 	h.Responses(c)
 
-	require.Equal(t, []int64{9910, 9910, 9911}, upstream.calls())
+	require.Equal(t, []int64{9910, 9911}, upstream.calls())
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
 	require.Equal(t, "Upstream service temporarily unavailable", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHealthyAccount(t *testing.T) {
+func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureSwitchesImmediatelyToHealthyAccount(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int
@@ -2623,14 +2628,14 @@ func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHe
 
 			h.Responses(c)
 
-			require.Equal(t, []int64{9910, 9910, 9911}, upstream.calls())
+			require.Equal(t, []int64{9910, 9911}, upstream.calls())
 			require.Equal(t, http.StatusOK, rec.Code)
 			require.Equal(t, "resp_healthy", gjson.GetBytes(rec.Body.Bytes(), "id").String())
 		})
 	}
 }
 
-func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t *testing.T) {
+func TestOpenAIResponses_APIKeyPassthroughSSERateLimitDoesNotRetryFailedAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	groupID := int64(4204)
 	accounts := []service.Account{
@@ -2705,7 +2710,7 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 
 	h.Responses(c)
 
-	require.Equal(t, []int64{9912, 9912}, upstream.calls())
+	require.Equal(t, []int64{9912}, upstream.calls())
 	require.Equal(t, http.StatusTooManyRequests, rec.Code)
 	require.Equal(t, "1", rec.Header().Get("Retry-After"))
 	require.Equal(t, "rate_limit_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())

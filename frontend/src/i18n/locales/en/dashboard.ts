@@ -382,6 +382,8 @@ export default {
     totalRequests: 'Total Requests',
     totalTokens: 'Total Tokens',
     cacheTotal: 'Cache',
+    cacheRate: 'Cache Rate',
+    cacheRateHint: 'Cache-read tokens ÷ (uncached input + cache-creation + cache-read tokens), excluding output tokens. — means no input data.',
     cacheBreakdown: 'Cache Token Breakdown',
     cacheCreationTokensLabel: 'Cache Creation',
     cacheReadTokensLabel: 'Cache Read',

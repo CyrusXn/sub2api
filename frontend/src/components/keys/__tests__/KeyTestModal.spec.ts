@@ -108,6 +108,12 @@ describe('密钥测试对话', () => {
   })
 
   it.each([
+    [['gpt-5.6-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol'], 'gpt-6.1-sol'],
+    [['gpt-5.6-sol', 'gpt-6-astra', 'gpt-6-sol'], 'gpt-6-sol'],
+    [['gpt-5.6-sol', 'gpt-6-astra'], 'gpt-6-astra'],
+    [['grok-4.5', 'grok-4.7', 'grok-4.6'], 'grok-4.7'],
+    [['gemini-3.7-pro', 'gemini-4-pro', 'gemini-3.8-pro'], 'gemini-4-pro'],
+    [['claude-sonnet-4', 'claude-opus-5.5', 'claude-opus-5'], 'claude-opus-5.5'],
     [['gpt-5.5', 'gpt-5.7-sol'], 'gpt-5.7-sol'],
     [['gpt-5.5'], 'gpt-5.5'],
     [['gpt-image-2', 'claude-sonnet-test'], 'claude-sonnet-test']

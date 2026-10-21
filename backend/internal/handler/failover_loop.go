@@ -76,6 +76,11 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 	return delay
 }
 
+func sameAccountRetryAllowedForPlatform(platform string, failoverErr *service.UpstreamFailoverError, retryCount, retryLimit int) bool {
+	// OpenAI 故障直接交回选号，池模式和 OAuth 重试窗口也不能绕过切号规则。
+	return platform != service.PlatformOpenAI && sameAccountRetryAllowed(failoverErr, retryCount, retryLimit)
+}
+
 func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCount, retryLimit int) bool {
 	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
 		return false
@@ -210,7 +215,7 @@ func (s *FailoverState) HandleFailoverError(
 
 	// 同账号重试不算切换账号，粘性会话仅在实际切换时强制缓存计费。
 	retryCount := s.SameAccountRetryCount[accountID]
-	sameAccountRetry := sameAccountRetryAllowed(failoverErr, retryCount, retryLimit)
+	sameAccountRetry := sameAccountRetryAllowedForPlatform(platform, failoverErr, retryCount, retryLimit)
 	if needForceCacheBilling(s.hasBoundSession, failoverErr, sameAccountRetry) {
 		s.ForceCacheBilling = true
 	}
@@ -234,7 +239,7 @@ func (s *FailoverState) HandleFailoverError(
 	}
 
 	// 同账号重试用尽，执行临时封禁
-	if failoverErr.RetryableOnSameAccount {
+	if failoverErr.RetryableOnSameAccount && platform != service.PlatformOpenAI {
 		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
 	}
 

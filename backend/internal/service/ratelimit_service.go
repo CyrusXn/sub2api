@@ -2521,8 +2521,10 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
 	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() && isOpenAICompatibleModelNotFoundBody(responseBody):
 		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason
-	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
+	case account.Platform == PlatformOpenAI && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
 		cooldown, reason = upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason
+	case account.Platform == PlatformOpenAI && statusCode == http.StatusBadRequest && isOpenAICompatibleModelNotFound400(responseBody):
+		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
 	default:
 		return false
 	}
@@ -2565,10 +2567,17 @@ func shouldSkipCodexPlanGatedImageModelCooldown(ctx context.Context, reason, req
 	return IsGPTImageGenerationModel(requestedModel) || IsGPTImageGenerationModel(modelKey)
 }
 
+type canonicalUpstreamErrorModelContextKey struct{}
+
 func modelRateLimitKeyForUpstreamModelNotFound(ctx context.Context, account *Account, requestedModel string) string {
 	modelKey := strings.TrimSpace(requestedModel)
 	if account == nil || modelKey == "" {
 		return modelKey
+	}
+	if account.Platform == PlatformOpenAI && ctx != nil {
+		if canonical, _ := ctx.Value(canonicalUpstreamErrorModelContextKey{}).(string); canonical == modelKey {
+			return modelKey
+		}
 	}
 	if account.Platform == PlatformAntigravity {
 		if resolved := strings.TrimSpace(resolveFinalAntigravityModelKey(ctx, account, modelKey)); resolved != "" {

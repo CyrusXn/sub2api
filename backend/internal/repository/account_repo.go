@@ -2454,13 +2454,19 @@ func (r *accountRepository) SetModelRateLimit(ctx context.Context, id int64, sco
 	}
 
 	client := clientFromContext(ctx, r.client)
+	// 瞬时冷却只允许延长：并发旧请求不能覆盖刚写入的更长模型限制及原因。
 	result, err := client.ExecContext(
 		ctx,
 		`UPDATE accounts SET 
 			extra = jsonb_set(
 				jsonb_set(COALESCE(extra, '{}'::jsonb), '{model_rate_limits}'::text[], COALESCE(extra->'model_rate_limits', '{}'::jsonb), true),
 				ARRAY['model_rate_limits', $1]::text[],
-				$2::jsonb,
+				CASE WHEN $2::jsonb->>'reason' = 'openai_model_transient' THEN
+					CASE WHEN NULLIF(extra->'model_rate_limits'->$1->>'rate_limit_reset_at', '')::timestamptz >
+						($2::jsonb->>'rate_limit_reset_at')::timestamptz
+					THEN extra->'model_rate_limits'->$1
+					ELSE $2::jsonb END
+				ELSE $2::jsonb END,
 				true
 			),
 			updated_at = NOW()

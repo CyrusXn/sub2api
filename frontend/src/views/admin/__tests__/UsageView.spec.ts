@@ -605,6 +605,9 @@ describe('admin UsageView request ID column visibility', () => {
     await wrapper.vm.$nextTick()
 
     const usageTable = wrapper.findComponent(UsageTableStub)
+    const columnKeys = usageTable.props('columns').map((column: { key: string }) => column.key)
+    expect(columnKeys).toContain('cache_rate')
+    expect(columnKeys.indexOf('cache_rate')).toBe(columnKeys.indexOf('tokens') + 1)
     expect(usageTable.props('columns')).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'request_id' })]),
     )

@@ -70,6 +70,8 @@ type TestEvent struct {
 type AccountTestOptions struct {
 	ImageDataURL string
 	AudioDataURL string
+	// 保留真实消息边界，避免把被引用的“用户：”正文误判为身份提问。
+	LastUserPrompt *string
 }
 
 func firstAccountTestOptions(opts []AccountTestOptions) AccountTestOptions {
@@ -400,7 +402,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		case APIProtocolAdaptive:
 			return s.testCNProviderAdaptiveConnection(c, account, modelID, prompt)
 		case APIProtocolResponses:
-			return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
+			return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode), testOpts.LastUserPrompt)
 		case APIProtocolChatCompletions:
 			return s.testCNProviderChatCompletionsConnection(c, account, modelID, prompt)
 		case APIProtocolAnthropic:
@@ -409,7 +411,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	if account.IsOpenAI() {
-		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
+		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode), testOpts.LastUserPrompt)
 	}
 
 	if account.IsGemini() {
@@ -810,7 +812,11 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 }
 
 // testOpenAIAccountConnection tests an OpenAI account's connection
-func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
+func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string, identityPrompts ...*string) error {
+	lastUserPrompt := &prompt
+	if len(identityPrompts) > 0 && identityPrompts[0] != nil {
+		lastUserPrompt = identityPrompts[0]
+	}
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
 
@@ -883,7 +889,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
 		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
-			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
+			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken, lastUserPrompt)
 		}
 		apiURL = buildOpenAIResponsesURLForPlatform(credentialAccount.Platform, normalizedBaseURL)
 	} else {
@@ -905,6 +911,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth, prompt)
 	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := applyOpenAIPlainChatIdentity(nil, credentialAccount, payloadBytes, lastUserPrompt)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "构造 OpenAI 身份测试请求失败")
+	}
 
 	// Send test_start event once. A task-invalid Agent Identity response may
 	// restart this probe after registering a replacement task.
@@ -986,7 +996,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
 			}
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
-			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
+			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode, lastUserPrompt)
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
@@ -2143,6 +2153,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	prompt string,
 	normalizedBaseURL string,
 	authToken string,
+	identityPrompts ...*string,
 ) error {
 	ctx := c.Request.Context()
 	apiURL := buildOpenAIChatCompletionsURL(normalizedBaseURL)
@@ -2155,6 +2166,14 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	payload := createOpenAIChatCompletionsTestPayload(testModelID, prompt)
 	payloadBytes, _ := json.Marshal(payload)
+	lastUserPrompt := &prompt
+	if len(identityPrompts) > 0 && identityPrompts[0] != nil {
+		lastUserPrompt = identityPrompts[0]
+	}
+	payloadBytes, err := applyOpenAIPlainChatIdentity(nil, account, payloadBytes, lastUserPrompt)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "构造 OpenAI 身份测试请求失败")
+	}
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/chat/completions 测试连接"})
@@ -2819,10 +2838,9 @@ func createOpenAITestPayload(modelID string, isOAuth bool, prompt string) map[st
 	// OAuth accounts using ChatGPT internal API require store: false
 	if isOAuth {
 		payload["store"] = false
+		// 只有 ChatGPT 内部协议需要编码客户端提示，APIKey 测试不能冒充该客户端。
+		payload["instructions"] = openai.DefaultInstructions
 	}
-
-	// All accounts require instructions for Responses API
-	payload["instructions"] = openai.DefaultInstructions
 
 	return payload
 }

@@ -11,15 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenAIModelTransient_FirstFailureDoesNotCreateLongBlock(t *testing.T) {
+func TestOpenAIModelTransient_FirstFailureCreatesShortBlock(t *testing.T) {
 	state := newOpenAIAccountModelTransientState(128)
 	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
 
 	decision := state.recordFailure(35, "gpt-5.5", now)
 
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Zero(t, decision.Cooldown)
-	assert.False(t, state.isBlocked(35, "gpt-5.5", now))
+	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
+	assert.True(t, state.isBlocked(35, "gpt-5.5", now))
 }
 
 func TestOpenAIModelTransient_SecondFailureCreatesShortModelBlock(t *testing.T) {
@@ -72,7 +72,7 @@ func TestOpenAIModelTransient_SuccessClearsStreakAndBlock(t *testing.T) {
 	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(3*time.Second))
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Zero(t, decision.Cooldown)
+	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
 }
 
 func TestOpenAIModelTransient_StaleStreakExpires(t *testing.T) {
@@ -83,7 +83,7 @@ func TestOpenAIModelTransient_StaleStreakExpires(t *testing.T) {
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(openAIModelTransientStreakTTL+time.Second))
 
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Zero(t, decision.Cooldown)
+	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
 }
 
 // A streak must not depend on how often the gateway is called. Sparse traffic
@@ -101,7 +101,7 @@ func TestOpenAIModelTransient_StreakSurvivesSparseTraffic(t *testing.T) {
 	third := state.recordFailure(35, "gpt-5.5", now.Add(2*gap))
 
 	assert.Equal(t, 1, first.FailureStreak)
-	assert.Zero(t, first.Cooldown)
+	assert.Equal(t, openAIModelTransientShortCooldown, first.Cooldown)
 	assert.Equal(t, 2, second.FailureStreak)
 	assert.Equal(t, openAIModelTransientShortCooldown, second.Cooldown)
 	assert.Equal(t, 3, third.FailureStreak)
@@ -122,8 +122,8 @@ func TestOpenAIModelTransient_SuccessResetsStreakAcrossSparseTraffic(t *testing.
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(gap))
 
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Zero(t, decision.Cooldown)
-	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(gap+time.Second)))
+	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
+	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(gap+time.Second)))
 }
 
 func TestOpenAIModelTransient_IgnoresInvalidKeys(t *testing.T) {

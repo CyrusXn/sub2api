@@ -1063,7 +1063,7 @@
     <KeyTestModal
       v-if="testingKey"
       :api-key="testingKey"
-      :base-url="publicSettings?.api_base_url || ''"
+      :base-url="pageOrigin"
       @close="testingKey = null"
     />
 

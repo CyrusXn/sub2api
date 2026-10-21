@@ -13,7 +13,7 @@ type upstreamSiteCredentialRepoStub struct {
 	credentials map[string]*UpstreamSiteCredential
 }
 
-func (r *upstreamSiteCredentialRepoStub) ListSites(context.Context) ([]UpstreamSiteCredentialSummary, error) {
+func (r *upstreamSiteCredentialRepoStub) ListSites(context.Context, bool) ([]UpstreamSiteCredentialSummary, error) {
 	return append([]UpstreamSiteCredentialSummary(nil), r.sites...), nil
 }
 

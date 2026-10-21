@@ -45,6 +45,7 @@ export default {
       ttftP50: '首 Token P50',
       durationP50: '请求时长 P50',
       cacheRate: '缓存率',
+      cacheRateHint: '成功落账请求的缓存读取 Token ÷（普通输入 + 缓存创建 + 缓存读取 Token）。先汇总 Token 再算比例，不是请求成功率。',
       cacheDetail: '读缓存占比',
       successRate: '成功率',
       successRateValue: '成功率 {value}',

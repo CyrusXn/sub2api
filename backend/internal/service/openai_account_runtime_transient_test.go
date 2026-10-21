@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -16,6 +17,22 @@ type transientCooldownAccountRepo struct {
 
 func (transientCooldownAccountRepo) SetOverloaded(context.Context, int64, time.Time) error {
 	return nil
+}
+
+func TestHandleOpenAITransientError_FirstFailureCoolsEveryOpenAIAccount(t *testing.T) {
+	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth} {
+		for _, pool := range []bool{false, true} {
+			t.Run(accountType+"/pool="+fmt.Sprint(pool), func(t *testing.T) {
+				svc := &OpenAIGatewayService{}
+				account := &Account{ID: 5109, Platform: PlatformOpenAI, Type: accountType,
+					Credentials: map[string]any{"pool_mode": pool}}
+				svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusBadGateway, nil,
+					[]byte(`{"error":{"message":"temporary upstream failure"}}`), "gpt-test")
+				require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-test"))
+				require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-other"))
+			})
+		}
+	}
 }
 
 func TestHandleOpenAITransientError_BlocksOnlyRequestedModel(t *testing.T) {
@@ -35,6 +52,17 @@ func TestHandleOpenAITransientError_BlocksOnlyRequestedModel(t *testing.T) {
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
 	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.6-terra"))
+}
+
+func TestHandleOpenAITransientError_First429AndPool529CoolModel(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, 529} {
+		svc := &OpenAIGatewayService{}
+		account := &Account{ID: 5191, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			Credentials: map[string]any{"pool_mode": true}}
+		svc.handleOpenAIAccountUpstreamError(context.Background(), account, status, nil,
+			[]byte(`{"error":{"message":"temporary upstream limit"}}`), "gpt-test")
+		require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-test"), "status %d", status)
+	}
 }
 
 func TestHandleOpenAITransientError_TransientStatusesUseModelScope(t *testing.T) {

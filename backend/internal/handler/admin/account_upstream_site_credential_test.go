@@ -15,10 +15,12 @@ import (
 )
 
 type upstreamSiteCredentialHandlerRepo struct {
-	credential *service.UpstreamSiteCredential
+	credential     *service.UpstreamSiteCredential
+	includeHistory bool
 }
 
-func (r *upstreamSiteCredentialHandlerRepo) ListSites(context.Context) ([]service.UpstreamSiteCredentialSummary, error) {
+func (r *upstreamSiteCredentialHandlerRepo) ListSites(_ context.Context, includeHistory bool) ([]service.UpstreamSiteCredentialSummary, error) {
+	r.includeHistory = includeHistory
 	return []service.UpstreamSiteCredentialSummary{{
 		Host:         "vovoapi.com",
 		WebsiteURL:   "https://vovoapi.com",
@@ -75,4 +77,25 @@ func TestAccountHandlerUpsertUpstreamSiteCredentialNeverReturnsPassword(t *testi
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.Equal(t, 0, payload.Code)
 	require.Equal(t, "cipher:secret", repo.credential.PasswordCiphertext)
+}
+
+func TestAccountHandlerListUpstreamSitesHistoryIsOptIn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		query       string
+		wantHistory bool
+	}{{"", false}, {"?include_history=true", true}, {"?include_history=false", false}} {
+		t.Run(tc.query, func(t *testing.T) {
+			repo := &upstreamSiteCredentialHandlerRepo{}
+			handler := &AccountHandler{}
+			handler.SetUpstreamSiteCredentialService(service.NewUpstreamSiteCredentialService(repo, upstreamSiteCredentialHandlerEncryptor{}))
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/"+tc.query, nil)
+			handler.ListUpstreamSites(ctx)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Equal(t, tc.wantHistory, repo.includeHistory)
+			require.Contains(t, recorder.Body.String(), `"account_ids":[12]`)
+		})
+	}
 }

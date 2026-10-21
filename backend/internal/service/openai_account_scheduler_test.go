@@ -2919,6 +2919,30 @@ func TestOpenAIAccountScheduler_SkipsAccountBlockedForRequestedModel(t *testing.
 	require.True(t, scheduler.isAccountRequestCompatible(context.Background(), account, OpenAIAccountScheduleRequest{RequestedModel: "gpt-5.6-sol"}))
 }
 
+func TestReportOpenAIAccountScheduleResult_FailureWithoutHTTPResponseCoolsModel(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	for _, tc := range []struct {
+		name    string
+		err     error
+		blocked bool
+	}{
+		{"empty upstream output", &UpstreamFailoverError{StatusCode: 502, RetryableOnSameAccount: true}, true},
+		{"client canceled", context.Canceled, false},
+		{"request error", &UpstreamFailoverError{StatusCode: 400, Scope: GatewayFailureScopeRequest}, false},
+		{"provider policy", &UpstreamFailoverError{StatusCode: 503, Scope: GatewayFailureScopeProvider}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{}
+			account := &Account{ID: 5194, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"model_mapping": map[string]any{"alias": "upstream-model", "upstream-model": "other-model"}}}
+			svc.ReportOpenAIAccountScheduleResult(account, "upstream-model", false, nil, tc.err)
+			require.Equal(t, tc.blocked, svc.isOpenAIAccountModelRuntimeBlocked(account, "alias"))
+			require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "unrelated"))
+		})
+	}
+}
+
 func TestReportOpenAIAccountScheduleResult_SuccessClearsModelTransientState(t *testing.T) {
 	svc := &OpenAIGatewayService{openaiModelTransient: newOpenAIAccountModelTransientState(128)}
 	now := time.Now()

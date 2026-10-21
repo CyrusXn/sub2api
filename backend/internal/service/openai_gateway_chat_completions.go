@@ -73,6 +73,11 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	compatPromptCacheTenantIsolated bool,
 ) (*OpenAIForwardResult, error) {
 	rememberOpenCodeInboundBody(c, body)
+	identityBody, identityErr := applyOpenAIPlainChatIdentity(c, account, body, nil)
+	if identityErr != nil {
+		return nil, identityErr
+	}
+	body = identityBody
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {

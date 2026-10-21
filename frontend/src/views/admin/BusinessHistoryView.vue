@@ -23,21 +23,15 @@
         {{ t('admin.businessHistory.loadFailed') }}
       </p>
 
-      <!-- 实账口径与旧请求估算并列说明，不能用缺失快照补零制造精确收益。 -->
+      <!-- 全部卡片遵循已查询区间；日内资产边界只提供估值，不冒充精确实账。 -->
       <section class="card space-y-3 p-5 text-sm">
         <p class="font-medium text-gray-900 dark:text-white">{{ t('admin.businessHistory.ledgerDescription') }}</p>
-        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <p>{{ t('admin.businessHistory.lifetimeRecharge') }}<strong class="ml-2">{{ formatMoney(summary?.upstream_recharge_total) }}</strong></p>
-          <p>{{ t('admin.businessHistory.currentCash') }}<strong class="ml-2">{{ formatMoney(summary?.ledger?.cash_balance) }}</strong></p>
-          <p>{{ t('admin.businessHistory.currentSubscription') }}<strong class="ml-2">{{ formatMoney(summary?.ledger?.subscription_balance) }}</strong></p>
-          <p>{{ t('admin.businessHistory.lifetimeConsumptionEstimate') }}<strong data-test="ledger-lifetime-consumption" class="ml-2">{{ formatMoney(summary?.ledger?.lifetime_consumption_estimate) }}</strong></p>
-          <p>{{ t('admin.businessHistory.lifetimeUserCharges') }}<strong class="ml-2">{{ formatMoney(summary?.lifetime.actual_cost) }}</strong></p>
-          <p>{{ t('admin.businessHistory.lifetimeProfitEstimate') }}<strong class="ml-2">{{ formatMoney(summary?.ledger?.lifetime_profit_estimate) }}</strong></p>
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.zeroOpeningEstimate') }}</p>
-        <p v-if="summary?.ledger" class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.assetCompleteness', { amount: formatMoney(summary.ledger.known_balance_subtotal), count: summary.ledger.unknown_sites }) }}</p>
-        <!-- 顶部累计口径不依赖区间边界，日期筛选仅控制请求统计及每日明细。 -->
+        <p v-if="queriedRange" data-test="applied-range">{{ queriedRange.start_date }} ～ {{ queriedRange.end_date }}</p>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.currentTotalsScope') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userRechargeDescription') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
+        <p>{{ t('admin.businessHistory.boundaryBalances', { opening: formatMoney(summary?.ledger?.opening_balance), closing: formatMoney(summary?.ledger?.closing_balance) }) }}</p>
+        <p data-test="ledger-status" class="text-xs text-gray-500 dark:text-gray-400">{{ ledgerStatusHint }}</p>
       </section>
 
       <section class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="经营指标">
@@ -73,9 +67,9 @@
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.totalConsumption') }}</p>
               <p data-test="range-consumption" class="mt-1 flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
-                <span>{{ formatMoney(summary?.lifetime.actual_cost) }}</span>
+                <span>{{ formatMoney(summary?.range.actual_cost) }}</span>
                 <span class="text-gray-300 dark:text-dark-500">/</span>
-                <span class="text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.lifetime.actual_cost_excluding_admin) }}</span>
+                <span class="text-emerald-600 dark:text-emerald-400">{{ formatMoney(summary?.range.actual_cost_excluding_admin) }}</span>
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.allAccounts') }} / {{ t('admin.businessHistory.excludingAdmin') }}</p>
             </div>
@@ -108,7 +102,7 @@
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeTotal') }}</p>
               <p data-test="upstream-recharge-total" class="mt-1 text-2xl font-bold text-red-600 dark:text-red-400">
-                {{ formatMoney(summary?.upstream_recharge_total) }}
+                {{ formatMoney(summary?.range_upstream_recharge_total) }}
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamRechargeDescription') }}</p>
             </div>
@@ -120,9 +114,9 @@
             <div class="rounded-lg bg-sky-100 p-2 dark:bg-sky-900/30"><Icon name="database" size="md" class="text-sky-600 dark:text-sky-400" /></div>
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceTotal') }}</p>
-              <p data-test="upstream-balance-total" class="mt-1 text-2xl font-bold text-sky-600 dark:text-sky-400">{{ formatMoney(summary?.ledger?.total_balance) }}</p>
+              <p data-test="upstream-balance-total" class="mt-1 text-2xl font-bold text-sky-600 dark:text-sky-400">{{ formatMoney(summary?.ledger?.closing_balance) }}</p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
-              <p data-test="upstream-balance-snapshot-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.currentBalanceHint') }}</p>
+              <p data-test="upstream-balance-snapshot-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ upstreamBalanceSnapshotHint }}</p>
             </div>
           </div>
         </button>
@@ -148,6 +142,11 @@
                 <span>{{ formatMoney(totalProfitAllAccounts) }}</span>
               </p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.totalProfitFormula') }}</p>
+              <div class="mt-3 border-t border-gray-100 pt-3 dark:border-dark-700">
+                <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.rechargeDifference') }}</p>
+                <p data-test="recharge-difference" class="mt-1 text-xl font-bold" :class="rechargeDifference == null ? '' : profitClass(rechargeDifference)">{{ formatMoney(rechargeDifference) }}</p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.rechargeDifferenceDescription') }}</p>
+              </div>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.requestProfitReference') }} {{ formatMoney(requestProfitAllAccounts) }} / {{ formatMoney(totalProfitUsers) }}</p>
             </div>
           </div>
@@ -218,15 +217,11 @@
         <button type="button" class="btn btn-secondary" @click="detailKind && openDetails(detailKind)">{{ t('common.refresh') }}</button>
       </div>
       <template v-else-if="detailKind === 'balance'">
-        <p class="mb-4 text-sm text-gray-500">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
-        <div class="overflow-x-auto">
-          <table class="w-full whitespace-nowrap text-sm tabular-nums">
-            <thead><tr class="border-b text-left"><th class="p-3">{{ t('admin.businessHistory.site') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.cash') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.subscription') }}</th><th class="p-3 text-right">{{ t('admin.businessHistory.balance') }}</th></tr></thead>
-            <tbody><tr v-for="asset in balanceAssets" :key="asset.site_id" class="border-b dark:border-dark-700" data-test="balance-detail-row"><td class="p-3">{{ asset.site_name }}<small class="block text-gray-500">{{ asset.domain }}</small></td><td class="p-3 text-right">{{ formatMoney(asset.cash_balance) }}</td><td class="p-3 text-right">{{ formatMoney(asset.subscription_balance) }}</td><td class="p-3 text-right font-semibold">{{ formatMoney(asset.total_balance) }}</td></tr></tbody>
-            <tfoot><tr><th class="p-3 text-left" colspan="3">{{ t('admin.businessHistory.total') }}</th><td class="p-3 text-right font-bold" data-test="balance-detail-total">{{ formatMoney(detailBalanceTotal) }}</td></tr></tfoot>
-          </table>
-        </div>
-        <p v-if="!balanceAssets.length" class="p-4 text-center text-gray-500">{{ t('admin.businessHistory.noData') }}</p>
+        <p class="mb-4 text-sm text-gray-500">{{ t('admin.businessHistory.historicalBalanceDetailsNotice') }}</p>
+        <p>{{ t('admin.businessHistory.boundaryBalances', { opening: formatMoney(summary?.ledger?.opening_balance), closing: formatMoney(summary?.ledger?.closing_balance) }) }}</p>
+        <p class="mt-3 text-sm text-gray-500">{{ ledgerStatusHint }}</p>
+        <p class="mt-4 font-bold" data-test="balance-detail-total">{{ formatMoney(summary?.ledger?.closing_balance) }}</p>
+        <p class="mt-2 text-sm text-gray-500">{{ upstreamBalanceSnapshotHint }}</p>
       </template>
       <template v-else-if="detailKind === 'recharge'">
         <p class="mb-4 font-semibold">{{ t('admin.businessHistory.total') }}：{{ formatMoney(rechargeDetails?.total_amount) }}</p>
@@ -271,7 +266,7 @@ import {
 import { Line } from 'vue-chartjs'
 import { adminAPI } from '@/api/admin'
 import type { DashboardBusinessDailyPoint, DashboardBusinessProfitPoint, DashboardBusinessSummary } from '@/api/admin/dashboard'
-import { balanceCenterAPI, type BalanceCenterAsset, type BalanceCenterRechargeSummary } from '@/api/admin/balanceCenter'
+import { balanceCenterAPI, type BalanceCenterRechargeSummary } from '@/api/admin/balanceCenter'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -284,13 +279,11 @@ const { t } = useI18n()
 const app = useAppStore()
 type TrendMetric = 'requests' | 'tokens' | 'consumption' | 'profit'
 
-const today = new Date()
-// 经营历史默认从 2026 年 7 月 9 日开始，结束日期仍使用当前日期。
-const rangeStart = new Date(2026, 6, 9)
-
-const startDate = ref(formatLocalDate(rangeStart))
-const endDate = ref(formatLocalDate(today))
+// 固定经营起点，今天也按北京时间取日，避免境外浏览器跨日偏移。
+const startDate = ref('2026-07-09')
+const endDate = ref(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }))
 const summary = ref<DashboardBusinessSummary | null>(null)
+const queriedRange = ref<{ start_date: string; end_date: string } | null>(null)
 const loading = ref(false)
 const loadError = ref(false)
 const trendMetric = ref<TrendMetric>('requests')
@@ -300,30 +293,30 @@ const normalMetricClass = 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 da
 
 const daily = computed(() => [...(summary.value?.daily ?? [])].sort((a, b) => a.bucket_date.localeCompare(b.bucket_date)))
 const dailyDescending = computed(() => [...daily.value].reverse())
-const profitHistory = computed(() => [...(summary.value?.profit_history ?? [])].sort((a, b) => b.bucket_date.localeCompare(a.bucket_date)))
+const profitHistory = computed(() => [...(summary.value?.profit_history ?? [])]
+  .filter(point => queriedRange.value && point.bucket_date >= queriedRange.value.start_date && point.bucket_date <= queriedRange.value.end_date)
+  .sort((a, b) => b.bucket_date.localeCompare(a.bucket_date)))
 const profitByDate = computed(() => new Map(profitHistory.value.map(point => [point.bucket_date, point])))
 type DetailKind = 'balance' | 'recharge' | 'profit'
 const detailKind = ref<DetailKind | null>(null)
 const detailsLoading = ref(false)
 const detailsError = ref(false)
-const balanceAssets = ref<BalanceCenterAsset[]>([])
 const rechargeDetails = ref<BalanceCenterRechargeSummary | null>(null)
 const detailTitle = computed(() => t(`admin.businessHistory.${detailKind.value === 'balance' ? 'balanceDetails' : detailKind.value === 'recharge' ? 'rechargeDetails' : 'profitDetails'}`))
-const detailBalanceTotal = computed(() => balanceAssets.value.length && balanceAssets.value.every(asset => asset.balance_known && asset.total_balance != null)
-  ? balanceAssets.value.reduce((sum, asset) => sum + asset.total_balance!, 0) : null)
 let detailsRequest = 0
 
 async function openDetails(kind: DetailKind) {
   const request = ++detailsRequest
   detailKind.value = kind
   detailsError.value = false
-  detailsLoading.value = kind !== 'profit'
+  detailsLoading.value = kind === 'recharge'
   try {
-    if (kind === 'balance') {
-      const assets = await balanceCenterAPI.assets()
-      if (request === detailsRequest) balanceAssets.value = assets
-    } else if (kind === 'recharge') {
-      const recharges = await balanceCenterAPI.rechargeSummary({})
+    if (kind === 'recharge' && queriedRange.value) {
+      // 余额中心结束时间为闭区间，保留 PostgreSQL 微秒精度以免漏掉日末记录。
+      const recharges = await balanceCenterAPI.rechargeSummary({
+        start_time: `${queriedRange.value.start_date}T00:00:00+08:00`,
+        end_time: `${queriedRange.value.end_date}T23:59:59.999999+08:00`
+      })
       if (request === detailsRequest) rechargeDetails.value = recharges
     }
   } catch {
@@ -341,15 +334,23 @@ function profitSnapshotHint(point?: DashboardBusinessProfitPoint): string {
   if (!point || point.status === 'missing_snapshot') return t('admin.businessHistory.missingProfitSnapshot')
   return point.status === 'current' ? t('admin.businessHistory.asOfNow') : t('admin.businessHistory.snapshotTime', { time: point.captured_at ? formatTimestamp(point.captured_at) : '--' })
 }
-// 暂按用户确认的累计公式计算，不能混用区间充值与当前余额。
-const upstreamTotalConsumption = computed(() => {
-  if (!summary.value || summary.value.ledger?.total_balance == null) return null
-  return summary.value.upstream_recharge_total - summary.value.ledger.total_balance
+// 估值与精确值分开返回，缺失时不得回退累计值或请求费用参考。
+const upstreamTotalConsumption = computed(() => summary.value?.ledger?.range_consumption_estimate ?? summary.value?.ledger?.range_consumption ?? null)
+const totalProfitAllAccounts = computed(() => summary.value?.ledger?.range_profit_estimate ?? summary.value?.ledger?.range_profit ?? null)
+const rechargeDifference = computed(() => summary.value
+  ? summary.value.range.recharge_amount - summary.value.range_upstream_recharge_total : null)
+const ledgerStatusHint = computed(() => {
+  const ledger = summary.value?.ledger
+  if (!ledger || ledger.range_status === 'missing_boundary') return t('admin.businessHistory.ledgerMissingBoundary')
+  if (ledger.range_status === 'site_scope_changed') return t('admin.businessHistory.ledgerScopeChanged')
+  return t(`admin.businessHistory.${ledger.range_status === 'available' ? 'ledgerAvailable' : 'ledgerInexactBoundary'}`, {
+    opening: ledger.opening_captured_at ? formatTimestamp(ledger.opening_captured_at) : '--',
+    closing: ledger.closing_captured_at ? formatTimestamp(ledger.closing_captured_at) : '--'
+  })
 })
-const totalProfitAllAccounts = computed(() => {
-  if (!summary.value || upstreamTotalConsumption.value == null) return null
-  return summary.value.lifetime.actual_cost - upstreamTotalConsumption.value
-})
+const upstreamBalanceSnapshotHint = computed(() => summary.value?.ledger?.closing_captured_at
+  ? t('admin.businessHistory.snapshotTime', { time: formatTimestamp(summary.value.ledger.closing_captured_at) })
+  : t('admin.businessHistory.balanceSnapshotEmpty'))
 // 请求估算无法精确分摊实账成本，只在参考文案下保留两个旧口径。
 const requestProfitAllAccounts = computed(() => {
   if (!summary.value) return null
@@ -362,6 +363,8 @@ const totalProfitUsers = computed(() => {
 // 余额快照按日采集，所选结束日可能未采集到，此时提示“暂无快照”而不是展示误导性的零余额。
 const balanceSnapshotHint = computed(() => {
   if (!summary.value) return ''
+  if (summary.value.range_user_balance_total == null) return t('admin.businessHistory.balanceSnapshotEmpty')
+  if (summary.value.range_balance_captured_at) return t('admin.businessHistory.snapshotTime', { time: formatTimestamp(summary.value.range_balance_captured_at) })
   const snapshotDate = summary.value.range_balance_snapshot_date
   if (!snapshotDate) return t('admin.businessHistory.balanceSnapshotEmpty')
   return t('admin.businessHistory.balanceSnapshotAsOf', { date: formatDate(snapshotDate) })
@@ -474,10 +477,6 @@ const chartOptions = computed(() => ({
   }
 }))
 
-function formatLocalDate(value: Date): string {
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
-}
-
 function formatDate(value: string): string {
   return String(value).slice(0, 10)
 }
@@ -501,6 +500,7 @@ function formatMoney(value: number | null | undefined): string {
   return `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+let summaryRequest = 0
 async function loadSummary() {
   if (!startDate.value || !endDate.value || startDate.value > endDate.value) {
     app.showError(t('admin.businessHistory.invalidRange'))
@@ -508,14 +508,22 @@ async function loadSummary() {
   }
   loading.value = true
   loadError.value = false
+  const request = ++summaryRequest
+  const range = { start_date: startDate.value, end_date: endDate.value }
   try {
-    summary.value = await adminAPI.dashboard.getBusinessSummary({ start_date: startDate.value, end_date: endDate.value })
+    const result = await adminAPI.dashboard.getBusinessSummary(range)
+    if (request !== summaryRequest) return
+    summary.value = result
+    queriedRange.value = range
+    detailKind.value = null
+    ++detailsRequest
   } catch (error) {
+    if (request !== summaryRequest) return
     loadError.value = true
     console.error('读取经营历史失败:', error)
     app.showError(t('admin.businessHistory.loadFailed'))
   } finally {
-    loading.value = false
+    if (request === summaryRequest) loading.value = false
   }
 }
 
