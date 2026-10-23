@@ -18,14 +18,31 @@ import (
 
 type completionFailoverUpstream struct {
 	service.HTTPUpstream
-	calls        []int64
-	delayFailure bool
+	calls          []int64
+	delayFailure   bool
+	failAll        bool
+	delayHeaders   bool
+	emptyStructure bool
+	directFailure  bool
 }
 
 func (u *completionFailoverUpstream) Do(_ *http.Request, _ string, id int64, _ int) (*http.Response, error) {
 	u.calls = append(u.calls, id)
-	data := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"fake-first-output\"}\n\n"
-	if id == 9911 {
+	if id == 9910 && u.delayHeaders {
+		time.Sleep(1200 * time.Millisecond)
+	}
+	if id == 9911 && u.emptyStructure {
+		return &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"server_error","message":"temporary upstream failure"}}`))}, nil
+	}
+	data := "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \\n\\t\"}\n\n"
+	if u.emptyStructure {
+		data = "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"content\":[]}}\n\n" +
+			"data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"temporary failure\"}}}\n\n"
+	}
+	if u.directFailure {
+		data = "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"temporary failure\"}}}\n\n"
+	}
+	if id == 9913 && !u.failAll {
 		data = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"healthy-output\"}\n\n" +
 			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_healthy\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
 	}
@@ -51,12 +68,13 @@ func (u *completionFailoverUpstream) DoWithTLS(r *http.Request, proxy string, id
 
 func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, keepalive := range []bool{false, true} {
+	for _, scenario := range []struct{ keepalive, failAll, delayHeaders, emptyStructure, directFailure bool }{{}, {keepalive: true}, {keepalive: true, failAll: true}, {keepalive: true, delayHeaders: true}, {emptyStructure: true}, {directFailure: true}} {
+		keepalive := scenario.keepalive
 		for _, passthrough := range []bool{false, true} {
-			t.Run(map[bool]string{false: "native", true: "passthrough"}[passthrough]+map[bool]string{false: "", true: "/keepalive"}[keepalive], func(t *testing.T) {
+			t.Run(map[bool]string{false: "native", true: "passthrough"}[passthrough]+map[bool]string{false: "", true: "/keepalive"}[keepalive]+map[bool]string{false: "", true: "/exhausted"}[scenario.failAll]+map[bool]string{false: "", true: "/slow-headers"}[scenario.delayHeaders]+map[bool]string{false: "", true: "/empty-structure"}[scenario.emptyStructure]+map[bool]string{false: "", true: "/direct-failure"}[scenario.directFailure], func(t *testing.T) {
 				groupID := int64(4204)
 				accounts := []service.Account{}
-				for i, id := range []int64{9910, 9911} {
+				for i, id := range []int64{9910, 9911, 9912, 9913} {
 					accounts = append(accounts, service.Account{ID: id, Name: "completion-test", Platform: service.PlatformOpenAI,
 						Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Priority: i + 1,
 						Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
@@ -70,7 +88,7 @@ func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 					cfg.Gateway.StreamKeepaliveInterval = 1
 				}
 				repo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
-				upstream := &completionFailoverUpstream{delayFailure: keepalive}
+				upstream := &completionFailoverUpstream{delayFailure: keepalive, failAll: scenario.failAll, delayHeaders: scenario.delayHeaders, emptyStructure: scenario.emptyStructure, directFailure: scenario.directFailure}
 				cache := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 				t.Cleanup(cache.Stop)
 				gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, cache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
@@ -82,9 +100,15 @@ func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 				c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 1804, GroupID: &groupID, User: &service.User{ID: 1704, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}})
 				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1704, Concurrency: 0})
 				h.Responses(c)
-				require.Equal(t, []int64{9910, 9911}, upstream.calls)
+				require.Equal(t, []int64{9910, 9911, 9912, 9913}, upstream.calls)
 				require.Equal(t, http.StatusOK, rec.Code)
 				require.NotContains(t, rec.Body.String(), "fake-first-output")
+				if scenario.failAll {
+					require.Contains(t, rec.Body.String(), `"type":"response.failed"`)
+					require.Contains(t, rec.Body.String(), "upstream_error")
+					require.NotContains(t, rec.Body.String(), "internal_error")
+					return
+				}
 				require.Contains(t, rec.Body.String(), "healthy-output")
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
 				if keepalive {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -53,6 +54,34 @@ func (r *usageLogRepository) GetByID(ctx context.Context, id int64) (log *servic
 
 func (r *usageLogRepository) ListByUser(ctx context.Context, userID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
 	return r.listUsageLogsWithPagination(ctx, "WHERE user_id = $1", []any{userID}, params)
+}
+
+// GetRecentOpenAICodexModel 不按调用次数猜主模型，也不读取失败占位记录。
+// 用户最近完成的普通 GPT 文本请求是兜底依据；后台改写链不能反过来更新依据。
+func (r *usageLogRepository) GetRecentOpenAICodexModel(ctx context.Context, userID int64) (string, error) {
+	if userID <= 0 {
+		return "", nil
+	}
+	const query = `SELECT COALESCE(NULLIF(TRIM(requested_model), ''), model)
+FROM usage_logs
+WHERE user_id = $1
+  AND output_tokens > 0
+  AND request_type <> 4
+  AND NOT native_compaction_v2
+  AND image_count = 0 AND video_count = 0
+  AND COALESCE(inbound_endpoint, '') NOT LIKE '%/compact'
+  AND LOWER(COALESCE(NULLIF(TRIM(requested_model), ''), model)) LIKE 'gpt-%'
+  AND LOWER(COALESCE(NULLIF(TRIM(requested_model), ''), model)) NOT LIKE 'gpt-image-%'
+  AND LOWER(COALESCE(NULLIF(TRIM(requested_model), ''), model)) NOT IN ('gpt-6-luna', 'gpt-5.6-luna')
+  AND LOWER(SPLIT_PART(COALESCE(model_mapping_chain, ''), '→', 1)) NOT IN ('gpt-6-luna', 'gpt-5.6-luna', 'codex-auto-review')
+ORDER BY created_at DESC, id DESC
+LIMIT 1`
+	var model string
+	err := scanSingleRow(ctx, r.sql, query, []any{userID}, &model)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return strings.TrimSpace(model), err
 }
 
 func (r *usageLogRepository) ListByAPIKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {

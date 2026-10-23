@@ -105,3 +105,18 @@ func TestPassthroughKeepaliveDisabledKeepsWriterUntouched(t *testing.T) {
 	require.False(t, StopOpenAICompactSSEKeepaliveCommitted(c))
 	_ = time.Now
 }
+
+func TestOpenAIKeepaliveAcrossHeaderAndBodyDoesNotLockAccount(t *testing.T) {
+	c, _ := newPassthroughKeepaliveTestContext(t)
+	for range 2 {
+		stop := startOpenAISSEKeepalive(c, time.Hour)
+		value, _ := c.Get(openAICompactSSEKeepaliveKey)
+		require.True(t, value.(*openAICompactSSEKeepalive).beat())
+		stop()
+		require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+		require.False(t, openAIStreamClientOutputStarted(c, false))
+	}
+	_, err := c.Writer.WriteString("data: real\n\n")
+	require.NoError(t, err)
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+}

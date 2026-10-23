@@ -1582,6 +1582,41 @@ func TestOpenAIResponsesWebSocket_SubagentModelInheritanceBeforeRouting(t *testi
 	require.Len(t, got.logs, 2)
 	require.Equal(t, "gpt-5.6-sol", got.logs[0].RequestedModel)
 	require.Equal(t, "gpt-5.6-sol", got.logs[1].RequestedModel)
+	require.Equal(t, "gpt-5.6-luna→gpt-5.6-sol", *got.logs[0].ModelMappingChain)
+	require.Equal(t, "gpt-5.6-luna→gpt-5.6-sol", *got.logs[1].ModelMappingChain)
+}
+
+func TestOpenAIResponsesWebSocket_CodexLunaRespectsRequestSource(t *testing.T) {
+	for _, mode := range []string{service.OpenAIWSIngressModePassthrough, service.OpenAIWSIngressModeCtxPool} {
+		for _, tc := range []struct {
+			name, kind, wantModel string
+		}{
+			{"manual or unknown source", "", "gpt-6-luna"},
+			{"explicit background", "thread_title", "gpt-6-astra"},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				ua := "Codex Desktop/26.1023.1"
+				got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+					firstPayload:  `{"type":"response.create","model":"gpt-6-luna","stream":false}`,
+					secondPayload: `{"type":"response.create","model":"gpt-6-luna","stream":false}`,
+					userAgent:     &ua, recentModel: "gpt-6-astra", ingressMode: mode,
+					headers: http.Header{"X-Openai-Subagent": []string{tc.kind}},
+				})
+				require.Len(t, got.upstreamPayloads, 2)
+				require.Len(t, got.logs, 2)
+				for i, payload := range got.upstreamPayloads {
+					require.Equal(t, tc.wantModel, gjson.GetBytes(payload, "model").String())
+					require.Equal(t, tc.wantModel, got.logs[i].RequestedModel)
+					if tc.kind == "" {
+						require.Nil(t, got.logs[i].ModelMappingChain)
+					} else {
+						require.NotNil(t, got.logs[i].ModelMappingChain)
+						require.Equal(t, "gpt-6-luna→gpt-6-astra", *got.logs[i].ModelMappingChain)
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestOpenAIResponsesWebSocket_ParentModelCacheTracksLaterTurns(t *testing.T) {
@@ -1997,6 +2032,7 @@ type openAIResponsesWSUsageLogCase struct {
 	userAgent                 *string
 	headers                   http.Header
 	gatewayCache              service.GatewayCache
+	recentModel               string
 	ingressMode               string
 	channelMapping            map[string]string
 	billingModelSource        string
@@ -2131,7 +2167,9 @@ type openAIHTTPPassthroughFailoverUpstream struct {
 
 type openAICodexModelCaptureUpstream struct {
 	service.HTTPUpstream
-	body []byte
+	body       []byte
+	models     []string
+	statusCode int
 }
 
 func (u *openAICodexModelCaptureUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
@@ -2140,6 +2178,14 @@ func (u *openAICodexModelCaptureUpstream) Do(req *http.Request, _ string, _ int6
 		return nil, err
 	}
 	u.body = body
+	u.models = append(u.models, gjson.GetBytes(body, "model").String())
+	if u.statusCode != 0 {
+		return &http.Response{
+			StatusCode: u.statusCode,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","code":"model_not_found","message":"requested model is not available"}}`)),
+		}, nil
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -2282,7 +2328,12 @@ func (s *openAIWSFailoverHandlerAccountRepoStub) SetModelRateLimit(context.Conte
 
 type openAIWSUsageHandlerUsageLogRepoStub struct {
 	service.UsageLogRepository
-	created chan *service.UsageLog
+	created     chan *service.UsageLog
+	recentModel string
+}
+
+func (s *openAIWSUsageHandlerUsageLogRepoStub) GetRecentOpenAICodexModel(context.Context, int64) (string, error) {
+	return s.recentModel, nil
 }
 
 func (s *openAIWSUsageHandlerUsageLogRepoStub) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
@@ -2369,7 +2420,7 @@ func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billingCacheSvc.Stop)
 	gatewaySvc := service.NewOpenAIGatewayService(
-		accountRepo, nil, nil, nil, nil, nil, cache, cfg, nil, nil,
+		accountRepo, &openAIWSUsageHandlerUsageLogRepoStub{recentModel: "gpt-6-astra"}, nil, nil, nil, nil, cache, cfg, nil, nil,
 		service.NewBillingService(cfg, nil), nil, billingCacheSvc, upstream,
 		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)
@@ -2390,6 +2441,9 @@ func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
 		allowedModel     string
 		wantStatus       int
 		wantUpstream     string
+		codexUnmarked    bool
+		subagentKind     string
+		upstreamStatus   int
 	}{
 		{
 			name: "parent model wins", requestModel: "gpt-5.6-luna", parentID: "parent-thread",
@@ -2401,7 +2455,29 @@ func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
 		},
 		{
 			name: "fallback is routed", requestModel: "codex-auto-review", parentID: "unknown",
-			allowlistEnabled: true, allowedModel: "gpt-5.6-sol", wantStatus: http.StatusOK, wantUpstream: "gpt-5.6-sol",
+			allowlistEnabled: true, allowedModel: "gpt-6-astra", wantStatus: http.StatusOK, wantUpstream: "gpt-6-astra",
+		},
+		{
+			name: "manual Luna is preserved", requestModel: "gpt-6-luna", codexUnmarked: true,
+			allowlistEnabled: true, allowedModel: "gpt-6-luna", wantStatus: http.StatusOK, wantUpstream: "gpt-6-luna",
+		},
+		{
+			name: "explicit title is routed", requestModel: "gpt-6-luna", subagentKind: "thread_title",
+			allowlistEnabled: true, allowedModel: "gpt-6-astra", wantStatus: http.StatusOK, wantUpstream: "gpt-6-astra",
+		},
+		{
+			name: "manual Luna does not bypass allowlist", requestModel: "gpt-6-luna", codexUnmarked: true,
+			allowlistEnabled: true, allowedModel: "gpt-6-astra", wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "manual missing Luna returns error without changing model", requestModel: "gpt-6-luna", codexUnmarked: true,
+			allowlistEnabled: true, allowedModel: "gpt-6-luna", upstreamStatus: http.StatusNotFound,
+			wantStatus: http.StatusNotFound, wantUpstream: "gpt-6-luna",
+		},
+		{
+			name: "manual failing Luna returns error without changing model", requestModel: "gpt-6-luna", codexUnmarked: true,
+			allowlistEnabled: true, allowedModel: "gpt-6-luna", upstreamStatus: http.StatusBadGateway,
+			wantStatus: http.StatusBadGateway, wantUpstream: "gpt-6-luna",
 		},
 		{
 			name: "conflicting model fields are rejected", requestModel: "codex-auto-review", parentID: "unknown",
@@ -2411,6 +2487,8 @@ func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			upstream.body = nil
+			upstream.models = nil
+			upstream.statusCode = tc.upstreamStatus
 			requestBody := tc.requestBody
 			if requestBody == "" {
 				requestBody = `{"model":"` + tc.requestModel + `","input":"hello","stream":false}`
@@ -2421,6 +2499,13 @@ func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
 			c.Request.Header.Set("Content-Type", "application/json")
 			c.Request.Header.Set("x-openai-subagent", "guardian")
 			c.Request.Header.Set("x-codex-parent-thread-id", tc.parentID)
+			if tc.subagentKind != "" {
+				c.Request.Header.Set("x-openai-subagent", tc.subagentKind)
+			}
+			if tc.codexUnmarked {
+				c.Request.Header.Del("x-openai-subagent")
+				c.Request.Header.Set("User-Agent", "Codex Desktop/26.1023.1")
+			}
 			c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{
 				ID: 1804, GroupID: &groupID,
 				User: &service.User{ID: 1704, Status: service.StatusActive},
@@ -2438,6 +2523,9 @@ func TestOpenAIResponses_SubagentModelInheritanceBeforeRouting(t *testing.T) {
 				require.Empty(t, upstream.body)
 			} else {
 				require.Equal(t, tc.wantUpstream, gjson.GetBytes(upstream.body, "model").String())
+				for _, model := range upstream.models {
+					require.Equal(t, tc.wantUpstream, model, "所有重试均须保留生效模型")
+				}
 			}
 		})
 	}
@@ -3234,7 +3322,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
 	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: account}
-	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, turnCount)}
+	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, turnCount), recentModel: tc.recentModel}
 
 	if len(tc.channelMapping) > 0 {
 		channelSvc = service.NewChannelService(&openAIWSUsageHandlerChannelRepoStub{

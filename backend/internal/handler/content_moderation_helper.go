@@ -40,7 +40,7 @@ func clientRequestedUsageFields(c *gin.Context, mapping service.ChannelMappingRe
 
 func openAIResponsesUsageFields(c *gin.Context, mapping service.ChannelMappingResult, effectiveModel, upstreamModel string, rewritten bool) service.ChannelUsageFields {
 	if rewritten {
-		return mapping.ToUsageFields(effectiveModel, upstreamModel)
+		return service.OpenAICodexRewriteUsageFields(c, mapping.ToUsageFields(effectiveModel, upstreamModel))
 	}
 	return clientRequestedUsageFields(c, mapping, effectiveModel, upstreamModel)
 }

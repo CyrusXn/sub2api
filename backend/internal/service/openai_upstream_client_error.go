@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -53,7 +54,36 @@ func writeOpenAIUpstreamClientError(c *gin.Context, statusCode int, body []byte,
 	}
 	errorPayload["message"] = message
 
-	c.JSON(statusCode, gin.H{"error": errorPayload})
+	writeOpenAIErrorJSON(c, statusCode, gin.H{"error": errorPayload})
+}
+
+// 保活提交 200 后只能用合法终态回错，否则严格 SSE 客户端会忽略裸 JSON。
+func writeOpenAIResponsesErrorAfterKeepalive(c *gin.Context, statusCode int, body []byte) bool {
+	committed := StopOpenAICompactSSEKeepaliveCommitted(c)
+	if c == nil || c.Writer == nil || (!committed && (!c.Writer.Written() || OpenAICompactKeepaliveAdjustedWrittenSize(c) >= 0)) {
+		return false
+	}
+	errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String())
+	if errType == "" {
+		errType = "upstream_error"
+	}
+	message := extractOpenAISSEErrorMessage(body)
+	MarkOpsStreamErrorValue(c, OpsStreamError{
+		ErrType: errType, Code: extractUpstreamErrorCode(body), Message: message,
+		IntendedStatus: statusCode, CountTowardsSLA: statusCode >= http.StatusInternalServerError,
+	})
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	_, _ = c.Writer.WriteString(buildOpenAIResponseFailedSSE("", "", 0, body, "Upstream request failed"))
+	c.Writer.Flush()
+	MarkResponseCommitted(c)
+	return true
+}
+
+func writeOpenAIErrorJSON(c *gin.Context, statusCode int, payload gin.H) {
+	body, _ := json.Marshal(payload)
+	if !writeOpenAIResponsesErrorAfterKeepalive(c, statusCode, body) {
+		c.JSON(statusCode, payload)
+	}
 }
 
 // WriteOpenAIUpstreamClientError preserves a structured deterministic upstream

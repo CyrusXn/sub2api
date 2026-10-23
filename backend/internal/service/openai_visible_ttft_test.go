@@ -106,7 +106,7 @@ func TestOpenAINativeMetadataAndKeepaliveDoNotDisarmFirstOutputTimeout(t *testin
 	}
 }
 
-func TestOpenAIResponsesTTFTDefaultsToSemanticOutput(t *testing.T) {
+func TestOpenAIResponsesTTFTDefaultsExcludeEmptyReasoningPlaceholder(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		name := "native"
 		if passthrough {
@@ -116,7 +116,7 @@ func TestOpenAIResponsesTTFTDefaultsToSemanticOutput(t *testing.T) {
 			result := runSyntheticVisibleTTFTStream(t, passthrough, 120*time.Millisecond, 0, "",
 				`{"type":"response.output_text.delta","delta":"test output"}`)
 			require.NotNil(t, result.firstTokenMs)
-			require.Less(t, *result.firstTokenMs, 100)
+			require.GreaterOrEqual(t, *result.firstTokenMs, 100)
 		})
 	}
 }

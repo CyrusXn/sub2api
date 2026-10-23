@@ -60,6 +60,16 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 		return func() {}
 	}
 	originalWriter := c.Writer
+	// 等响应头与读响应体分别启动心跳时，前一阶段的字节仍须排除在真实输出之外。
+	if previous, ok := c.Get(openAICompactSSEKeepaliveKey); ok {
+		if prior, valid := previous.(*openAICompactSSEKeepalive); valid && prior != nil {
+			prior.Stop()
+			prior.mu.Lock()
+			recordOpenAIStreamKeepaliveBytes(c, prior.bytes)
+			prior.bytes = 0
+			prior.mu.Unlock()
+		}
+	}
 	k := &openAICompactSSEKeepalive{
 		writer: originalWriter,
 		stop:   make(chan struct{}),
@@ -97,6 +107,14 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 			c.Writer = originalWriter
 		}
 	}
+}
+
+// 等待上游响应头期间也先保活；不会伪造模型 delta 或污染真实首字耗时。
+func startOpenAIResponsesHeaderKeepalive(c *gin.Context, stream bool, account *Account) func() {
+	if !stream || !requireOpenAIResponsesTerminal(account) {
+		return func() {}
+	}
+	return startOpenAISSEKeepalive(c, time.Second)
 }
 
 // beat 在锁内提交（首次）响应头并写出一条 SSE 注释行；返回 false 表示心跳已

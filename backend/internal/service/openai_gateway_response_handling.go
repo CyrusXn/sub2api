@@ -59,8 +59,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 	guardFirstOutput := firstOutputTimeout > 0
 	stageFirstOutput := account != nil && account.Platform == PlatformOpenAI
-	guardCompletion := guardOpenAIResponsesCompletion(account)
-	completionReady := false
+	requireTerminal := requireOpenAIResponsesTerminal(account)
 	var attemptResponseHeaders http.Header
 	if stageFirstOutput {
 		if s.responseHeaderFilter != nil {
@@ -127,10 +126,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var firstOutputStage *openAIFirstOutputStage
 	if stageFirstOutput {
 		firstOutputStage = newDefaultOpenAIFirstOutputStage()
-		if guardCompletion {
-			// 完整流复用现有响应体上限，避免把首字前导限制施加到整张图片或长回答。
-			firstOutputStage = newOpenAIFirstOutputStage(resolveUpstreamResponseReadLimit(s.cfg))
-		}
 		defer func() {
 			if err := firstOutputStage.Close(); err != nil {
 				logger.LegacyPrintf("service.openai_gateway", "OpenAI first-output staging cleanup failed: account=%d model=%s error=%v", account.ID, originalModel, err)
@@ -150,9 +145,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		return int64(bufferedWriter.Buffered())
 	}
 	flushBuffered := func() error {
-		if guardCompletion && !completionReady {
-			return nil
-		}
 		if firstOutputStage != nil && !firstOutputStage.closed {
 			if err := firstOutputStage.CommitTo(w); err != nil {
 				return err
@@ -208,6 +200,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
+	if requireTerminal && (keepaliveInterval <= 0 || keepaliveInterval > time.Second) {
+		// 首字前 1 秒保活不算模型输出，也不解除切号和首字超时保护。
+		keepaliveInterval = time.Second
+	}
 	// 下游 keepalive 仅用于防止代理空闲断开
 	var keepaliveTicker *time.Ticker
 	if keepaliveInterval > 0 {
@@ -259,6 +255,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	sawResponseFailed := false
 	terminalEventType := ""
 	responsesSemanticOutputSeen := false
+	placeholderSeen := false
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
@@ -294,14 +291,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
 		completedTTFTEvent := eventStartsTTFTOutput
-		shouldFlush := (eventShouldFlush || (queueDrained && clientOutputStarted)) && (!guardCompletion || sawTerminalEvent)
+		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
-			if completedProgressEvent && (!guardCompletion || sawTerminalEvent) {
+			if completedProgressEvent {
 				applyAttemptResponseHeaders()
 			}
 			if shouldFlush {
-				completionReady = true
 				if err := flushBuffered(); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
@@ -404,9 +400,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if sawTerminalEvent && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 		}
-		if !sawTerminalEvent && !openAIStreamClientOutputStarted(c, clientOutputStarted) && (!eventShouldFlush || guardCompletion) {
-			if guardCompletion {
-				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, nil, "OpenAI stream ended before a successful terminal event")
+		if !sawTerminalEvent && !openAIStreamClientOutputStarted(c, clientOutputStarted) && (!eventShouldFlush || requireTerminal) {
+			if requireTerminal {
+				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, nil, "OpenAI stream ended before a successful terminal event")
 			}
 			return resultWithUsage(), s.newOpenAIStreamFailoverError(
 				c,
@@ -416,9 +412,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				nil,
 				"OpenAI stream ended before a terminal event",
 			)
-		}
-		if sawTerminalEvent {
-			completionReady = true
 		}
 		flushPending("Client disconnected during final flush, returning collected usage")
 		if !sawTerminalEvent {
@@ -467,8 +460,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// 客户端断开/取消请求时，上游读取往往会返回 context canceled。
 		// /v1/responses 的 SSE 事件必须符合 OpenAI 协议；这里不注入自定义 error event，避免下游 SDK 解析失败。
 		if errors.Is(scanErr, context.Canceled) || errors.Is(scanErr, context.DeadlineExceeded) {
-			if guardCompletion && ctx.Err() == nil && c.Request.Context().Err() == nil {
-				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, nil, "Upstream response stream timed out before completion"), true
+			if requireTerminal && ctx.Err() == nil && c.Request.Context().Err() == nil {
+				if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+					return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, nil, "Upstream response stream timed out before completion"), true
+				}
+				_ = s.writeOpenAIResponsesReadFailure(c, account, false, resp, responseID, originalModel, createdAtStamper.Value(), scanErr)
+				return resultWithUsage(), newOpenAIUpstreamStreamReadError(scanErr), true
 			}
 			if eventShouldFlush {
 				flushPending("Client disconnected during canceled stream flush, returning collected usage")
@@ -476,20 +473,20 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", scanErr), true
 		}
 		if errors.Is(scanErr, bufio.ErrTooLong) {
-			if guardCompletion {
-				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, nil, "OpenAI SSE line exceeds completion staging limit"), true
+			if requireTerminal && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, nil, "OpenAI SSE line exceeds completion staging limit"), true
 			}
 			logger.LegacyPrintf("service.openai_gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
 			sendErrorEvent("response_too_large", "Upstream response exceeded the size limit")
 			return resultWithUsage(), scanErr, true
 		}
-		if !openAIStreamClientOutputStarted(c, clientOutputStarted) && (!eventShouldFlush || guardCompletion) {
+		if !openAIStreamClientOutputStarted(c, clientOutputStarted) && (!eventShouldFlush || requireTerminal) {
 			msg := "OpenAI stream disconnected before completion"
 			if errText := strings.TrimSpace(scanErr.Error()); errText != "" {
 				msg += ": " + errText
 			}
-			if guardCompletion {
-				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, nil, msg), true
+			if requireTerminal {
+				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, nil, msg), true
 			}
 			return resultWithUsage(), s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, msg), true
 		}
@@ -536,8 +533,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				suppressCurrentEvent = true
 			}
 			observer.ObserveOpenAI(dataBytes, eventType)
-			if guardCompletion && strings.TrimSpace(data) == "[DONE]" && !sawTerminalEvent {
-				streamEarlyErr = s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, nil, "OpenAI Responses stream ended without response.completed")
+			if openAIStreamDataIsPlaceholder(data, eventType) {
+				placeholderSeen = true
+			}
+			if requireTerminal && strings.TrimSpace(data) == "[DONE]" && !sawTerminalEvent {
+				if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+					streamEarlyErr = s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, nil, "OpenAI Responses stream ended without response.completed")
+				} else {
+					_ = s.writeOpenAIResponsesReadFailure(c, account, false, resp, responseID, originalModel, createdAtStamper.Value(), ErrOpenAIUpstreamStreamTruncated)
+					streamEarlyErr = newOpenAIUpstreamStreamReadError(ErrOpenAIUpstreamStreamTruncated)
+				}
 				return
 			}
 			if message, retry, failed := openAIResponsesUnsuccessfulTerminal(dataBytes, eventType); failed {
@@ -545,7 +550,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				sawFailedEvent = true
 				failedMessage = message
 				if retry && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
-					streamEarlyErr = s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, dataBytes, message)
+					streamEarlyErr = s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, dataBytes, message)
 					return
 				}
 				s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "stream_failed", dataBytes, message)
@@ -633,8 +638,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					}
 					if shouldFailover {
 						sawFailedEvent = true
-						if guardCompletion {
-							streamEarlyErr = s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, dataBytes, failedMessage)
+						if requireTerminal {
+							streamEarlyErr = s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, dataBytes, failedMessage)
 						} else {
 							streamEarlyErr = s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
 						}
@@ -648,7 +653,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 							s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "http_error", dataBytes, failedMessage)
 							MarkResponseCommitted(c)
 							c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-							c.JSON(status, gin.H{
+							writeOpenAIErrorJSON(c, status, gin.H{
 								"error": gin.H{
 									"type":    errType,
 									"message": errMsg,
@@ -754,9 +759,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if account != nil && (account.Platform == PlatformOpenAI || account.Platform == PlatformGrok) &&
 				(eventType == "response.completed" || eventType == "response.done") &&
 				!sawFailedEvent && !responsesSemanticOutputSeen && !clientOutputStarted &&
-				openAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
+				(openAIResponsesCompletedEventIsEmpty(dataBytes, usage) || (requireTerminal && placeholderSeen && !openAIStreamDataStartsVisibleOutput(data, eventType))) {
 				sawTerminalEvent = true
-				streamEarlyErr = newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
+				failoverErr := newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
+				failoverErr.ExhaustBeforeFirstOutput = requireTerminal && placeholderSeen
+				streamEarlyErr = failoverErr
 				return
 			}
 
@@ -996,9 +1003,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					return resultWithUsage(), grokStreamIdleFailoverError(account, streamInterval)
 				}
 			}
-			if guardCompletion && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+			if requireTerminal && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 				_ = resp.Body.Close()
-				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, responsesSemanticOutputSeen, resp, mappedModel, nil, "Upstream response stream timed out before completion")
+				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, nil, "Upstream response stream timed out before completion")
 			}
 			if account != nil && account.Platform == PlatformOpenAI {
 				_ = s.writeOpenAIResponsesReadFailure(c, account, false, resp, responseID, originalModel, createdAtStamper.Value(), errors.New("upstream stream timeout"))
@@ -2022,7 +2029,7 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	c.JSON(http.StatusBadGateway, gin.H{
+	writeOpenAIErrorJSON(c, http.StatusBadGateway, gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
 			"message": message,

@@ -433,6 +433,30 @@ func TestGroupModelAllowlistDefersTrustedCodexSubagentModelToResponsesHandler(t 
 	}
 }
 
+func TestGroupModelAllowlistRejectsUnmarkedCodexLuna(t *testing.T) {
+	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(true, "gpt-6-astra"), "/v1")
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-6-luna"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex Desktop/26.1023.1")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound || len(*calls) != 0 {
+		t.Fatalf("未标记后台来源的 Codex Luna 必须按原模型校验，实际状态 %d，调用 %v", w.Code, *calls)
+	}
+}
+
+func TestGroupModelAllowlistDefersExplicitCodexTitle(t *testing.T) {
+	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(true, "gpt-6-astra"), "/v1")
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-6-luna"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-openai-subagent", "thread_title")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || len(*calls) != 1 {
+		t.Fatalf("明确标记的标题请求应交由 handler 改写后校验，实际状态 %d，调用 %v", w.Code, *calls)
+	}
+}
+
 func TestGroupModelAllowlistNilGroupPasses(t *testing.T) {
 	router, calls := newGroupModelAllowlistTestRouter(&service.APIKey{}, "/v1")
 	w := doJSON(t, router, http.MethodPost, "/v1/messages", `{"model":"whatever"}`)

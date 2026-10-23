@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/model"
@@ -43,6 +44,41 @@ func newOpenAIUpstreamErrorResponse(statusCode int, body string) *http.Response 
 
 func newOpenAIUpstreamErrorTestAccount() *Account {
 	return &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "acct"}
+}
+
+func TestOpenAIResponsesHTTPErrorAfterHeaderKeepaliveIsTerminal(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		for _, nextStage := range []bool{false, true} {
+			c, rec := newOpenAIUpstreamErrorTestContext(t)
+			stop := startOpenAISSEKeepalive(c, time.Hour)
+			value, _ := c.Get(openAICompactSSEKeepaliveKey)
+			require.True(t, value.(*openAICompactSSEKeepalive).beat())
+			stop()
+			if nextStage {
+				stop = startOpenAISSEKeepalive(c, time.Hour)
+				defer stop()
+			}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			body := `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"maximum context length exceeded"}}`
+			resp := newOpenAIUpstreamErrorResponse(http.StatusBadRequest, body)
+			if passthrough {
+				require.Error(t, svc.handleErrorResponsePassthrough(context.Background(), resp, c, newOpenAIUpstreamErrorTestAccount(), nil, []byte(body)))
+			} else {
+				_, err := svc.handleErrorResponse(context.Background(), resp, c, newOpenAIUpstreamErrorTestAccount(), nil)
+				require.Error(t, err)
+			}
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Contains(t, rec.Body.String(), "event: response.failed\ndata: ")
+			require.Contains(t, rec.Body.String(), "maximum context length exceeded")
+			require.NotContains(t, rec.Body.String(), "\n\n{", "保活后不能追加裸 JSON")
+			streamErr, ok := GetOpsStreamError(c)
+			require.True(t, ok)
+			require.Equal(t, http.StatusBadRequest, streamErr.IntendedStatus)
+			if !passthrough {
+				require.Contains(t, rec.Body.String(), `"code":"context_length_exceeded"`)
+			}
+		}
+	}
 }
 
 type modelNotFoundManagedAccountRepo struct{ AccountRepository }

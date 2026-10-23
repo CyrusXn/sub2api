@@ -21,6 +21,66 @@ type codexThreadModelTestCache struct {
 	ttls   map[string]time.Duration
 }
 
+type codexRecentModelTestRepo struct {
+	UsageLogRepository
+	models map[int64]string
+	err    error
+}
+
+func (r *codexRecentModelTestRepo) GetRecentOpenAICodexModel(_ context.Context, userID int64) (string, error) {
+	return r.models[userID], r.err
+}
+
+func TestApplyOpenAICodexSubagentModelInheritance_RecentUserModel(t *testing.T) {
+	repo := &codexRecentModelTestRepo{models: map[int64]string{7: "gpt-6.1-sol", 8: "gpt-6-astra"}}
+	cache := &codexThreadModelTestCache{}
+	svc := &OpenAIGatewayService{cache: cache, usageLogRepo: repo}
+	for _, tc := range []struct {
+		name, kind, model, ua, body string
+		userID, keyID               int64
+		want                        string
+	}{
+		{"Codex manual or unknown source Luna", "", "gpt-6-luna", "Codex Desktop/26.1023.1", `{"model":"gpt-6-luna"}`, 7, 101, "gpt-6-luna"},
+		{"Codex manual older Luna", "", "gpt-5.6-luna", "Codex Desktop/26.1023.1", `{"model":"gpt-5.6-luna"}`, 7, 101, "gpt-5.6-luna"},
+		{"Codex ordinary turn", "", "gpt-6-luna", "Codex Desktop/26.1023.1", `{"model":"gpt-6-luna","client_metadata":{"x-codex-turn-metadata":"{\"request_kind\":\"turn\"}"}}`, 7, 101, "gpt-6-luna"},
+		{"parent alone is not a background marker", "", "gpt-6-luna", "Codex Desktop/26.1023.1", `{"model":"gpt-6-luna","client_metadata":{"parent_thread_id":"parent-thread"}}`, 7, 101, "gpt-6-luna"},
+		{"explicit background title", "thread_title", "gpt-6-luna", "Codex Desktop/26.1023.1", `{"model":"gpt-6-luna"}`, 7, 101, "gpt-6.1-sol"},
+		{"same user other key", "guardian", codexAutoReviewModel, "", `{"model":"codex-auto-review"}`, 7, 102, "gpt-6.1-sol"},
+		{"different user", "review", "gpt-6-luna", "", `{"model":"gpt-6-luna"}`, 8, 103, "gpt-6-astra"},
+		{"no history", "guardian", codexAutoReviewModel, "", `{"model":"codex-auto-review"}`, 9, 104, codexAutoReviewModel},
+		{"browser explicit Luna", "", "gpt-6-luna", "Mozilla/5.0", `{"model":"gpt-6-luna"}`, 7, 101, "gpt-6-luna"},
+		{"conflicting body subagent", "guardian", "gpt-6-luna", "Codex Desktop/26.1023.1", `{"model":"gpt-6-luna","client_metadata":{"x-openai-subagent":"review"}}`, 7, 101, "gpt-6-luna"},
+		{"body subagent", "", "gpt-6-luna", "", `{"model":"gpt-6-luna","client_metadata":{"x-openai-subagent":"guardian"}}`, 7, 101, "gpt-6.1-sol"},
+		{"WS envelope", "guardian", "gpt-6-luna", "", `{"type":"response.create","response":{"model":"gpt-6-luna"}}`, 7, 101, "gpt-6.1-sol"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := codexThreadModelGinContext(t, "/v1/responses", tc.kind, "", "")
+			c.Request.Header.Set("User-Agent", tc.ua)
+			c.Set("api_key", &APIKey{ID: tc.keyID, UserID: tc.userID})
+			body, model, _, changed := svc.ApplyOpenAICodexSubagentModelInheritance(context.Background(), c, tc.keyID, []byte(tc.body), tc.model)
+			require.Equal(t, tc.want, model)
+			require.Equal(t, tc.want != tc.model, changed)
+			path := "model"
+			if gjson.GetBytes(body, "response").IsObject() {
+				path = "response.model"
+			}
+			require.Equal(t, tc.want, gjson.GetBytes(body, path).String())
+		})
+	}
+	// 下一次请求读取最新记录，不把第一次查询结果固定在内存中。
+	repo.models[7] = "gpt-6-astra"
+	c := codexThreadModelGinContext(t, "/v1/responses", "guardian", "", "")
+	c.Set("api_key", &APIKey{ID: 101, UserID: 7})
+	_, model, _, changed := svc.ApplyOpenAICodexSubagentModelInheritance(context.Background(), c, 101, []byte(`{"model":"gpt-6-luna"}`), "gpt-6-luna")
+	require.True(t, changed)
+	require.Equal(t, "gpt-6-astra", model)
+	require.Empty(t, cache.models, "后台请求不能写入主线程模型缓存")
+	repo.err = errors.New("database unavailable")
+	_, model, _, changed = svc.ApplyOpenAICodexSubagentModelInheritance(context.Background(), c, 101, []byte(`{"model":"gpt-6-luna"}`), "gpt-6-luna")
+	require.False(t, changed)
+	require.Equal(t, "gpt-6-luna", model)
+}
+
 func codexThreadModelTestKey(apiKeyID int64, threadID string) string {
 	return fmt.Sprintf("%d:%s", apiKeyID, threadID)
 }
@@ -116,7 +176,7 @@ func TestApplyOpenAICodexSubagentModelInheritance_MainThreadAndChildren(t *testi
 	}
 }
 
-func TestApplyOpenAICodexSubagentModelInheritance_DefaultsUnsupportedChildModelWhenParentUnavailable(t *testing.T) {
+func TestApplyOpenAICodexSubagentModelInheritance_NoFixedModelWhenParentUnavailable(t *testing.T) {
 	cache := &codexThreadModelTestCache{}
 	svc := &OpenAIGatewayService{cache: cache, cfg: &config.Config{}}
 
@@ -139,10 +199,10 @@ func TestApplyOpenAICodexSubagentModelInheritance_DefaultsUnsupportedChildModelW
 				context.Background(), c, 101, body, tc.model,
 			)
 
-			require.True(t, changed)
+			require.False(t, changed)
 			require.Equal(t, tc.kind, gotKind)
-			require.Equal(t, "gpt-5.6-sol", effective)
-			require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(updated, "model").String())
+			require.Equal(t, tc.model, effective)
+			require.Equal(t, tc.model, gjson.GetBytes(updated, "model").String())
 		})
 	}
 }
@@ -159,9 +219,9 @@ func TestApplyOpenAICodexSubagentModelInheritance_DoesNotInheritUnsupportedParen
 		context.Background(), c, 101, body, codexAutoReviewModel,
 	)
 
-	require.True(t, changed)
-	require.Equal(t, openAICodexSubagentFallbackModel, effective)
-	require.Equal(t, openAICodexSubagentFallbackModel, gjson.GetBytes(updated, "model").String())
+	require.False(t, changed)
+	require.Equal(t, codexAutoReviewModel, effective)
+	require.Equal(t, codexAutoReviewModel, gjson.GetBytes(updated, "model").String())
 }
 
 func TestApplyOpenAICodexSubagentModelInheritance_FailsOpenWithoutTrustedLineage(t *testing.T) {

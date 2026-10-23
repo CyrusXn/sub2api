@@ -9,8 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// API Key 中转可能先发占位内容再失败；只有完整终态才能放行，不能靠首字判定可重放性。
-func guardOpenAIResponsesCompletion(account *Account) bool {
+// API Key 中转必须检查终态；真实输出仍即时交付，仅首字前允许切号。
+func requireOpenAIResponsesTerminal(account *Account) bool {
 	return account != nil && account.IsOpenAIApiKey()
 }
 
@@ -51,10 +51,12 @@ func markOpenAIResponsesUnsuccessfulTerminal(c *gin.Context, message string, ret
 	})
 }
 
-func (s *OpenAIGatewayService) newOpenAIResponsesCompletionFailover(c *gin.Context, account *Account, passthrough, semanticOutputSeen bool, resp *http.Response, model string, payload []byte, message string) *UpstreamFailoverError {
+func (s *OpenAIGatewayService) newOpenAIResponsesCompletionFailover(c *gin.Context, account *Account, passthrough bool, resp *http.Response, model string, payload []byte, message string) *UpstreamFailoverError {
 	err := s.newOpenAIStreamFailoverErrorWithModel(c, account, passthrough, resp.Header.Get("x-request-id"), payload, message, model, resp.Header)
+	// 调用点均已确认没有真实输出，直接失败与占位后失败应采用相同的切号边界。
+	err.ExhaustBeforeFirstOutput = true
 	// 已经消费到坏终态的账号应换号，避免同一中转重复假首字并耗尽客户端等待时间。
-	if semanticOutputSeen && !isOpenAIUpstreamCapacityShedEvent(payload) && !err.RequestScopedTransient && err.Scope != GatewayFailureScopeRequest && err.Scope != GatewayFailureScopeProvider && err.StatusCode >= http.StatusInternalServerError {
+	if !isOpenAIUpstreamCapacityShedEvent(payload) && !isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) && !err.RequestScopedTransient && err.Scope != GatewayFailureScopeRequest && err.Scope != GatewayFailureScopeProvider && err.StatusCode >= http.StatusInternalServerError {
 		err.RetryableOnSameAccount = false
 	}
 	return err

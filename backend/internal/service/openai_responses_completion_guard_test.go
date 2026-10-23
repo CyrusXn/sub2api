@@ -13,11 +13,12 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIResponsesAPIKeyCompletionGuard(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	const delta = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"untrusted-partial\"}\n\n"
+	const delta = "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \\n\\t\"}\n\n"
 	for _, passthrough := range []bool{false, true} {
 		for _, tc := range []struct {
 			name  string
@@ -33,6 +34,7 @@ func TestOpenAIResponsesAPIKeyCompletionGuard(t *testing.T) {
 			{name: "failed status disguised as completed", tail: "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"temporary failure\"}}}\n\n"},
 			{name: "unfinished status disguised as completed", tail: "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"in_progress\"}}\n\n"},
 			{name: "completed carrying error", tail: "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"error\":{\"code\":\"server_error\"}}}\n\n"},
+			{name: "whitespace only completed with usage", tail: "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\" \"}]}],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n"},
 		} {
 			t.Run(tc.name+map[bool]string{false: "/native", true: "/passthrough"}[passthrough], func(t *testing.T) {
 				rec := httptest.NewRecorder()
@@ -71,51 +73,47 @@ func TestOpenAIResponsesAPIKeyCompletionGuard(t *testing.T) {
 	}
 }
 
-type completionGuardChunkReader struct {
-	chunks     []string
-	beforeNext func()
-}
-
-func (r *completionGuardChunkReader) Read(p []byte) (int, error) {
-	if len(r.chunks) == 0 {
-		return 0, io.EOF
-	}
-	if r.beforeNext != nil {
-		r.beforeNext()
-	}
-	n := copy(p, r.chunks[0])
-	r.chunks[0] = r.chunks[0][n:]
-	if r.chunks[0] == "" {
-		r.chunks = r.chunks[1:]
-	}
-	return n, nil
-}
-
-func TestOpenAIResponsesCompletionGuardWaitsAndPreservesSuccessfulStream(t *testing.T) {
+func TestOpenAIResponsesStreamsRealOutputBeforeCompletion(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
-		rec := httptest.NewRecorder()
+		rec := newOpenAIResponseFlushRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 		svc := &OpenAIGatewayService{}
-		chunks := []string{
-			"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ok\"}}\n\n",
-			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"healthy-output\"}\n\n",
-			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"healthy-output\"}]}],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n",
-		}
-		reader := &completionGuardChunkReader{chunks: chunks, beforeNext: func() { require.Empty(t, rec.Body.String(), "完成前只允许心跳，不交付占位输出") }}
-		resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(reader)}
+		reader, writer := io.Pipe()
+		defer reader.Close()
+		defer writer.Close()
+		resp := &http.Response{Header: http.Header{}, Body: reader}
 		account := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
-		if passthrough {
-			result, err := svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, time.Now(), "model", "model")
-			require.NoError(t, err)
-			require.Equal(t, 2, result.usage.InputTokens)
-		} else {
-			result, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "model", "model")
-			require.NoError(t, err)
-			require.Equal(t, 2, result.usage.InputTokens)
+		done := make(chan error, 1)
+		go func() {
+			if passthrough {
+				_, err := svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, time.Now(), "model", "model")
+				done <- err
+			} else {
+				_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "model", "model")
+				done <- err
+			}
+		}()
+		_, err := io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ok\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n")
+		require.NoError(t, err)
+		body, _ := rec.snapshot()
+		require.Empty(t, body, "空白不能锁定账号")
+		_, err = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"healthy-output\"}\n\n")
+		require.NoError(t, err)
+		select {
+		case <-rec.flushEvents:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("真实首字必须在终态之前立即交付")
 		}
-		require.Contains(t, rec.Body.String(), "healthy-output")
-		require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
+		body, _ = rec.snapshot()
+		require.Contains(t, body, "healthy-output")
+		require.NotContains(t, body, `"type":"response.completed"`)
+		_, err = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n")
+		require.NoError(t, err)
+		writer.Close()
+		require.NoError(t, <-done)
+		body, _ = rec.snapshot()
+		require.Equal(t, 1, strings.Count(body, `"type":"response.completed"`))
 	}
 }
 
@@ -163,7 +161,48 @@ func TestOpenAIResponsesCompletionGuardAcceptsLargeSuccessfulStream(t *testing.T
 }
 
 func TestOpenAIStreamEmptyDeltaDoesNotCommitOutput(t *testing.T) {
-	require.False(t, openAIStreamDataStartsClientOutput(`{"type":"response.output_text.delta","delta":""}`, "response.output_text.delta"))
+	for _, payload := range []string{
+		`{"type":"response.output_text.delta","delta":""}`,
+		`{"type":"response.output_text.delta","delta":" \n\t"}`,
+		`{"type":"response.output_text.done","text":" "}`,
+		`{"type":"response.content_part.added","part":{"type":"output_text","text":" "}}`,
+	} {
+		eventType := gjson.Get(payload, "type").String()
+		require.False(t, openAIStreamDataStartsClientOutput(payload, eventType), payload)
+		require.False(t, openAIStreamDataStartsVisibleOutput(payload, eventType), payload)
+		require.False(t, openAIStreamDataStartsSemanticTTFT(payload, eventType), payload)
+	}
+}
+
+func TestOpenAIResponsesEmptyStructuresPreserveFailover(t *testing.T) {
+	for _, placeholder := range []string{
+		`{"type":"response.output_item.added","item":{"type":"message","content":[]}}`,
+		`{"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}`,
+		`{"type":"response.content_part.added","part":{"type":"output_text","text":""}}`,
+		`{"type":"response.output_text.done","text":" "}`,
+	} {
+		for _, tail := range []string{
+			`{"type":"response.failed","response":{"error":{"code":"server_error","message":"temporary failure"}}}`,
+			`{"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1}}}`,
+		} {
+			for _, passthrough := range []bool{false, true} {
+				c, rec := newOpenAIUpstreamErrorTestContext(t)
+				svc := &OpenAIGatewayService{}
+				resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader("data: " + placeholder + "\n\ndata: " + tail + "\n\n"))}
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+				var err error
+				if passthrough {
+					_, err = svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, time.Now(), "model", "model")
+				} else {
+					_, err = svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "model", "model")
+				}
+				var failover *UpstreamFailoverError
+				require.ErrorAs(t, err, &failover, placeholder)
+				require.True(t, failover.ExhaustBeforeFirstOutput, placeholder)
+				require.Empty(t, rec.Body.String())
+			}
+		}
+	}
 }
 
 func TestOpenAIResponsesCompletionGuardLimitAndCancellation(t *testing.T) {
@@ -174,7 +213,7 @@ func TestOpenAIResponsesCompletionGuardLimitAndCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
-			var body io.ReadCloser = io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"" + strings.Repeat("a", 512) + "\"}\n\n"))
+			var body io.ReadCloser = io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"" + strings.Repeat(" ", openAIFirstOutputStageMaxBytes+1) + "\"}\n\n"))
 			if cancelRequest {
 				cancel()
 				body = &openAIStreamReadThenErrorCloser{reader: strings.NewReader(""), err: context.Canceled}
@@ -205,4 +244,70 @@ func TestOpenAIStreamReadFailureCountsForAccountHealth(t *testing.T) {
 	status, _, eligible := classifyOpenAIAPIKeyHealthFailure(newOpenAIUpstreamStreamReadError(io.ErrUnexpectedEOF))
 	require.True(t, eligible)
 	require.Equal(t, http.StatusBadGateway, status)
+}
+
+func TestOpenAIResponsesRealOutputFailureIsNotReplayed(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		for _, tail := range []string{"", "data: [DONE]\n\n", "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"temporary failure\"}}}\n\n"} {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			svc := &OpenAIGatewayService{}
+			resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n" + tail))}
+			account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+			var err error
+			if passthrough {
+				_, err = svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, time.Now(), "model", "model")
+			} else {
+				_, err = svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "model", "model")
+			}
+			require.Error(t, err)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover))
+			require.Contains(t, rec.Body.String(), `"delta":"Hi"`)
+			require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.failed"`))
+		}
+	}
+}
+
+func TestOpenAIResponsesOneSecondKeepalivePreservesFailover(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		t.Run(map[bool]string{true: "passthrough", false: "native"}[passthrough], func(t *testing.T) {
+			rec := newOpenAIResponseFlushRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			done := make(chan error, 1)
+			go func() {
+				svc := &OpenAIGatewayService{}
+				resp := &http.Response{Header: http.Header{}, Body: reader}
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+				if passthrough {
+					_, err := svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, time.Now(), "model", "model")
+					done <- err
+				} else {
+					_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "model", "model")
+					done <- err
+				}
+			}()
+			_, err := io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n")
+			require.NoError(t, err)
+			select {
+			case <-rec.flushEvents:
+			case <-time.After(1600 * time.Millisecond):
+				writer.Close()
+				<-done
+				t.Fatal("1 秒未生成正文时应先发送保活占位")
+			}
+			body, _ := rec.snapshot()
+			require.True(t, strings.HasPrefix(body, ":"), body)
+			require.NotContains(t, body, "data:")
+			writer.Close()
+			err = <-done
+			var failover *UpstreamFailoverError
+			require.ErrorAs(t, err, &failover, "保活之后仅空白断流仍可换号")
+		})
+	}
 }

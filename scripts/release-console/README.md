@@ -36,6 +36,10 @@ bash scripts/release-console/release-console.sh deploy
 - 开始构建至少需要 20 GiB 磁盘和 4.5 GiB 可用内存，否则停止，不挤占线上服务资源。
 - 发布与清理使用 `/home/docker/sub2api/.server-release/release.lock` 排他锁。
 
+前端使用 `pnpm run build`：先检查 i18n 和 `vue-tsc -b`，通过后才执行 Vite。Vite checker 的 `enableBuild: false` 只取消打包阶段的重复类型检查，开发检查仍开启；不能用裸 `vite build` 跳过前置检查。
+
+当前脚本只在构建开始前检查资源，并限制专用构建器的 CPU/内存；**尚无持续内存监控或自动熔断**。执行人须按项目 `AGENTS.md` 的“构建内存保护与超时处置”每 5 秒持续监看宿主机余量、构建器 cgroup 事件及线上健康，达到中止条件时只取消已确认的构建任务，保护现有流量。不能持续监看时，不在生产主机开始构建；无人值守发布须先实现并验证该保护。同机限额不等于磁盘 I/O 等资源的完全隔离。
+
 首次安装时，将本目录 `server-release.sh` 与 `remote-bluegreen.sh` 安装到服务器的工具目录，权限设为 `0700`；入口脚本内容如下。必须传入脚本真实路径，不能用会改变脚本目录解析的符号链接。
 
 ```bash
@@ -62,6 +66,10 @@ exec bash /home/docker/sub2api/.server-release/bin/server-release.sh "$@"
 ```bash
 sub2api-release cleanup-build
 ```
+
+此命令用于任务结束后的清理，不是运行中构建的紧急中止命令。先保留脱敏诊断、确认构建/发布已结束且无并发任务，再执行；不删除回滚备份或发布状态文件。内存告急与重试的阈值、阶段边界及恢复门槛见项目 `AGENTS.md`。
+
+SSH 超时不代表远端任务停止：核验主机身份后，先只读检查锁及持锁进程、发布进程、`candidate`、`pending-candidate`、`pending-commit`、`last-success`、活跃槽位、镜像提交和健康。未确认阶段前不得重跑 `deploy`、执行清理或停止构建器；公网 200 不能证明切流结果。确认无并发任务及恢复阶段后，才以原审核 SHA 继续；不要删状态文件绕过恢复逻辑。
 
 需要重试成功发布后的资产轮转，可执行 `sub2api-release cleanup-release`。此操作必须有成功发布记录，并重新验证当前线上镜像和版本；不能用它强行清理一次失败发布留下的回滚资产。
 

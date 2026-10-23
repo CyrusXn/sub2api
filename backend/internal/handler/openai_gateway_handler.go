@@ -667,6 +667,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	exhaustBeforeFirstOutput := false
 	firstOutputTimeoutSwitchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -922,6 +923,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
+					// 首字前恢复途中遇到 HTTP 错误也继续遍历，避免混合故障提前截断切号。
+					exhaustBeforeFirstOutput = exhaustBeforeFirstOutput || failoverErr.ExhaustBeforeFirstOutput
+					failoverErr.ExhaustBeforeFirstOutput = exhaustBeforeFirstOutput
 					// openAIForwardMayFailover 已确认写出的字节不含语义输出，
 					// 但重试耗尽时仍须按已提交的 SSE 响应返回流内错误。
 					if c.Writer.Written() {
@@ -962,7 +966,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches {
+					if switchCount >= maxAccountSwitches && !failoverErr.ExhaustBeforeFirstOutput {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -3181,6 +3185,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnUpstreamModel = turnRequestedModel
 				}
 				turnUsageFields := turnMapping.ToUsageFields(turnRequestedModel, turnUpstreamModel)
+				if rewrittenSubagentModel {
+					turnUsageFields = service.OpenAICodexRewriteUsageFields(c, turnUsageFields)
+				}
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
 				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash)
 				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
@@ -3688,6 +3695,15 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	// 记录原始上游状态码，以便 ops 错误日志捕获真实的上游错误
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
+
+	if failoverErr.ExhaustBeforeFirstOutput && statusCode >= http.StatusInternalServerError {
+		message := service.SanitizeUpstreamErrorMessage(upstreamMsg)
+		if message == "" {
+			message = "All available upstream accounts failed before generating content"
+		}
+		h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", message, streamStarted)
+		return
+	}
 
 	// 使用默认的错误映射
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
