@@ -1148,9 +1148,9 @@ func openAIStreamAddedEventStartsClientOutput(payload []byte, eventType string) 
 			}
 			return false
 		case "function_call":
-			return strings.TrimSpace(item.Get("arguments").String()) != ""
+			return eventType == "response.output_item.done" || strings.TrimSpace(item.Get("arguments").String()) != ""
 		case "custom_tool_call":
-			return strings.TrimSpace(item.Get("input").String()) != ""
+			return eventType == "response.output_item.done" || strings.TrimSpace(item.Get("input").String()) != ""
 		case "compaction":
 			return item.Get("encrypted_content").String() != ""
 		default:
@@ -1185,6 +1185,7 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 	if trimmed == "" {
 		return false
 	}
+	field := ""
 	switch strings.TrimSpace(eventType) {
 	case "response.failed":
 		return false
@@ -1196,17 +1197,24 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 		// （content_policy / invalid_request 等）维持原样转发，保留上游错误细节。
 		payload := []byte(trimmed)
 		return !openAIStreamFailedEventShouldFailover(payload, extractOpenAISSEErrorMessage(payload))
-	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added", "response.output_item.done", "response.content_part.done", "response.reasoning_summary_part.done":
+	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added",
+		"response.output_item.done", "response.content_part.done", "response.reasoning_summary_part.done":
 		return openAIStreamAddedEventStartsClientOutput([]byte(trimmed), eventType)
+	case "response.output_text.delta", "response.reasoning_summary_text.delta", "response.reasoning_text.delta",
+		"response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.refusal.delta":
+		field = "delta"
 	case "response.output_text.done", "response.reasoning_summary_text.done", "response.reasoning_text.done", "response.audio_transcript.done":
-		return strings.TrimSpace(gjson.Get(trimmed, "text").String()) != ""
-	case "response.function_call_arguments.done":
-		return strings.TrimSpace(gjson.Get(trimmed, "arguments").String()) != ""
-	case "response.custom_tool_call_input.done":
-		return strings.TrimSpace(gjson.Get(trimmed, "input").String()) != ""
+		field = "text"
+	case "response.refusal.done":
+		field = "refusal"
+	case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
+		// 工具完成事件可携带空参数，仍可能触发客户端动作，不能安全重放。
+		return true
 	}
-	if strings.HasSuffix(strings.TrimSpace(eventType), ".delta") && gjson.Valid(trimmed) {
-		return strings.TrimSpace(gjson.Get(trimmed, "delta").String()) != ""
+	if field != "" && gjson.Valid(trimmed) {
+		value := gjson.Get(trimmed, field)
+		// 保留官方对异常类型的保守处理，同时排除本地已验证的纯空白占位。
+		return value.Type != gjson.String || strings.TrimSpace(value.String()) != ""
 	}
 	return !openAIStreamEventIsMetadata(eventType)
 }
