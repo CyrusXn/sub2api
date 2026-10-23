@@ -40,6 +40,16 @@ class PreviewSshTests(unittest.TestCase):
             )
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_timed_command_captures_output_and_exit_code(self):
+        result = MODULE.run_timed(
+            ["python3", "-c", "import sys; print('ready'); sys.exit(7)"],
+            timeout=2,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stdout, "ready\n")
+
 
 if __name__ == "__main__":
     unittest.main()

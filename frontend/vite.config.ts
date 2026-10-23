@@ -90,7 +90,9 @@ export default defineConfig(({ mode }) => {
     plugins: [
       vue(),
       checker({
-        vueTsc: true
+        vueTsc: true,
+        // 生产构建前已由 package.json 单独执行 vue-tsc，避免与 Vite 并发占用内存。
+        enableBuild: false,
       }),
       injectPublicSettings(backendUrl)
     ],

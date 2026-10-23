@@ -42,6 +42,9 @@ def scan_host_keys(host, expected_fingerprint):
 
 def run_timed(command, *, timeout, **kwargs):
     input_data = kwargs.pop("input", None)
+    if kwargs.pop("capture_output", False):
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
     process = subprocess.Popen(command, start_new_session=True, **kwargs)
     try:
         stdout, stderr = process.communicate(input=input_data, timeout=timeout)
