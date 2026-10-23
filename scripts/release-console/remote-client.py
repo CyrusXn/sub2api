@@ -38,7 +38,13 @@ def main():
             command.append(' '.join(shlex.quote(value) for value in [
                 '/usr/local/bin/sub2api-release', action, commit,
             ]))
-            return subprocess.run(command, pass_fds=(read_fd,)).returncode
+            timeout = {'status': 60, 'build': 3600, 'deploy': 3600,
+                       'cleanup-build': 300, 'cleanup-release': 300}.get(action, 300)
+            try:
+                result = module.run_timed(command, pass_fds=(read_fd,), timeout=timeout)
+            except subprocess.TimeoutExpired:
+                raise SystemExit(f'服务器 {action} 操作超过 {timeout} 秒，SSH 连接已终止；请先运行 status 检查服务器状态')
+            return result.returncode
         finally:
             os.close(read_fd)
 

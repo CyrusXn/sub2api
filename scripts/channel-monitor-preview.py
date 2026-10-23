@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -17,6 +18,42 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = "https://api.xnkaixin.eu.cc"
+
+
+def scan_host_keys(host, expected_fingerprint):
+    scanned = subprocess.run(
+        ["ssh-keyscan", "-T", "5", "-t", "ed25519", host],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    matched = []
+    for line in scanned.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[1] == "ssh-ed25519":
+            digest = base64.b64encode(hashlib.sha256(base64.b64decode(parts[2])).digest()).decode().rstrip("=")
+            if "SHA256:" + digest == expected_fingerprint:
+                matched.append(line)
+    if not matched:
+        raise RuntimeError("SSH 主机指纹不匹配，已停止连接")
+    return matched
+
+
+def run_timed(command, *, timeout, **kwargs):
+    input_data = kwargs.pop("input", None)
+    process = subprocess.Popen(command, start_new_session=True, **kwargs)
+    try:
+        stdout, stderr = process.communicate(input=input_data, timeout=timeout)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+        raise
 
 
 def preview_sql():
@@ -45,19 +82,10 @@ class Preview:
                 key, value = line.split("=", 1)
                 self.config[key] = value.strip().strip('"').strip("'")
         host = self.config["SUB2API_PRODUCTION_IPV4"]
-        scanned = subprocess.run(["ssh-keyscan", "-T", "5", "-t", "ed25519", host], capture_output=True, text=True, timeout=10, check=True)
-        matched = []
-        for line in scanned.stdout.splitlines():
-            parts = line.split()
-            if len(parts) == 3 and parts[1] == "ssh-ed25519":
-                digest = base64.b64encode(hashlib.sha256(base64.b64decode(parts[2])).digest()).decode().rstrip("=")
-                if "SHA256:" + digest == self.config["SUB2API_PRODUCTION_SSH_ED25519_SHA256"]:
-                    matched.append(line)
-        if not matched:
-            raise RuntimeError("SSH 主机指纹不匹配，已停止只读预览")
+        matched = scan_host_keys(host, self.config["SUB2API_PRODUCTION_SSH_ED25519_SHA256"])
         Path(known_hosts).write_text("\n".join(matched) + "\n")
         os.chmod(known_hosts, 0o600)
-        self.ssh = ["sshpass", "-d", "{fd}", "ssh", "-o", "StrictHostKeyChecking=yes", "-o", f"UserKnownHostsFile={known_hosts}", "-o", "ConnectTimeout=8", self.config["SUB2API_PRODUCTION_SSH_USER"] + "@" + host]
+        self.ssh = ["sshpass", "-d", "{fd}", "ssh", "-o", "StrictHostKeyChecking=yes", "-o", f"UserKnownHostsFile={known_hosts}", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", self.config["SUB2API_PRODUCTION_SSH_USER"] + "@" + host]
         self.lock = threading.Lock()
         self.minute = -1
         self.items = []
@@ -73,7 +101,10 @@ class Preview:
                 os.close(write_fd)
                 command = [arg.replace("{fd}", str(read_fd)) for arg in self.ssh]
                 command += ["docker exec -i sub2api-postgres sh -c 'exec psql -X -qAt -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"'"]
-                result = subprocess.run(command, input=preview_sql(), capture_output=True, text=True, timeout=20, pass_fds=(read_fd,))
+                try:
+                    result = run_timed(command, input=preview_sql(), capture_output=True, text=True, timeout=20, pass_fds=(read_fd,))
+                except subprocess.TimeoutExpired as error:
+                    raise RuntimeError("SSH 只读查询在 20 秒内未完成，已终止连接") from error
             finally:
                 os.close(read_fd)
             if result.returncode:
