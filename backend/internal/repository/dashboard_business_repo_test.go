@@ -43,8 +43,8 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 		WithArgs("2026-08-01", "2026-08-15").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"bucket_date", "recharge_amount", "total_requests", "total_tokens",
-			"actual_cost", "actual_cost_excluding_admin", "account_cost", "account_cost_excluding_admin", "upstream_cost", "upstream_cost_excluding_admin",
-		}).AddRow(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC), 10.0, int64(2), int64(30), 2.0, 1.5, 0.6, 0.5, 0.8, 0.6))
+			"actual_cost", "actual_cost_excluding_admin", "account_cost", "account_cost_excluding_admin", "upstream_cost", "upstream_cost_excluding_admin", "frozen_profit",
+		}).AddRow(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC), 10.0, int64(2), int64(30), 2.0, 1.5, 0.6, 0.5, 0.8, 0.6, nil))
 	// 新实账只读取版本化余额边界，旧日汇总仍保留为估算参考。
 	mock.ExpectQuery(`(?s)WITH current_assets.*dashboard_business_asset_daily`).
 		WithArgs("2026-08-01", "2026-08-14", sqlmock.AnyArg(), start, end).

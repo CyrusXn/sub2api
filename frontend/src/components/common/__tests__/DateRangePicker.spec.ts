@@ -34,6 +34,23 @@ const formatLocalDate = (date: Date): string => {
 }
 
 describe('DateRangePicker', () => {
+  it('按天统计的页面可以排除小时预设，且不会被自动识别为近24小时', async () => {
+    const now = new Date()
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const wrapper = mount(DateRangePicker, {
+      props: {
+        startDate: formatLocalDate(yesterday), endDate: formatLocalDate(now),
+        excludedPresets: ['last24Hours']
+      },
+      global: { stubs: { Icon: true } }
+    })
+    expect(wrapper.find('.date-picker-value').text()).not.toContain('Last 24 Hours')
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    expect(wrapper.findAll('.date-picker-preset').map(button => button.text())).not.toContain('Last 24 Hours')
+    expect(wrapper.findAll('.date-picker-preset').map(button => button.text())).toContain('Last 7 Days')
+    wrapper.unmount()
+  })
+
   it('uses last 24 hours as the default recognized preset', () => {
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)

@@ -25,6 +25,7 @@ type DashboardBusinessTotals struct {
 
 // DashboardBusinessDailyPoint 支持经营指标按日查询和后续利润分析。
 type DashboardBusinessDailyPoint struct {
+	ProfitEstimate             *float64  `json:"profit_estimate,omitempty"`
 	BucketDate                 time.Time `json:"bucket_date"`
 	RechargeAmount             float64   `json:"recharge_amount"`
 	TotalRequests              int64     `json:"total_requests"`

@@ -194,9 +194,11 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			actual_cost - admin_actual_cost AS actual_cost_excluding_admin,
 			account_cost,
 			account_cost - admin_account_cost AS account_cost_excluding_admin,
-			upstream_cost,
-			upstream_cost - admin_upstream_cost AS upstream_cost_excluding_admin
-		FROM dashboard_business_daily
+			COALESCE(f.upstream_cost, d.upstream_cost) AS upstream_cost,
+			d.upstream_cost - admin_upstream_cost AS upstream_cost_excluding_admin,
+			f.daily_profit
+		FROM dashboard_business_daily d
+		LEFT JOIN dashboard_business_usage_frozen f USING (bucket_date)
 		WHERE bucket_date >= $1::date AND bucket_date < $2::date
 		ORDER BY bucket_date ASC
 	`, startDate, endDate)
@@ -206,6 +208,7 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var point service.DashboardBusinessDailyPoint
+		var frozenProfit sql.NullFloat64
 		if err := rows.Scan(
 			&point.BucketDate,
 			&point.RechargeAmount,
@@ -217,9 +220,11 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			&point.AccountCostExcludingAdmin,
 			&point.UpstreamCost,
 			&point.UpstreamCostExcludingAdmin,
+			&frozenProfit,
 		); err != nil {
 			return nil, err
 		}
+		point.ProfitEstimate = nullableFloat64(frozenProfit)
 		result.Daily = append(result.Daily, point)
 	}
 	if err := rows.Err(); err != nil {

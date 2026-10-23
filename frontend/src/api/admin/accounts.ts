@@ -1070,10 +1070,78 @@ export async function probeUpstreamBilling(id: number): Promise<UpstreamBillingP
   return data
 }
 
-export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<UpstreamBillingProbeResult[]> {
+export interface BusinessBalanceRefresh {
+  preview_only?: boolean
+  total_balance: number | null
+  failed_accounts: number
+  refreshed_at: string
+  sites: { domain: string; balance: number | null; failed_accounts: number }[]
+}
+
+export async function refreshBusinessBalances(): Promise<BusinessBalanceRefresh> {
+  // 复用现有账号列表和有界批量探测，本地预览也能直接使用线上既有接口。
+  const accounts: AccountListItem[] = []
+  for (let page = 1; ; page++) {
+    const result = await list(page, 100, { type: 'apikey', include_scheduler_score: 'false' })
+    accounts.push(...result.items)
+    if (accounts.length >= result.total) break
+    if (!result.items.length) throw new Error('上游账号分页不完整')
+  }
+  // 与后端探测器的官方域名排除规则一致；官方 API 没有中转余额接口。
+  const officialDomains = ['anthropic.com', 'googleapis.com', 'x.ai', 'grok.com', 'openai.com', 'ollama.com', 'moonshot.cn', 'kimi.com', 'bigmodel.cn', 'deepseek.com', 'opencode.ai', 'typesafe.ai', 'commandcode.ai', 'cline.bot']
+  const targets: { id: number; domain: string }[] = []
+  for (const account of accounts) {
+    const baseURL = String(account.credentials?.base_url || '').trim()
+    if (!baseURL || account.type !== 'apikey') continue
+    const domain = new URL(baseURL).hostname.toLowerCase().replace(/\.$/, '')
+    if (officialDomains.some(root => domain === root || domain.endsWith(`.${root}`))) continue
+    targets.push({ id: account.id, domain })
+  }
+  const results = new Map<number, UpstreamBillingProbeResult>()
+  const previewOnly = import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
+  if (previewOnly) {
+    for (const account of accounts) results.set(account.id, { account_id: account.id, snapshot: account.extra?.upstream_billing_probe })
+  }
+  for (let offset = 0; !previewOnly && offset < targets.length; offset += 20) {
+    const ids = targets.slice(offset, offset + 20).map(account => account.id)
+    // 单批失败不阻断其他站点；缺失结果按本轮失败处理。
+    try {
+      for (const result of await probeUpstreamBillingBatch(ids, 180_000)) results.set(result.account_id, result)
+    } catch { /* 由下方统一记录本轮失败。 */ }
+  }
+  const sites = new Map<string, BusinessBalanceRefresh['sites'][number]>()
+  let failedAccounts = 0
+  for (const target of targets) {
+    const site = sites.get(target.domain) ?? { domain: target.domain, balance: null, failed_accounts: 0 }
+    sites.set(target.domain, site)
+    const result = results.get(target.id)
+    const balance = result?.snapshot?.balance
+    const amount = balance?.amount
+    const validBalance = !result?.error && balance?.status === 'ok' && typeof amount === 'number' && Number.isFinite(amount)
+    if (!validBalance) {
+      failedAccounts++
+      site.failed_accounts++
+    }
+    // 按用户指定口径，失败账号以零参与同上游最小值和跨上游汇总。
+    const accountBalance = validBalance ? amount : 0
+    if (site.balance == null || accountBalance < site.balance) site.balance = accountBalance
+  }
+  return {
+    preview_only: previewOnly,
+    total_balance: [...sites.values()].reduce((total, site) => total + (site.balance ?? 0), 0),
+    failed_accounts: failedAccounts,
+    sites: [...sites.values()].sort((a, b) => a.domain.localeCompare(b.domain)),
+    refreshed_at: previewOnly
+      ? targets.map(target => results.get(target.id)?.snapshot?.balance?.received_at).filter((value): value is string => typeof value === 'string').sort()[0] ?? ''
+      : new Date().toISOString()
+  }
+}
+
+export async function probeUpstreamBillingBatch(accountIds: number[], timeout?: number): Promise<UpstreamBillingProbeResult[]> {
   const { data } = await apiClient.post<{ results: UpstreamBillingProbeResult[] }>(
     '/admin/accounts/upstream-billing-probe/batch',
-    { account_ids: accountIds }
+    { account_ids: accountIds },
+    ...(timeout ? [{ timeout }] : [])
   )
   return data.results
 }
@@ -1210,6 +1278,7 @@ export const accountsAPI = {
   updateUpstreamBillingProbeSettings,
   setUpstreamBillingProbeEnabled,
   probeUpstreamBilling,
+  refreshBusinessBalances,
   probeUpstreamBillingBatch,
   listUpstreamSites,
   upsertUpstreamSiteCredential,

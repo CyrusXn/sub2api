@@ -33,9 +33,16 @@ func (r *dashboardAggregationRepository) populateBusinessProfitHistory(ctx conte
  SELECT *, LAG(profit) OVER (ORDER BY day) AS previous_profit,
    LAG(site_ids) OVER (ORDER BY day) AS previous_sites FROM valued
 )
-SELECT day, profit,
- CASE WHEN site_ids = previous_sites THEN profit - previous_profit END AS daily_profit,
- captured_at FROM compared ORDER BY day DESC`
+ , resolved AS (
+ SELECT c.*, COALESCE(CASE WHEN c.site_ids = c.previous_sites THEN c.profit - c.previous_profit END,
+     f.daily_profit, d.actual_cost - d.upstream_cost) AS resolved_daily,
+   COALESCE(f.daily_profit, d.actual_cost - d.upstream_cost, 0) AS request_profit,
+   CASE WHEN c.site_ids = c.previous_sites AND c.profit - c.previous_profit IS NOT NULL THEN false ELSE true END AS estimated
+ FROM compared c LEFT JOIN dashboard_business_usage_frozen f ON f.bucket_date = c.day
+ LEFT JOIN dashboard_business_daily d ON d.bucket_date = c.day
+ )
+SELECT day, COALESCE(profit, SUM(request_profit) OVER (ORDER BY day)), resolved_daily,
+ captured_at, estimated FROM resolved ORDER BY day DESC`
 	rows, err := r.sql.QueryContext(ctx, query, now.Format("2006-01-02"), timezone.Name(), now, result.Ledger.LifetimeProfitEstimate)
 	if err != nil {
 		return err
@@ -46,7 +53,8 @@ SELECT day, profit,
 		var point service.DashboardBusinessProfitPoint
 		var day, captured sql.NullTime
 		var profit, daily sql.NullFloat64
-		if err := rows.Scan(&day, &profit, &daily, &captured); err != nil {
+		var estimated bool
+		if err := rows.Scan(&day, &profit, &daily, &captured, &estimated); err != nil {
 			return err
 		}
 		point.BucketDate = day.Time.Format("2006-01-02")
@@ -60,6 +68,9 @@ SELECT day, profit,
 			if point.BucketDate == now.Format("2006-01-02") {
 				point.Status = "current"
 			}
+		}
+		if estimated {
+			point.Status = "usage_estimate"
 		}
 		result.ProfitHistory = append(result.ProfitHistory, point)
 	}

@@ -60,6 +60,7 @@ export interface DashboardBusinessTotals {
 }
 
 export interface DashboardBusinessDailyPoint {
+  profit_estimate?: number | null
   bucket_date: string
   recharge_amount: number
   total_requests: number
@@ -119,7 +120,7 @@ export interface DashboardBusinessProfitPoint {
   daily_profit: number | null
   cumulative_profit: number | null
   captured_at: string | null
-  status: 'current' | 'snapshot' | 'missing_snapshot'
+  status: 'current' | 'snapshot' | 'missing_snapshot' | 'usage_estimate'
 }
 
 export interface DashboardLowBalanceAccount {
@@ -166,7 +167,9 @@ export interface DashboardSystemMetricTrend {
 }
 
 export async function getBusinessSummary(params?: Pick<TrendParams, 'start_date' | 'end_date'>): Promise<DashboardBusinessSummary> {
-  const { data } = await apiClient.get<DashboardBusinessSummary>('/admin/dashboard/business-summary', { params })
+  // 显式全范围兼容尚未升级的线上 API，不能让后端默认七天截断“全部”的图表与明细。
+  const range = params ?? { start_date: '1970-01-01', end_date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }) }
+  const { data } = await apiClient.get<DashboardBusinessSummary>('/admin/dashboard/business-summary', { params: range })
   return data
 }
 

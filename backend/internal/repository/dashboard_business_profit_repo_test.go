@@ -23,21 +23,21 @@ func TestBusinessProfitHistoryKeepsSnapshotGapsAndCurrentLedger(t *testing.T) {
 	profit := 13581.93
 	result := &service.DashboardBusinessSummary{Ledger: service.DashboardBusinessLedger{LifetimeProfitEstimate: &profit}}
 	// 窗口计算覆盖所有历史而不是查询区间，日界线使用业务时区；当前值来自同一响应的总账。
-	mock.ExpectQuery(`(?s)WITH calendar.*MIN\(bucket_date\).*occurred_at AT TIME ZONE \$2.*SUM.*OVER.*ledger_version = 1.*LAG\(profit\).*site_ids = previous_sites.*ORDER BY day DESC`).
+	mock.ExpectQuery(`(?s)WITH calendar.*MIN\(bucket_date\).*occurred_at AT TIME ZONE \$2.*SUM.*OVER.*ledger_version = 1.*LAG\(profit\).*dashboard_business_usage_frozen.*ORDER BY day DESC`).
 		WithArgs("2026-09-15", "Asia/Shanghai", now.In(timezone.Location()), profit).
-		WillReturnRows(sqlmock.NewRows([]string{"day", "profit", "daily_profit", "captured_at"}).
-			AddRow(day(15), profit, 500.0, now).
-			AddRow(day(14), 13081.93, nil, now.Add(-12*time.Hour-time.Second)).
-			AddRow(day(13), nil, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"day", "profit", "daily_profit", "captured_at", "estimated"}).
+			AddRow(day(15), profit, 500.0, now, false).
+			AddRow(day(14), 13081.93, 220.4734, now.Add(-12*time.Hour-time.Second), true).
+			AddRow(day(13), 100.0, 12.0, nil, true))
 	require.NoError(t, repo.populateBusinessProfitHistory(context.Background(), result))
 	require.Len(t, result.ProfitHistory, 3)
 	require.Equal(t, "2026-09-15", result.ProfitHistory[0].BucketDate)
 	require.Equal(t, "current", result.ProfitHistory[0].Status)
 	require.Equal(t, profit, *result.ProfitHistory[0].CumulativeProfit)
 	require.Equal(t, 500.0, *result.ProfitHistory[0].DailyProfit)
-	require.Equal(t, "snapshot", result.ProfitHistory[1].Status)
-	require.Nil(t, result.ProfitHistory[1].DailyProfit)
-	require.Equal(t, "missing_snapshot", result.ProfitHistory[2].Status)
-	require.Nil(t, result.ProfitHistory[2].CumulativeProfit)
+	require.Equal(t, "usage_estimate", result.ProfitHistory[1].Status)
+	require.Equal(t, 220.4734, *result.ProfitHistory[1].DailyProfit)
+	require.Equal(t, "usage_estimate", result.ProfitHistory[2].Status)
+	require.Equal(t, 100.0, *result.ProfitHistory[2].CumulativeProfit)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

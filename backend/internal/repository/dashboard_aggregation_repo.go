@@ -264,6 +264,10 @@ func (r *dashboardAggregationRepository) GetAggregationWatermark(ctx context.Con
 }
 
 func (r *dashboardAggregationRepository) UpdateAggregationWatermark(ctx context.Context, aggregatedAt time.Time) error {
+	// 历史补齐随已完成的后台聚合执行，页面 GET 始终只读。
+	if err := r.freezeMissingBusinessUsage(ctx); err != nil {
+		return err
+	}
 	query := `
 		INSERT INTO usage_dashboard_aggregation_watermark (id, last_aggregated_at, updated_at)
 		VALUES (1, $1, NOW())
