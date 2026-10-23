@@ -1683,7 +1683,7 @@ func TestOpenAIStreamingReadErrorBeforeOutputReturnsFailover(t *testing.T) {
 	require.Empty(t, rec.Body.String())
 }
 
-func TestOpenAIStreamingReadErrorAfterOutputUsesResponsesErrorSchema(t *testing.T) {
+func TestOpenAIStreamingReadErrorAfterOutputUsesResponsesFailedTerminal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name  string
@@ -1710,22 +1710,23 @@ func TestOpenAIStreamingReadErrorAfterOutputUsesResponsesErrorSchema(t *testing.
 			require.NotContains(t, body, "stream ID")
 			require.NotContains(t, body, "response.completed")
 			require.NotContains(t, body, "[DONE]")
-			require.Equal(t, 1, strings.Count(body, "event: error\n"))
+			require.NotContains(t, body, "event: error\n")
+			require.Equal(t, 1, strings.Count(body, "event: response.failed\n"))
 			require.True(t, IsResponseCommitted(c), "the handler must not append another failure")
 			var events []gjson.Result
 			for _, line := range strings.Split(body, "\n") {
 				if strings.HasPrefix(line, "data: ") {
 					event := gjson.Parse(strings.TrimPrefix(line, "data: "))
-					if event.Get("type").String() == "error" {
+					if event.Get("type").String() == "response.failed" {
 						events = append(events, event)
 					}
 				}
 			}
 			require.Len(t, events, 1)
-			require.Equal(t, tc.code, events[0].Get("code").String())
-			require.NotEmpty(t, events[0].Get("message").String())
-			require.False(t, events[0].Get("error").Exists(), "Responses errors have top-level fields")
-			require.True(t, events[0].Get("param").Exists())
+			require.Equal(t, tc.code, events[0].Get("response.error.code").String())
+			require.NotEmpty(t, events[0].Get("response.error.message").String())
+			require.Equal(t, "failed", events[0].Get("response.status").String())
+			require.Positive(t, events[0].Get("response.created_at").Int())
 		})
 	}
 }
@@ -2533,7 +2534,7 @@ func TestOpenAIStreamingPassthroughMissingTerminalEventReturnsIncompleteError(t 
 func TestOpenAIStreamingPassthroughPostOutputDisconnectQuarantinesSharedProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	proxyID := int64(4698)
-	account := &Account{ID: 469804, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, ProxyID: &proxyID}
+	account := &Account{ID: 469804, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ProxyID: &proxyID}
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
 	// collapseInterval 0: the loop below records within the production collapse
 	// window and must count as distinct failure events here.
@@ -2774,7 +2775,7 @@ func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t 
 	require.Equal(t, 1, result.usage.CacheReadInputTokens)
 }
 
-func TestOpenAIStreamingPassthroughResponseIncompleteWithoutDoneMarkerStillSucceeds(t *testing.T) {
+func TestOpenAIStreamingPassthroughResponseIncompleteRetainsUsageButFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -2801,7 +2802,7 @@ func TestOpenAIStreamingPassthroughResponseIncompleteWithoutDoneMarkerStillSucce
 
 	result, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "", "")
 	_ = pr.Close()
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.usage)
 	require.Equal(t, 2, result.usage.InputTokens)

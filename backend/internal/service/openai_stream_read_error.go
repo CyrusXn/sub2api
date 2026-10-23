@@ -30,6 +30,9 @@ type openAIUpstreamStreamReadError struct {
 }
 
 func (e *openAIUpstreamStreamReadError) Error() string {
+	if errors.Is(e.cause, ErrOpenAIUpstreamStreamTruncated) {
+		return "stream usage incomplete: missing terminal event"
+	}
 	return fmt.Sprintf("stream usage incomplete: %v", e.cause)
 }
 

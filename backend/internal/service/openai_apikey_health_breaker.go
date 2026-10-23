@@ -42,6 +42,9 @@ func classifyOpenAIAPIKeyHealthFailure(err error) (int, []byte, bool) {
 	}
 
 	var imageErr *OpenAIImagesUpstreamError
+	if _, message, ok := OpenAIUpstreamStreamReadErrorDetails(err); ok {
+		return http.StatusBadGateway, []byte(message), true
+	}
 	if errors.As(err, &imageErr) {
 		if imageErr.StatusCode == http.StatusTooManyRequests || imageErr.StatusCode >= http.StatusInternalServerError {
 			return imageErr.StatusCode, []byte(strings.TrimSpace(imageErr.Message)), true
