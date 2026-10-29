@@ -825,7 +825,8 @@ onMounted(async () => {
 
   await adminSettingsStore.fetch()
   if (!adminSettingsStore.opsMonitoringEnabled) {
-    await router.replace('/admin/settings')
+    // 关闭监控后台任务时仍保留独立的请求错误查询入口。
+    loading.value = false
     return
   }
 
