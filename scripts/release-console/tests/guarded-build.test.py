@@ -16,6 +16,24 @@ spec.loader.exec_module(guard)
 
 
 class BuildGuardTests(unittest.TestCase):
+    def test_container_cgroup_includes_inheriting_init_children(self):
+        container_id = 'a' * 64
+        with tempfile.TemporaryDirectory() as directory:
+            hierarchy = Path(directory).resolve()
+            for relative in ('/system.slice/docker-' + container_id + '.scope/init',
+                             '/docker/' + container_id + '/init',
+                             '/docker/' + container_id):
+                expected = hierarchy / relative.lstrip('/')
+                if expected.name == 'init':
+                    expected = expected.parent
+                self.assertEqual(guard.container_cgroup_path(relative, container_id, hierarchy), expected)
+
+    def test_container_cgroup_rejects_unowned_or_escaping_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for relative in ('/system.slice/docker-other.scope/init', '/../../outside'):
+                with self.assertRaises(RuntimeError):
+                    guard.container_cgroup_path(relative, 'a' * 64, Path(directory))
+
     def test_sampling_loss_or_builder_change_fails_closed(self):
         guard.require_sample(None, None)
         guard.require_sample({'id': 'same'}, {'id': 'same'})

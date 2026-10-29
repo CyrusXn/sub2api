@@ -81,6 +81,19 @@ class Limits:
         return None
 
 
+def container_cgroup_path(relative, container_id, hierarchy=Path('/sys/fs/cgroup')):
+    hierarchy = hierarchy.resolve()
+    leaf = (hierarchy / relative.lstrip('/')).resolve()
+    if not leaf.is_relative_to(hierarchy):
+        raise RuntimeError('构建器 cgroup 路径异常')
+    # Docker 的 init 子组继承父组限额；采样必须覆盖整个容器及其所有子组。
+    names = {container_id, 'docker-' + container_id + '.scope'}
+    for parent in (leaf, *leaf.parents):
+        if parent.is_relative_to(hierarchy) and parent.name in names:
+            return parent
+    raise RuntimeError('未找到与构建器完整容器 ID 对应的 cgroup')
+
+
 def builder_sample():
     result = subprocess.run(['docker', 'inspect', BUILDER], capture_output=True, text=True, timeout=3)
     if result.returncode:
@@ -94,12 +107,13 @@ def builder_sample():
             and config['CpuPeriod'] > 0 and 0 < config['CpuQuota'] / config['CpuPeriod'] <= 2):
         raise RuntimeError('专用构建器资源限制不匹配')
     relative = Path(f'/proc/{pid}/cgroup').read_text().split('0::', 1)[1].strip()
-    root = Path('/sys/fs/cgroup') / relative.lstrip('/')
-    if not root.resolve().is_relative_to(Path('/sys/fs/cgroup')):
-        raise RuntimeError('构建器 cgroup 路径异常')
+    root = container_cgroup_path(relative, container['Id'])
+    maximum = (root / 'memory.max').read_text().strip()
+    if not maximum.isdecimal() or int(maximum) != config['Memory']:
+        raise RuntimeError('构建器 cgroup 实际内存限额与 Docker 配置不一致')
     return {
         'id': container['Id'], 'current': int((root / 'memory.current').read_text()),
-        'maximum': int((root / 'memory.max').read_text()),
+        'maximum': int(maximum),
         'events': {key: int(value) for key, value in
                    (line.split() for line in (root / 'memory.events').read_text().splitlines())},
     }
