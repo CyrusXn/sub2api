@@ -443,6 +443,8 @@ export default {
     duration: 'Duration',
     latency: 'Latency',
     latencyFirstToken: 'First',
+    firstPacketHint: 'First packet (including waiting placeholders); older records may only contain the real first token. First-packet latency is not used for health assessment.',
+    firstPacketExport: 'First packet (ms; legacy first token)',
     latencyDuration: 'Total',
     outputTps: 'Output TPS',
     outputTpsHint: 'Output tokens divided by total duration, including first-token wait, in tok/s. Output tokens may include reasoning tokens.',

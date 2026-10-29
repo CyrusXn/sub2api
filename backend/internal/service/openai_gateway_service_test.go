@@ -1024,6 +1024,8 @@ func TestOpenAISelectAccountForModelWithExclusions_StickyOutsideGroupClearsSessi
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_StickyUnschedulableClearsSession(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	sessionHash := "session-2"
 	groupID := int64(1)
 	repo := stubOpenAIAccountRepo{
@@ -1042,6 +1044,7 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyUnschedulableClearsSession(t
 		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
 	}
 
+	svc.rateLimitService = &RateLimitService{settingService: NewSettingService(&openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{SettingKeyOpenAILowUpstreamRatePriorityEnabled: "false"}}, svc.cfg)}
 	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, sessionHash, "gpt-4", nil)
 	if err != nil {
 		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
@@ -1061,6 +1064,8 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyUnschedulableClearsSession(t
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_StickyOutsideGroupClearsSession(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	sessionHash := "session-load-outside-group"
 	groupID := int64(1002)
 	repo := groupAwareStubOpenAIAccountRepo{
@@ -1081,6 +1086,7 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyOutsideGroupClearsSession(t 
 		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
 	}
 
+	svc.rateLimitService = &RateLimitService{settingService: NewSettingService(&openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{SettingKeyOpenAILowUpstreamRatePriorityEnabled: "false"}}, svc.cfg)}
 	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, sessionHash, "gpt-4", nil)
 	if err != nil {
 		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
@@ -1261,6 +1267,8 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_StickyCapacitySpilloverKeepsBinding(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	sessionHash := "sticky-spillover"
 	groupID := int64(1)
 	repo := stubOpenAIAccountRepo{
@@ -1291,6 +1299,7 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyCapacitySpilloverKeepsBindin
 		concurrencyService: NewConcurrencyService(concurrencyCache),
 	}
 
+	svc.rateLimitService = &RateLimitService{settingService: NewSettingService(&openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{SettingKeyOpenAILowUpstreamRatePriorityEnabled: "false"}}, svc.cfg)}
 	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, sessionHash, "gpt-4", nil)
 	require.NoError(t, err)
 	require.NotNil(t, selection)

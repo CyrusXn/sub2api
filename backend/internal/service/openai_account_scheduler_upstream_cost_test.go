@@ -146,7 +146,7 @@ func TestOpenAIDefaultLowRateOrderingAndFailover(t *testing.T) {
 	}
 }
 
-func TestOpenAILegacyBatchLowRateKeepsCheapestSticky(t *testing.T) {
+func TestOpenAILegacyBatchLowRateOrdersBeforeSticky(t *testing.T) {
 	for _, scenario := range []string{"expensive peer", "excluded cheaper peer", "cooled cheaper peer", "unsupported cheaper peer", "available cheaper peer", "full sticky spillover"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetOpenAIAdvancedSchedulerSettingCacheForTest()
@@ -193,20 +193,17 @@ func TestOpenAILegacyBatchLowRateKeepsCheapestSticky(t *testing.T) {
 			require.NoError(t, svc.setStickySessionAccountID(context.Background(), &groupID, "session", sticky.ID, time.Hour))
 			selection, _, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "session", "gpt-test", excluded, OpenAIUpstreamTransportAny, false)
 			require.NoError(t, err)
-			wantID := sticky.ID
+			wantID := peer.ID
 			if scenario == "available cheaper peer" {
 				wantID = third.ID
 			}
 			if scenario == "full sticky spillover" {
 				wantID = peer.ID
 			}
-			require.Equal(t, wantID, selection.Account.ID, "仅严格更便宜的可用候选可以覆盖粘性")
+			require.Equal(t, wantID, selection.Account.ID, "同倍率优先级先于普通粘性")
 			boundID, err := svc.getStickySessionAccountID(context.Background(), &groupID, "session")
 			require.NoError(t, err)
 			wantBoundID := wantID
-			if scenario == "full sticky spillover" {
-				wantBoundID = sticky.ID
-			}
 			require.Equal(t, wantBoundID, boundID)
 			if selection.ReleaseFunc != nil {
 				selection.ReleaseFunc()

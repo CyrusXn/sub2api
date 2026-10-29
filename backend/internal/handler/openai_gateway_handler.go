@@ -924,6 +924,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 					// 首字前恢复途中遇到 HTTP 错误也继续遍历，避免混合故障提前截断切号。
+					if service.TextStreamAwaitingOutput(c) && failoverErr.ShouldRetryNextAccount() {
+						failoverErr.ExhaustBeforeFirstOutput = true
+						failoverErr.RetryableOnSameAccount = false
+					}
 					exhaustBeforeFirstOutput = exhaustBeforeFirstOutput || failoverErr.ExhaustBeforeFirstOutput
 					failoverErr.ExhaustBeforeFirstOutput = exhaustBeforeFirstOutput
 					// openAIForwardMayFailover 已确认写出的字节不含语义输出，
@@ -938,7 +942,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
-					if openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
+					if !failoverErr.ExhaustBeforeFirstOutput && openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

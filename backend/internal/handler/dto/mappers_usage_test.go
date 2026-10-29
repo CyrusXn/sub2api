@@ -8,6 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUsageLogFromService_PreservesIndependentFirstPacket(t *testing.T) {
+	firstPacket, firstToken := 1050, 45000
+	for _, packet := range []*int{nil, new(int), &firstPacket} {
+		log := &service.UsageLog{FirstPacketMs: packet, FirstTokenMs: &firstToken}
+		for _, mapped := range []*UsageLog{UsageLogFromService(log), &UsageLogFromServiceAdmin(log).UsageLog} {
+			require.Equal(t, packet, mapped.FirstPacketMs)
+			require.Equal(t, &firstToken, mapped.FirstTokenMs)
+		}
+	}
+}
+
 func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 	t.Parallel()
 

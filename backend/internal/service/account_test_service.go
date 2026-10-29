@@ -846,6 +846,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 		return s.testOpenAIImageOAuth(c, ctx, account, testModelID, imagePrompt)
 	}
+	ensureTextStreamTiming(c, time.Now())
 
 	credentialAccount := account
 	if account.IsCredentialShadow() {
@@ -921,6 +922,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	}
+	stopPlaceholder := startAccountTextProbePlaceholder(c)
+	defer stopPlaceholder()
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -2177,6 +2180,8 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/chat/completions 测试连接"})
+	stopPlaceholder := startAccountTextProbePlaceholder(c)
+	defer stopPlaceholder()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -2920,15 +2925,18 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 // processOpenAIChatCompletionsStream processes SSE chunks from the
 // OpenAI-compatible Chat Completions API.
 func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+	stopPlaceholder := startAccountTextProbePlaceholder(c)
+	defer stopPlaceholder()
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
+	seenReal := false
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				if seenFinish {
+				if seenFinish && seenReal {
 					s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 /v1/chat/completions 验证"})
 					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 					return nil
@@ -2948,6 +2956,9 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 
 		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
+			if !seenReal {
+				return s.sendErrorAndEnd(c, "Chat Completions stream completed without real text output")
+			}
 			s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 /v1/chat/completions 验证"})
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
@@ -2978,16 +2989,23 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 			}
 			if delta, ok := choice["delta"].(map[string]any); ok {
 				if text, ok := delta["content"].(string); ok && text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					seenReal = seenReal || strings.TrimSpace(text) != ""
+					s.sendAccountTestText(c, text)
 				}
 			}
 			if message, ok := choice["message"].(map[string]any); ok {
 				if text, ok := message["content"].(string); ok && text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					seenReal = seenReal || strings.TrimSpace(text) != ""
+					s.sendAccountTestText(c, text)
 				}
 			}
 			if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
-				seenFinish = true
+				switch finishReason {
+				case "stop", "length", "tool_calls", "function_call":
+					seenFinish = true
+				default:
+					return s.sendErrorAndEnd(c, "Chat Completions stream failed: "+finishReason)
+				}
 			}
 		}
 	}
@@ -2995,17 +3013,15 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
 func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
+	stopPlaceholder := startAccountTextProbePlaceholder(c)
+	defer stopPlaceholder()
 	reader := bufio.NewReader(body)
-	seenCompleted := false
+	seenReal := false
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				if seenCompleted {
-					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-					return nil
-				}
 				return s.sendErrorAndEnd(c, "Stream ended before response.completed")
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
@@ -3018,10 +3034,6 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 
 		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
-			if seenCompleted {
-				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-				return nil
-			}
 			return s.sendErrorAndEnd(c, "Stream ended before response.completed")
 		}
 
@@ -3036,9 +3048,30 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 		case "response.output_text.delta":
 			// OpenAI Responses API uses "delta" field for text content
 			if delta, ok := data["delta"].(string); ok && delta != "" {
-				s.sendEvent(c, TestEvent{Type: "content", Text: delta})
+				seenReal = seenReal || strings.TrimSpace(delta) != ""
+				s.sendAccountTestText(c, delta)
 			}
 		case "response.completed", "response.done":
+			if value := gjson.Get(jsonStr, "response.error"); value.Exists() && value.Type != gjson.Null {
+				return s.sendErrorAndEnd(c, "OpenAI response completed with an error")
+			}
+			if status := gjson.Get(jsonStr, "response.status"); status.Exists() && status.String() != "completed" {
+				return s.sendErrorAndEnd(c, "OpenAI response did not complete successfully")
+			}
+			// 部分兼容上游只在完成事件交付正文；已有 delta 时不重复展示整段文本。
+			if !seenReal {
+				for _, item := range gjson.Get(jsonStr, "response.output").Array() {
+					for _, part := range item.Get("content").Array() {
+						if text := part.Get("text").String(); strings.TrimSpace(text) != "" {
+							seenReal = true
+							s.sendAccountTestText(c, text)
+						}
+					}
+				}
+			}
+			if !seenReal {
+				return s.sendErrorAndEnd(c, "OpenAI response completed without real text output")
+			}
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
 		case "response.failed":
@@ -3319,12 +3352,23 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 			}
 		}
 	}
+	if event.Type == "error" || event.Type == "test_complete" {
+		if writer, ok := c.Writer.(*accountTextProbeWriter); ok {
+			// 先封住定时器，再写终态，避免终态之后跟出一个迟到的占位事件。
+			writer.mu.Lock()
+			writer.stopped = true
+			writer.mu.Unlock()
+		}
+	}
 	eventJSON, _ := json.Marshal(event)
 	if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", eventJSON); err != nil {
 		log.Printf("failed to write SSE event: %v", err)
 		return
 	}
 	c.Writer.Flush()
+	if event.Type == "content" {
+		recordTextStreamPacket(c)
+	}
 }
 
 // sendErrorAndEnd sends an error event and ends the stream

@@ -18,7 +18,8 @@ import (
 )
 
 // Forward forwards request to OpenAI API
-func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, forwardErr error) {
+	defer func() { stampTextStreamTiming(c, result) }()
 	identityBody, identityErr := applyOpenAIPlainChatIdentity(c, account, body, nil)
 	if identityErr != nil {
 		return nil, identityErr
@@ -1073,6 +1074,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
+		if reqStream && !imageIntent && textStreamRequestEligible(openAIResponsesEndpoint, reqModel, body) {
+			ensureTextStreamTiming(c, startTime)
+		}
 		stopHeaderKeepalive := startOpenAIResponsesHeaderKeepalive(c, reqStream, account)
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		stopHeaderKeepalive()

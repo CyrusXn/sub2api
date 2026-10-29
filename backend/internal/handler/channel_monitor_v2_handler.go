@@ -136,6 +136,14 @@ func (h *ChannelMonitorV2Handler) matrix(c *gin.Context, admin bool) {
 	if !ok {
 		return
 	}
+	if raw := c.Query("minute_offset"); raw != "" {
+		offset, err := strconv.Atoi(raw)
+		if err != nil || offset < 0 || offset > 30*24*60 {
+			response.BadRequest(c, "invalid minute_offset")
+			return
+		}
+		filter.MinuteOffset = offset
+	}
 	groupBy, err := service.ParseChannelMonitorV2GroupBy(c.Query("group_by"))
 	if err != nil {
 		response.BadRequest(c, err.Error())

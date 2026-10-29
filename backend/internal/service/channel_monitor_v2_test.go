@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -129,7 +130,7 @@ func TestChannelMonitorV2ParseFilterDefaultsAndBuckets(t *testing.T) {
 	filter, err := svc.ParseFilter("", []string{"openai", "openai", ""}, []string{"gpt-5"}, []int64{2, 1, 2, 0})
 	require.NoError(t, err)
 	require.Equal(t, "90m", filter.Range)
-	require.Equal(t, 5*time.Minute, filter.Bucket)
+	require.Equal(t, time.Minute, filter.Bucket)
 	require.Equal(t, []string{"openai"}, filter.Platforms)
 	require.Equal(t, []int64{1, 2}, filter.GroupIDs)
 	require.Equal(t, 90*time.Minute, filter.End.Sub(filter.Start))
@@ -336,6 +337,93 @@ func TestChannelMonitorV2MatrixSortsUsageBeforeRedaction(t *testing.T) {
 	}
 }
 
+func TestChannelMonitorV2HealthExposesTrafficWithoutRequestCounts(t *testing.T) {
+	for _, requestCount := range []int64{0, 1, 49, 50} {
+		t.Run(fmt.Sprintf("requests_%d", requestCount), func(t *testing.T) {
+			metrics := ChannelMonitorV2Metric{RequestCount: requestCount, SuccessRequests: requestCount}
+			health := ChannelMonitorV2HealthFor(metrics)
+			redactChannelMonitorV2Metric(&metrics, true)
+			require.Zero(t, metrics.RequestCount)
+			raw, err := json.Marshal(health)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(raw, &payload))
+			require.Equal(t, requestCount > 0, payload["has_traffic"])
+			if requestCount < 50 {
+				require.Nil(t, health.Score)
+			}
+		})
+	}
+}
+
+func TestChannelMonitorV2BestRequestHealthScoresOneRequest(t *testing.T) {
+	ttft := int64(10000)
+	for _, failed := range []bool{false, true} {
+		m := ChannelMonitorV2Metric{RequestCount: 1, TTFT: ChannelMonitorV2Latency{SampleCount: 1, P50Ms: &ttft}}
+		if failed {
+			m.ErrorRequests, m.ErrorRate = 1, 1
+		} else {
+			m.SuccessRequests = 1
+		}
+		health := ChannelMonitorV2BestRequestHealth(m, DefaultChannelMonitorV2HealthThresholds())
+		require.True(t, health.HasTraffic)
+		require.EqualValues(t, 1, health.MinimumSample)
+		require.NotNil(t, health.Score)
+		if failed {
+			require.Equal(t, "critical", health.Overall)
+		} else {
+			require.Equal(t, "healthy", health.Overall)
+		}
+	}
+}
+
+func TestChannelMonitorV2BestRequestHealthUsesSuccessAndRecordedFirstToken(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		success bool
+		ttft    int64
+		state   string
+		score   float64
+	}{
+		{"零毫秒成功", true, 0, "healthy", 100},
+		{"十秒以内", true, 9999, "healthy", 100},
+		{"恰好十秒", true, 10000, "healthy", 100},
+		{"刚超十秒", true, 10001, "warning", 60},
+		{"成功但首字很慢", true, 120000, "warning", 60},
+		{"成功但首字缺失", true, -1, "warning", 60},
+		{"失败即使首字快", false, 1, "critical", 0},
+		{"失败且首字缺失", false, -1, "critical", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metrics := ChannelMonitorV2Metric{RequestCount: 1, ErrorRequests: 1, ErrorRate: 1}
+			if test.success {
+				metrics.SuccessRequests, metrics.ErrorRequests, metrics.ErrorRate = 1, 0, 0
+			}
+			if test.ttft >= 0 {
+				metrics.TTFT = ChannelMonitorV2Latency{SampleCount: 1, P50Ms: &test.ttft}
+			} else {
+				fallback := int64(1)
+				metrics.TTFT = ChannelMonitorV2Latency{SampleCount: 1, P95Ms: &fallback}
+			}
+			thresholds := DefaultChannelMonitorV2HealthThresholds()
+			thresholds.MinimumSample, thresholds.TargetTTFTMs = 10000, 60000
+			for _, cache := range []float64{0, 0.5, 1} {
+				metrics.CacheRate, metrics.CacheRateDenominator = cache, 100
+				health := ChannelMonitorV2BestRequestHealth(metrics, thresholds)
+				require.True(t, health.HasTraffic)
+				require.Equal(t, test.state, health.Overall)
+				require.NotNil(t, health.Score)
+				require.Equal(t, test.score, *health.Score)
+				require.Nil(t, health.CacheScore, "缓存只展示，不评分")
+			}
+		})
+	}
+	health := ChannelMonitorV2BestRequestHealth(ChannelMonitorV2Metric{}, DefaultChannelMonitorV2HealthThresholds())
+	require.False(t, health.HasTraffic)
+	require.Equal(t, "unknown", health.Overall)
+	require.Nil(t, health.Score)
+}
+
 func TestChannelMonitorV2HealthRequiresRequestSamples(t *testing.T) {
 	for _, requestCount := range []int64{0, 8, 9, 49} {
 		t.Run(fmt.Sprintf("requests_%d", requestCount), func(t *testing.T) {
@@ -348,7 +436,8 @@ func TestChannelMonitorV2HealthRequiresRequestSamples(t *testing.T) {
 			}
 			health := ChannelMonitorV2HealthForWithThresholds(metrics, thresholds)
 			require.Equal(t, ChannelMonitorV2Health{
-				Overall: "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
+				HasTraffic: requestCount > 0,
+				Overall:    "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
 				MinimumSample: 50, Thresholds: NormalizeChannelMonitorV2HealthThresholds(thresholds),
 			}, health)
 		})
@@ -380,7 +469,8 @@ func TestChannelMonitorV2HealthMinimumSampleBoundaries(t *testing.T) {
 			}
 			health := ChannelMonitorV2HealthForWithThresholds(metrics, thresholds)
 			require.Equal(t, ChannelMonitorV2Health{
-				Overall: "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
+				HasTraffic: metrics.RequestCount > 0,
+				Overall:    "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
 				MinimumSample: test.wantMinimum, Thresholds: NormalizeChannelMonitorV2HealthThresholds(thresholds),
 			}, health)
 
@@ -631,10 +721,12 @@ func TestSnapshotRedactsPublicConfigPolicyFields(t *testing.T) {
 
 func TestRedactChannelMonitorV2MetricKeepsRates(t *testing.T) {
 	p50 := int64(100)
+	tps := 22.5
 	m := ChannelMonitorV2Metric{
 		SuccessRequests: 90, ErrorRequests: 10, RequestCount: 100,
 		InputTokens: 1, OutputTokens: 2, CacheCreationTokens: 3, CacheReadTokens: 4,
 		TokenCount: 10, RPM: 12, TPM: 34, ErrorRate: 0.1, SuccessRate: 0.9,
+		OutputTPS: &tps,
 		CacheRate: 0.5, CacheRateNumerator: 4, CacheRateDenominator: 8,
 		TTFT: ChannelMonitorV2Latency{SampleCount: 50, P50Ms: &p50},
 	}
@@ -651,11 +743,13 @@ func TestRedactChannelMonitorV2MetricKeepsRates(t *testing.T) {
 	require.InDelta(t, 12.0, m.RPM, 0.0001)
 	require.InDelta(t, 34.0, m.TPM, 0.0001)
 	require.NotNil(t, m.TTFT.P50Ms)
+	require.NotNil(t, m.OutputTPS)
 	require.Equal(t, int64(100), *m.TTFT.P50Ms)
 
 	redactChannelMonitorV2Metric(&m, true)
 	require.Zero(t, m.RPM)
 	require.Zero(t, m.TPM)
+	require.Nil(t, m.OutputTPS)
 	require.InDelta(t, 0.1, m.ErrorRate, 0.0001)
 }
 

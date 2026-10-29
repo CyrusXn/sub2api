@@ -5,6 +5,14 @@ import { getMatrix, repeatedArrayParamsSerializer } from '../channelMonitorV2'
 afterEach(() => vi.restoreAllMocks())
 
 describe('channel monitor V2 query serialization', () => {
+  it('requests an earlier minute window without changing summary filters', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { items: [] } })
+    await getMatrix({ range: '30d', platforms: ['openai'], groupIds: [7], models: [] }, 'platform_group', false, undefined, 360)
+    expect(get).toHaveBeenCalledWith('/channel-monitor-v2/matrix', expect.objectContaining({
+      params: expect.objectContaining({ range: '30d', minute_offset: 360 }),
+    }))
+  })
+
   it('uses repeated keys without bracket suffixes for array filters', () => {
     const query = repeatedArrayParamsSerializer({
       range: '90m',

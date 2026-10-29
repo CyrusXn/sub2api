@@ -47,6 +47,20 @@ func TestChannelMonitorV2MatrixHandlerRejectsInvalidGroupBy(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+func TestChannelMonitorV2MatrixHandlerRejectsInvalidMinuteOffset(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, value := range []string{"-1", "43201", "1.5", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/channel-monitor-v2/matrix?minute_offset="+value, nil)
+			h := NewChannelMonitorV2Handler(service.NewChannelMonitorV2Service(nil), nil)
+			h.Matrix(c)
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		})
+	}
+}
+
 func TestChannelMonitorV2ScopeFilterUsesAvailableGroupsForOrdinaryUser(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

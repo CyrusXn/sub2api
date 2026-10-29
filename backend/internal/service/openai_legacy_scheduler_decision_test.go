@@ -54,7 +54,13 @@ func TestLegacySchedulerDecision_StickySessionLayer(t *testing.T) {
 			name = "priority_lru"
 		}
 		t.Run(name, func(t *testing.T) {
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
 			svc := newLegacySchedulerDecisionTestService(newLegacySchedulerDecisionTestAccounts(groupID, true), loadBatch, schedulerTestConcurrencyCache{})
+			// 本用例验证普通粘性层；低倍率模式的严格排序由独立回归覆盖。
+			svc.rateLimitService = &RateLimitService{settingService: NewSettingService(&openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+				SettingKeyOpenAILowUpstreamRatePriorityEnabled: "false",
+			}}, svc.cfg)}
 			sessionHash := "legacy-sticky-session"
 			require.NoError(t, svc.setStickySessionAccountID(ctx, &groupID, sessionHash, 38102, time.Hour))
 

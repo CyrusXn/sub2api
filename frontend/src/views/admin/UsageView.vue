@@ -673,7 +673,7 @@ const exportToExcel = async () => {
       t('admin.usage.inputCost'), t('admin.usage.outputCost'),
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
       t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.upstreamTotalTokens'), t('usage.upstreamCost'), t('usage.upstreamOriginalCost'), t('usage.upstreamGroupRate'), t('usage.profit'), t('usage.accountBilled'),
-      t('usage.firstToken'), t('usage.duration'),
+      t('usage.firstPacketExport'), t('usage.duration'),
       t('admin.usage.requestId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
@@ -695,7 +695,7 @@ const exportToExcel = async () => {
         (log.input_tokens + log.output_tokens + log.cache_read_tokens + log.cache_creation_tokens),
         getUpstreamCost(log).toFixed(6), log.upstream_cost_base?.toFixed(6) || '', log.upstream_group_rate_multiplier?.toPrecision(4) || '',
         (log.actual_cost - getUpstreamCost(log)).toFixed(6),
-        getUpstreamCost(log).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
+        getUpstreamCost(log).toFixed(6), log.first_packet_ms ?? log.first_token_ms ?? '', log.duration_ms,
         log.request_id || '', log.upstream_request_id || '', log.user_agent || '', log.ip_address || ''
       ])
       if (rows.length) {

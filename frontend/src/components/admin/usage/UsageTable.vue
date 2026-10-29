@@ -272,20 +272,20 @@
           <span class="text-sm font-medium text-red-600 dark:text-red-400">{{ row.upstream_group_rate_multiplier == null ? '-' : row.upstream_group_rate_multiplier.toFixed(4) }}</span>
         </template>
 
-        <!-- 首字延迟只使用真实 first_token_ms，不再生成或读取随机派生值。 -->
+        <!-- 优先展示实际写出的首包；旧记录回退真实首字，保留原始统计字段。 -->
         <!-- 合并首字/总耗时的健康度列：左侧色条上端随首字档、下端随总耗时档，中段(40%-60%)短渐变过渡，便于纵向扫视整体健康状况 -->
         <template #cell-latency="{ row }">
           <div class="flex items-stretch gap-2">
             <span
               class="w-1 shrink-0 rounded-full"
-              :class="row.first_token_ms != null
+              :class="getFirstPacketMs(row) != null
                 ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[getFirstTokenSeverity(row)], LATENCY_BAR_TO_CLASSES[durationSeverity(row.duration_ms ?? 0)]]
                 : LATENCY_BAR_CLASSES[durationSeverity(row.duration_ms ?? 0)]"
               aria-hidden="true"
             ></span>
             <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
-              <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
-              <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[getFirstTokenSeverity(row)]">{{ formatDuration(row.first_token_ms) }}</span>
+              <span class="text-gray-400 dark:text-gray-500" :title="t('usage.firstPacketHint')">{{ t('usage.latencyFirstToken') }}</span>
+              <span v-if="getFirstPacketMs(row) != null" :title="t('usage.firstPacketHint')" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[getFirstTokenSeverity(row)]">{{ formatDuration(getFirstPacketMs(row)) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
@@ -800,8 +800,10 @@ const formatUserAgent = (ua: string): string => {
   return ua
 }
 
+const getFirstPacketMs = (row: AdminUsageLog) => row.first_packet_ms ?? row.first_token_ms
+
 const getFirstTokenSeverity = (row: AdminUsageLog) => {
-  const firstTokenMs = row.first_token_ms
+  const firstTokenMs = getFirstPacketMs(row)
   if (firstTokenMs != null && props.firstTokenGoodThroughMs != null && firstTokenMs <= props.firstTokenGoodThroughMs) {
     return 'good'
   }

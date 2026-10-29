@@ -804,6 +804,9 @@ export default {
       apiKeyHint: '您的 Claude Console API Key',
       upstreamRequestIdHeader: '上游ID',
       upstreamRequestIdHeaderPlaceholder: '留空不记录',
+      identityReplyContent: '身份回复内容（可选）',
+      identityReplyContentPlaceholder: '留空使用上游真实回复',
+      identityReplyContentHint: '仅在“你是谁”“你是什么模型”等普通身份提问时，使用此内容作为上游的身份回复指令。留空不注入；不影响普通对话，也不额外请求上游。',
       upstreamRequestIdHeaderHelp: {
         intro: '填写直接上游在响应头中声明请求标识的头名，记录到用量明细的“上游ID”列；留空则不记录。',
         examplesTitle: '常见取值',

@@ -56,6 +56,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	firstOutputTimeout := time.Duration(0)
 	if account != nil && account.Platform == PlatformOpenAI {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
+		if textStreamTimingFromContext(c) != nil {
+			firstOutputTimeout = s.textStreamFirstOutputTimeout(reasoningEffort)
+		}
 	}
 	guardFirstOutput := firstOutputTimeout > 0
 	stageFirstOutput := account != nil && account.Platform == PlatformOpenAI
@@ -145,6 +148,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		return int64(bufferedWriter.Buffered())
 	}
 	flushBuffered := func() error {
+		hasPacket := pendingBytes() > 0
 		if firstOutputStage != nil && !firstOutputStage.closed {
 			if err := firstOutputStage.CommitTo(w); err != nil {
 				return err
@@ -155,6 +159,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 		}
 		flusher.Flush()
+		if hasPacket {
+			recordTextStreamPacket(c)
+		}
 		return nil
 	}
 
@@ -200,9 +207,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
-	if requireTerminal && (keepaliveInterval <= 0 || keepaliveInterval > time.Second) {
-		// 首字前 1 秒保活不算模型输出，也不解除切号和首字超时保护。
-		keepaliveInterval = time.Second
+	if requireTerminal && (keepaliveInterval <= 0 || keepaliveInterval > TextStreamPlaceholderDelay) {
+		// 首字前保活不算模型输出，也不解除切号和首字超时保护。
+		keepaliveInterval = TextStreamPlaceholderDelay
 	}
 	// 下游 keepalive 仅用于防止代理空闲断开
 	var keepaliveTicker *time.Ticker
@@ -213,6 +220,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var keepaliveCh <-chan time.Time
 	if keepaliveTicker != nil {
 		keepaliveCh = keepaliveTicker.C
+	}
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
 	}
 
 	var firstOutputTimer *time.Timer
@@ -268,6 +279,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	pendingSSEEventType := ""
+	pendingSSEEventLine := ""
 	eventInProgress := false
 	eventStartsClientOutput := false
 	eventStartsTTFTOutput := false
@@ -303,6 +315,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
 				} else {
 					clientOutputStarted = true
+					if completedProgressEvent {
+						markTextStreamRealOutput(c)
+					}
 					lastDownstreamWriteAt = time.Now()
 				}
 			}
@@ -512,6 +527,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			pendingSSEEventType = eventType
 			eventType = strings.TrimSpace(eventType)
 			suppressCurrentEvent = codexFailureTerminal && (eventType == "error" || (sawBareError && !sawResponseFailed && eventType != "response.failed"))
+			pendingSSEEventLine = line
+			return
 		}
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
@@ -736,6 +753,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = s.replaceModelInSSELine(line, originalModel)
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
+			if forwardTextStreamWhitespace(c, data, eventType) {
+				suppressCurrentEvent = true
+			}
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			startsTTFTOutput := openAIStreamDataStartsTTFT(data, eventType, forceFlushFailedEvent, ttftMode)
 			if stageFirstOutput {
@@ -759,7 +779,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if account != nil && (account.Platform == PlatformOpenAI || account.Platform == PlatformGrok) &&
 				(eventType == "response.completed" || eventType == "response.done") &&
 				!sawFailedEvent && !responsesSemanticOutputSeen && !clientOutputStarted &&
-				(openAIResponsesCompletedEventIsEmpty(dataBytes, usage) || (requireTerminal && placeholderSeen && !openAIStreamDataStartsVisibleOutput(data, eventType))) {
+				(openAIResponsesCompletedEventIsEmpty(dataBytes, usage) || (textStreamTimingFromContext(c) != nil && !textStreamTerminalHasOutput(data)) || (requireTerminal && placeholderSeen && !openAIStreamDataStartsVisibleOutput(data, eventType))) {
 				sawTerminalEvent = true
 				failoverErr := newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 				failoverErr.ExhaustBeforeFirstOutput = requireTerminal && placeholderSeen
@@ -769,6 +789,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
+				if pendingSSEEventLine != "" {
+					if _, err := writePendingString(pendingSSEEventLine + "\n"); err != nil {
+						handlePendingWriteError(err)
+						return
+					}
+					pendingSSEEventLine = ""
+				}
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
 				if firstTokenMs == nil && startsVisibleOutput {
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
@@ -797,6 +824,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// A blank line dispatches a guarded event from the attempt-local stage.
 		if stageFirstOutput && line == "" {
 			pendingSSEEventType = ""
+			pendingSSEEventLine = ""
 			if suppressCurrentEvent {
 				suppressCurrentEvent = false
 				terminalFailurePending = false
@@ -833,6 +861,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		shouldFlush := false
 		if line == "" {
 			pendingSSEEventType = ""
+			pendingSSEEventLine = ""
 			if suppressCurrentEvent {
 				suppressCurrentEvent = false
 				terminalFailurePending = false
@@ -859,6 +888,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
 					} else {
 						clientOutputStarted = true
+						if responsesSemanticOutputSeen {
+							markTextStreamRealOutput(c)
+						}
 						lastDownstreamWriteAt = time.Now()
 					}
 				}
@@ -871,7 +903,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 
 	// 无超时/无 keepalive 的常见路径走同步扫描，减少 goroutine 与 channel 开销。
-	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputTimeout <= 0 {
+	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputTimeout <= 0 && placeholderCh == nil {
 		defer putSSEScannerBuf64K(scanBuf)
 		for documentScanner.Scan() {
 			processSSELine(documentScanner.Text(), true)
@@ -1032,6 +1064,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				startTime, originalModel, reasoningEffort,
 				firstOutputTimeout, "semantic_output", resp.Header,
 			)
+
+		case <-placeholderCh:
+			placeholderCh = nil
+			if !clientDisconnected && !failureDelivered && writeTextStreamPlaceholder(c, w) {
+				lastDownstreamWriteAt = time.Now()
+			}
 
 		case <-keepaliveCh:
 			if clientDisconnected || failureDelivered {
@@ -1433,9 +1471,7 @@ func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 
 // openAIResponsesCompletedEventIsEmpty reports whether a response.completed /
 // response.done SSE payload carries no usage, no error and no output items.
-// The accumulated usage is consulted too, because OpenAI may deliver usage on
-// an earlier event. An empty terminal event after a stream with no semantic
-// output is treated as a silent upstream refusal (issue #5009).
+// 文本流由调用方额外检查真实输出，其他模态保留原有 usage 终态契约。
 func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool {
 	if len(data) == 0 || !gjson.ValidBytes(data) {
 		return false

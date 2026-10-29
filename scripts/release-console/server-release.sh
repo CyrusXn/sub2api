@@ -249,8 +249,15 @@ main() {
   umask 077
   mkdir -p "$STATE_DIR"
   # 锁覆盖构建、切流和清理全过程，两个发布入口不能互相删除候选资产。
-  exec 9>"$STATE_DIR/release.lock"
-  flock -n 9 || fail '已有服务器发布或清理正在执行'
+  if [[ -n "${SUB2API_RELEASE_LOCK_FD:-}" ]]; then
+    # 构建守护持锁到取消与构建器停止完成；共享同一打开文件，避免父进程退出即解锁。
+    [[ "$SUB2API_RELEASE_LOCK_FD" =~ ^[0-9]+$ ]] || fail '继承的发布锁描述符无效'
+    [[ "/proc/$$/fd/$SUB2API_RELEASE_LOCK_FD" -ef "$STATE_DIR/release.lock" ]] || fail '继承的发布锁文件不匹配'
+    flock -n "$SUB2API_RELEASE_LOCK_FD" || fail '已有服务器发布或清理正在执行'
+  else
+    exec 9>"$STATE_DIR/release.lock"
+    flock -n 9 || fail '已有服务器发布或清理正在执行'
+  fi
   case "$action" in
     status)
       df -h "$APP_DIR"; free -h

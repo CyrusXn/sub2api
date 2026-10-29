@@ -491,6 +491,20 @@ func (_c *UsageLogCreate) SetNillableFirstTokenMs(v *int) *UsageLogCreate {
 	return _c
 }
 
+// SetFirstPacketMs sets the "first_packet_ms" field.
+func (_c *UsageLogCreate) SetFirstPacketMs(v int) *UsageLogCreate {
+	_c.mutation.SetFirstPacketMs(v)
+	return _c
+}
+
+// SetNillableFirstPacketMs sets the "first_packet_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableFirstPacketMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetFirstPacketMs(*v)
+	}
+	return _c
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_c *UsageLogCreate) SetUserAgent(v string) *UsageLogCreate {
 	_c.mutation.SetUserAgent(v)
@@ -1118,6 +1132,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FirstTokenMs(); ok {
 		_spec.SetField(usagelog.FieldFirstTokenMs, field.TypeInt, value)
 		_node.FirstTokenMs = &value
+	}
+	if value, ok := _c.mutation.FirstPacketMs(); ok {
+		_spec.SetField(usagelog.FieldFirstPacketMs, field.TypeInt, value)
+		_node.FirstPacketMs = &value
 	}
 	if value, ok := _c.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -1947,6 +1965,30 @@ func (u *UsageLogUpsert) AddFirstTokenMs(v int) *UsageLogUpsert {
 // ClearFirstTokenMs clears the value of the "first_token_ms" field.
 func (u *UsageLogUpsert) ClearFirstTokenMs() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldFirstTokenMs)
+	return u
+}
+
+// SetFirstPacketMs sets the "first_packet_ms" field.
+func (u *UsageLogUpsert) SetFirstPacketMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldFirstPacketMs, v)
+	return u
+}
+
+// UpdateFirstPacketMs sets the "first_packet_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateFirstPacketMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldFirstPacketMs)
+	return u
+}
+
+// AddFirstPacketMs adds v to the "first_packet_ms" field.
+func (u *UsageLogUpsert) AddFirstPacketMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldFirstPacketMs, v)
+	return u
+}
+
+// ClearFirstPacketMs clears the value of the "first_packet_ms" field.
+func (u *UsageLogUpsert) ClearFirstPacketMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldFirstPacketMs)
 	return u
 }
 
@@ -2957,6 +2999,34 @@ func (u *UsageLogUpsertOne) UpdateFirstTokenMs() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearFirstTokenMs() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetFirstPacketMs sets the "first_packet_ms" field.
+func (u *UsageLogUpsertOne) SetFirstPacketMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetFirstPacketMs(v)
+	})
+}
+
+// AddFirstPacketMs adds v to the "first_packet_ms" field.
+func (u *UsageLogUpsertOne) AddFirstPacketMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddFirstPacketMs(v)
+	})
+}
+
+// UpdateFirstPacketMs sets the "first_packet_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateFirstPacketMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateFirstPacketMs()
+	})
+}
+
+// ClearFirstPacketMs clears the value of the "first_packet_ms" field.
+func (u *UsageLogUpsertOne) ClearFirstPacketMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearFirstPacketMs()
 	})
 }
 
@@ -4169,6 +4239,34 @@ func (u *UsageLogUpsertBulk) UpdateFirstTokenMs() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearFirstTokenMs() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetFirstPacketMs sets the "first_packet_ms" field.
+func (u *UsageLogUpsertBulk) SetFirstPacketMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetFirstPacketMs(v)
+	})
+}
+
+// AddFirstPacketMs adds v to the "first_packet_ms" field.
+func (u *UsageLogUpsertBulk) AddFirstPacketMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddFirstPacketMs(v)
+	})
+}
+
+// UpdateFirstPacketMs sets the "first_packet_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateFirstPacketMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateFirstPacketMs()
+	})
+}
+
+// ClearFirstPacketMs clears the value of the "first_packet_ms" field.
+func (u *UsageLogUpsertBulk) ClearFirstPacketMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearFirstPacketMs()
 	})
 }
 

@@ -141,6 +141,10 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("first_token_ms").
 			Optional().
 			Nillable(),
+		// 真实写出首包的耗时独立存储，避免等待占位污染真实首字统计。
+		field.Int("first_packet_ms").
+			Optional().
+			Nillable(),
 		field.String("user_agent").
 			MaxLen(512).
 			Optional().

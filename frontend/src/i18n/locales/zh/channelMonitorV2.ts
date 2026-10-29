@@ -61,10 +61,20 @@ export default {
     empty: { title: '没有可展示的数据', description: '尝试调整时间范围或筛选条件' },
     bucket: { minutes: '{count} 分钟粒度', hours: '{count} 小时粒度', days: '{count} 天粒度' },
     matrix: {
-      title: '可用性趋势', description: '每行是一种渠道组合，每个色块代表一个统计区间；悬停查看明细', wheelZoom: '在色块上滚轮放大（区间变窄、色块变宽）', wheelZoomX: '在色块上滚轮放大（区间变窄、色块变宽）', dimension: '渠道维度', emptyTitle: '当前筛选窗口没有矩阵数据', legendAria: '健康分数图例', bad: '差', good: '好', healthyLegend: '健康 (≥80)', warningLegend: '需关注 (50–79)', criticalLegend: '异常 (<50)', unknownLegend: '无流量 / 样本不足', noTraffic: '该区间无流量', noTrafficAt: '{time} · 无流量', scoreLine: '健康分 {score}', resetZoom: '重置缩放'
+      bestTitle: '每分钟最佳请求',
+      bestDescription: '每分钟取最佳真实请求：成功且使用记录首字 ≤10 秒为绿色满分，成功但超过 10 秒或首字缺失为黄色，没有成功请求为红色。缓存不参与评分；左侧为完整范围汇总。',
+      bestHealthyLegend: '成功且首字 ≤10 秒（100 分）',
+      bestWarningLegend: '成功但首字 >10 秒 / 缺失',
+      bestCriticalLegend: '有请求但没有成功',
+      bestRequest: '本分钟最佳请求',
+      outputTpsValue: '输出 Token/秒 {value}',
+      minuteWindow: '拖动查看历史分钟（每屏最多 6 小时）',
+      unscoredLegend: '有流量 / 暂无评分',
+      unscoredHint: '该区间有流量；样本不足或当前指标缺失，暂不计算健康分',
+      title: '可用性趋势', description: '每行是一种渠道组合，每个色块代表一个统计区间；悬停查看明细', wheelZoom: '在色块上滚轮放大（区间变窄、色块变宽）', wheelZoomX: '在色块上滚轮放大（区间变窄、色块变宽）', dimension: '渠道维度', emptyTitle: '当前筛选窗口没有矩阵数据', legendAria: '健康分数图例', bad: '差', good: '好', healthyLegend: '健康 (≥80)', warningLegend: '需关注 (50–79)', criticalLegend: '异常 (<50)', unknownLegend: '无流量 / 无数据', noTraffic: '该区间无流量', noTrafficAt: '{time} · 无流量', scoreLine: '健康分 {score}', resetZoom: '重置缩放'
     },
     chart: {
-      title: '可用性趋势', description: '平滑趋势：错误率 · 首 Token P50 · 缓存率', emptyTitle: '当前筛选窗口没有趋势数据', errorLegend: '错误率（左轴 %）', cacheLegend: '缓存率（左轴 %）', ttftLegend: '首 Token P50（右轴）', errorDataset: '错误率趋势 %', cacheDataset: '缓存率趋势 %', ttftDataset: '首 Token 趋势 P50 (ms)', percentAxis: '比率 %', resetZoom: '重置缩放'
+      title: '整体汇总趋势', description: '全部请求的统计趋势：错误率 · 首 Token P50 · 缓存率', emptyTitle: '当前筛选窗口没有趋势数据', errorLegend: '错误率（左轴 %）', cacheLegend: '缓存率（左轴 %）', ttftLegend: '首 Token P50（右轴）', errorDataset: '错误率趋势 %', cacheDataset: '缓存率趋势 %', ttftDataset: '首 Token 趋势 P50 (ms)', percentAxis: '比率 %', resetZoom: '重置缩放'
     },
     errorDetail: { http: 'HTTP {code}', upstream: '上游 {code}', noMessage: '无错误消息', empty: '仅展示分类占比（样本消息仅管理员可见）' },
     errorCategories: {
@@ -94,7 +104,7 @@ export default {
       enableTitle: '启用 V2 汇总',
       enableHint: '在系统模式为 V2 时生效；关闭后仅停止本配置的汇总，系统模式开关仍在「功能开关」',
       refreshTitle: '汇总频率',
-      refreshHint: '影响矩阵时间粒度与刷新节奏',
+      refreshHint: '影响整体汇总任务的运行频率；最佳请求矩阵固定为每分钟粒度并每分钟刷新',
       refreshAria: '汇总频率',
       selectPlatform: '选择平台',
       addPlatform: '添加平台',
@@ -109,10 +119,10 @@ export default {
       groupsEmpty: '没有可选择的分组',
       errorsTitle: '错误分类与忽略',
       errorsHint:
-        '勾选「忽略」的类别不计入错误率与健康分，仍在错误原因列表中以灰色显示并标记忽略。未匹配的错误归入「其他」。',
+        '勾选「忽略」的类别不计入整体汇总的错误率与健康分，仍在错误原因列表中以灰色标记。分钟最佳请求按真实请求结果计算。未匹配的错误归入「其他」。',
       ignoredSummary: '已忽略 {ignored} 类 · 计入错误率 {counted} 类',
       healthTitle: '健康阈值',
-      healthHint: '综合健康分只考虑成功率与首 Token P50，首 Token 在 10 秒内不扣分。缓存阈值仅用于缓存率视图，不影响综合分。',
+      healthHint: '此处阈值与最小样本数仅用于整体汇总。分钟色块固定按最佳真实请求判定：成功且使用记录首字 ≤10 秒为绿色满分，慢速成功或首字缺失为黄色，没有成功为红色；缓存不参与评分。',
       fields: {
         minimumSample: '最小样本数',
         warningError: '错误率关注 %',
@@ -127,7 +137,7 @@ export default {
       namedModelsCount: '将展示 {count} 个命名模型维度；名单外模型归入各平台「其他」。',
       userContractTitle: '用户端展示约定',
       userContract: {
-        health: '综合健康分默认权重：成功率 75% + 首 Token P50 25%；首 Token 在 10 秒内不扣分，缓存率不参与综合评分。',
+        health: '分钟色块：成功且使用记录首字 ≤10 秒为绿色满分，慢速成功或首字缺失为黄色，没有成功为红色。缓存不参与评分；整体汇总使用配置阈值。',
         trend: '趋势可切换色块矩阵 / 折线图（错误率 · 缓存率 · 首 Token）',
         latency: '延迟展示 AVG · P50 · P90；不展示绝对请求数 / 错误数',
         models: '模型列表留空时展示真实模型名，不会全部归入「其他」',

@@ -81,7 +81,8 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	require.Contains(t, string(failoverErr.ResponseBody), "first_output_timeout")
 	require.True(t, failoverErr.SafeToFailoverAfterWrite)
 	require.Less(t, time.Since(started), 1300*time.Millisecond)
-	require.Empty(t, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "data:", "等待超时前只允许写出协议占位")
+	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
 	select {
 	case <-upstream.canceled:
 	default:

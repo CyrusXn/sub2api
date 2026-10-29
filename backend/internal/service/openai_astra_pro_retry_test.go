@@ -69,7 +69,7 @@ func TestOpenAIGatewayService_OAuthAstraProModeKeptAcrossRejectedFieldRetry(t *t
 	body := []byte(`{"model":"gpt-6-astra","stream":true,"instructions":"test","reasoning":{"mode":"pro","effort":"max"},"input":[{"type":"message","role":"user","status":"completed","content":"hello"}]}`)
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[0].status'.","param":"input[0].status"}}`),
-		newOpenAIRejectedFieldTestResponse(http.StatusOK, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n"),
+		newOpenAIRejectedFieldTestResponse(http.StatusOK, openAITextSuccessDelta+"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n"),
 	}}
 	upstream.responses[1].Header.Set("Content-Type", "text/event-stream")
 	svc := newOpenAIRejectedFieldTestService(upstream)

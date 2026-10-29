@@ -228,7 +228,10 @@ func TestOpenAIResponsesCompletionGuardLimitAndCancellation(t *testing.T) {
 				_, err = svc.handleStreamingResponse(ctx, resp, c, account, time.Now(), "", "")
 			}
 			require.Error(t, err)
-			require.Empty(t, rec.Body.String())
+			// 缓冲慢流时允许已发出的注释占位，但不能泄露模型数据。
+			output := rec.Body.String()
+			require.NotContains(t, output, `data:`)
+			require.NotContains(t, output, `event:`)
 			var failover *UpstreamFailoverError
 			if cancelRequest {
 				require.ErrorIs(t, err, context.Canceled)

@@ -212,7 +212,16 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 	// the outbound request (for example GLM xhigh is forwarded as max).
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(upstreamBody, upstreamModel, billingModel, originalModel)
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, upstreamBody, upstreamModel)
+	if clientStream {
+		if textStreamRequestEligible("/v1/chat/completions", originalModel, body) {
+			ensureTextStreamTiming(c, startTime)
+		} else {
+			c.Set(textStreamTimingDisabledKey, true)
+		}
+	}
+	stopHeaderKeepalive := startOpenAIResponsesHeaderKeepalive(c, clientStream, account)
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity)
+	stopHeaderKeepalive()
 	if err != nil {
 		return nil, err
 	}
@@ -308,18 +317,32 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	startTime time.Time,
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
+	ensureTextStreamTiming(c, startTime)
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
+	stopKeepalive := func() {}
+	if textStreamTimingFromContext(c) != nil {
+		stopKeepalive = startOpenAISSEKeepalive(c, TextStreamPlaceholderDelay)
+	}
+	defer stopKeepalive()
+	effort := ""
+	if reasoningEffort != nil {
+		effort = *reasoningEffort
+	}
+	timeout := s.textStreamFirstOutputTimeout(effort)
+	expired, stopDeadline := startTextStreamReadDeadline(c, resp.Body, startTime, timeout)
+	defer stopDeadline()
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
 	var usage OpenAIUsage
 	var firstTokenMs *int
 	clientDisconnected := false
 	clientOutputStarted := false
+	semanticOutputSeen := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
@@ -328,11 +351,12 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if clientDisconnected {
 			return
 		}
-		if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
+		if !clientOutputStarted && ((textStreamTimingFromContext(c) != nil && !semanticOutputSeen) || (textStreamTimingFromContext(c) == nil && !refusalDetector.ShouldReleaseClientOutput())) {
 			pendingLines = append(pendingLines, line)
 			return
 		}
 		if !clientOutputStarted {
+			stopKeepalive()
 			writeStreamHeaders()
 			for _, pending := range pendingLines {
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
@@ -362,15 +386,30 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
 			terminal.ObserveDataLine(trimmedPayload)
+			if !clientOutputStarted && gjson.Get(payload, "error").Exists() {
+				message := extractOpenAISSEErrorMessage([]byte(payload))
+				if openAIStreamFailedEventShouldFailover([]byte(payload), message) {
+					return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, []byte(payload), message, upstreamModel, resp.Header)
+				}
+				writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+				return nil, fmt.Errorf("upstream response failed: %s", message)
+			}
 			if trimmedPayload != "[DONE]" {
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
-				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
+				real, whitespace := chatStreamPayloadOutput(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
 					usage = *u
 				}
 				sanitizedPayload := sanitizeOpenAIResponseSSEData([]byte(payload), originalModel, upstreamModel)
 				line = "data: " + string(sanitizedPayload)
-				if firstTokenMs == nil && !usageOnlyChunk {
+				if !semanticOutputSeen && whitespace {
+					writeTextStreamPlaceholder(c, c.Writer)
+					continue
+				}
+				if real {
+					semanticOutputSeen = true
+				}
+				if firstTokenMs == nil && (real || (textStreamTimingFromContext(c) == nil && !isOpenAIChatUsageOnlyStreamChunk(payload))) {
 					elapsed := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &elapsed
 				}
@@ -384,11 +423,19 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if line == "" {
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
+				if semanticOutputSeen {
+					markTextStreamRealOutput(c)
+				}
+				recordTextStreamPacket(c)
 			}
 			continue
 		}
 		if !clientDisconnected && clientOutputStarted {
 			c.Writer.Flush()
+			if semanticOutputSeen {
+				markTextStreamRealOutput(c)
+			}
+			recordTextStreamPacket(c)
 		}
 	}
 
@@ -408,9 +455,17 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			FirstPacketMs:                 TextStreamFirstPacketMs(c),
 		}
 	}
 
+	if expired() {
+		// 截止回调可能与正文 Flush 交错；已交付内容后只能报错，不能重放。
+		if clientOutputStarted {
+			return resultWithUsage(), newOpenAIUpstreamStreamReadError(context.DeadlineExceeded)
+		}
+		return nil, s.newOpenAIFirstOutputTimeoutError(c.Request.Context(), c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account), startTime, originalModel, effort, timeout, "semantic_output", resp.Header)
+	}
 	scanErr := scanner.Err()
 	if scanErr != nil && !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
 		logger.L().Warn("openai chat_completions raw: stream read error",
@@ -422,6 +477,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	// 客户端取消/断开后上游读失败与上游截断不可区分（取消会连带取消上游请求），
 	// 沿用既有语义：按已收到的用量正常收尾计费，不判为上游故障。
 	clientAborted := clientDisconnected ||
+		c.Request.Context().Err() != nil ||
 		errors.Is(scanErr, context.Canceled) ||
 		errors.Is(scanErr, context.DeadlineExceeded)
 
@@ -451,9 +507,12 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		return resultWithUsage(), newOpenAIUpstreamStreamReadError(cause)
 	}
 
-	if scanErr == nil && !clientDisconnected && !clientOutputStarted {
+	if scanErr == nil && !clientAborted && !clientOutputStarted {
 		if refusalDetector.IsSilentRefusal() {
 			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
+		}
+		if textStreamTimingFromContext(c) != nil && !semanticOutputSeen {
+			return nil, newOpenAIRawStreamTruncatedFailoverError(c, account, requestID, errors.New("上游终止但未产生真实输出"))
 		}
 		if len(pendingLines) > 0 {
 			writeStreamHeaders()
@@ -470,6 +529,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			if !clientDisconnected {
 				c.Writer.Flush()
 				clientOutputStarted = true
+				if semanticOutputSeen {
+					markTextStreamRealOutput(c)
+				}
+				recordTextStreamPacket(c)
 			}
 		}
 	}

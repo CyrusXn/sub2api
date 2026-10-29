@@ -350,6 +350,46 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 }
 
 describe('EditAccountModal', () => {
+  it('身份回复默认留空，不按分组强制填回', async () => {
+    const account = buildAccount()
+    account.groups = [{ id: 9, name: '【GPT】真官Key', platform: 'openai' }]
+    const wrapper = mountModal(account)
+    const input = wrapper.get('[data-testid="identity-reply-content"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('回填并保存自定义身份回复，保留其他账号配置', async () => {
+    const account = buildAccount()
+    account.extra = { identity_reply_content: '我是测试助手', unrelated_option: true }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    const input = wrapper.get('[data-testid="identity-reply-content"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('我是测试助手')
+    await input.setValue('  我是新的助手  ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      identity_reply_content: '我是新的助手', unrelated_option: true
+    })
+    wrapper.unmount()
+  })
+
+  it('清空身份回复后保存空字符串，重新打开仍为空', async () => {
+    const account = buildAccount()
+    account.extra = { identity_reply_content: '我是 ChatGPT' }
+    account.groups = [{ id: 9, name: '【GPT】真官Key', platform: 'openai' }]
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="identity-reply-content"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    const savedExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(savedExtra).toHaveProperty('identity_reply_content', '')
+    wrapper.unmount()
+    const reopened = mountModal({ ...account, extra: savedExtra })
+    expect((reopened.get('[data-testid="identity-reply-content"]').element as HTMLTextAreaElement).value).toBe('')
+    reopened.unmount()
+  })
+
   beforeEach(() => {
     authIsSimpleMode.value = true
   })

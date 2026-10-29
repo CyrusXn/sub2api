@@ -75,11 +75,41 @@ SSH 超时不代表远端任务停止：核验主机身份后，先只读检查�
 
 `sub2api-release rollback` 沿用现有蓝绿机制，将新请求切回上一次健康 API 槽位，不执行数据库降级。涉及后台节点、配置或数据库的完整恢复，应按保留的完整备份单独处理。
 
-## 本机验证
+## 独立后端验收（不切正式流量）
+
+`isolated-preview.py` 只运行由上述 `build <SHA>` 生成并校验的镜像，不构建镜像，也不执行 `deploy`、蓝绿预热或 Nginx 修改。代码仍须在唯一主目录完成审核、提交、推送，工作区干净；未明确纳入的其他会话改动不得擅自提交。构建阶段仍须按 AGENTS 每 5 秒持续监看并遵循中止门槛，本运行器的运行期保护不替代构建监控。
+
+隔离验收可使用同目录 `guarded-build.py <完整SHA>` 监管 `sub2api-release build`。先采样 60 秒生产健康、内存和 Nginx 5xx 基线，再每 5 秒记录阶段、宿主内存、构建器 cgroup 及事件增量、健康、5xx。达到项目中止门槛时只取消自己的 build 进程组；确认它正在使用专用构建器且容器 ID 未变时才停止该构建器。访问日志轮转或监控失败也取消本次构建，保留诊断。该包装器没有 deploy 入口，不改变现有正式发布命令；建议在受保护的 systemd 临时服务中运行，避免 SSH 断开后失去监管。
+
+候选验证完成、保存诊断并确认没有发布任务后，执行 `sub2api-release cleanup-build` 释放专用构建器。将已审核的运行器安装到服务器工具目录（权限 `0700`），在已核验 SSH 身份的受保护终端运行：
+
+```bash
+python3 /home/docker/sub2api/.server-release/bin/isolated-preview.py <完整SHA> <服务器候选镜像标签>
+```
+
+首次运行通过隐藏输入设置测试管理员 `admin@example.com` 的初始密码，不把密码写进命令行。程序必须保持运行；需要长时间验收时使用服务器受保护的终端会话管理工具，不能裸后台运行后失去监管。Ctrl+C、SIGTERM、启动失败、测试健康失败、生产容器变化、生产健康连续三次失败、磁盘不足 20 GiB、内存低于 1 GiB 一次或低于 1.5 GiB 持续 15 秒时，只停止带隔离标签及 Compose 项目标识的测试容器，保留数据卷和日志。断电、SIGKILL 或守护进程自身崩溃不能保证执行退出清理，应先只读核实状态再恢复，不能据此承诺完全隔离。
+
+隔离配置固定如下，不能用生产 `.env` 替代：
+
+- 项目 `sub2api-preview`，服务端目录 `/home/docker/sub2api-preview`（`0700`），配置和随机密钥文件 `0600`。
+- 端口仅 `127.0.0.1:18090`；数据库、Redis 不发布端口，使用独立内部网络和独立数据卷，无生产卷/网络挂载。
+- 全新测试数据库 `sub2api_preview`、独立 JWT/TOTP 密钥、空业务设置；不复制生产用户、API Key、账单、邮件或支付配置。
+- 应用 `api_only`、禁用 Ops；每个容器最多 0.5 核，内存分别为应用 768 MiB / PostgreSQL 512 MiB / Redis 128 MiB，禁止额外 swap，日志每容器最多 10 MiB。不自动重启；运行期每 5 秒采样资源和健康。
+- 运行器持有与发布相同的排他锁。验收期间禁止并发发布；完成验收后先退出运行器释放锁。
+
+通过 SSH 隧道把本机 `18090` 转发至服务器 `127.0.0.1:18090`，使用独立浏览器入口访问 `http://127.0.0.1:18090`。前后端均来自同一个候选镜像，不再使用“新页面代理旧 API”的方式验证后端改动。不要将测试端口加入生产 Nginx。
+
+首次启动后只导入验收需要的账号、分组及代理配置；生产读取须只读，禁止恢复全库备份或复制全局设置。真实上游调用仍可能计费；测试使用记录、账号健康状态、余额扣减只写测试库，不会同步回生产。验收应同时核对候选提交、占位首包与真实内容双计时、账号测试终态、组内故障切号及身份回复空值透传，并对比生产容器身份/启动时间/重启次数和健康基线。共享主机仍共享磁盘 I/O 等资源，不保证绝对零影响。
+
+首次启动前，将审核过的上游公开域名列表保存为测试目录内 `upstream-hosts.json`（JSON 字符串数组，权限 `0600`），默认仅允许 `api.openai.com`。运行器开启 URL allowlist 和私网地址限制；不要使用通配符。此检查不代替代理、DNS 和网络通路核验。
+
+## 工具测试
 
 ```bash
 bash -n scripts/release-console/server-release.sh scripts/release-console/remote-bluegreen.sh scripts/release-console/release-console.sh
 python3 scripts/release-console/tests/server-release.test.py
+python3 scripts/release-console/tests/isolated-preview.test.py
+python3 scripts/release-console/tests/guarded-build.test.py
 node --test scripts/release-console/tests/*.test.mjs
 git diff --check
 ```

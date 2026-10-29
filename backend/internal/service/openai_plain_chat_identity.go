@@ -9,12 +9,19 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const openAIPlainChatIdentityInstructions = "当前用户在进行普通对话，没有编程工具客户端身份。当用户询问你的身份时，即使历史回答包含其他身份，也只逐字回复下面这段介绍，不要补充模型版本、客户端、界面或运行环境等说明：\n我是 ChatGPT，由 OpenAI训练的 AI 助手。我可以用中文和你交流，帮你解答问题、写作、翻译、编程等。"
+const accountIdentityReplyContentKey = "identity_reply_content"
+const defaultOpenAIIdentityReplyContent = "我是 ChatGPT，由 OpenAI训练的 AI 助手。我可以用中文和你交流，帮你解答问题、写作、翻译、编程等。"
 
-// applyOpenAIPlainChatIdentity 仅修正无工具、无调用方身份设定的 OpenAI APIKey 身份问答。
+// applyOpenAIPlainChatIdentity 按账号配置处理无工具、无调用方身份设定的 OpenAI APIKey 身份问答。
 // 判断必须使用入站请求，不能使用已统一为编码客户端指纹的出站头。
 func applyOpenAIPlainChatIdentity(c *gin.Context, account *Account, body []byte, testPrompt *string) ([]byte, error) {
-	if account == nil || !account.IsOpenAIApiKey() || !gjson.ValidBytes(body) {
+	if account == nil || !account.IsOpenAIApiKey() {
+		return body, nil
+	}
+	reply, _ := account.Extra[accountIdentityReplyContentKey].(string)
+	reply = strings.TrimSpace(reply)
+	// 留空直接透传，避免普通账号承担请求解析及分组查询开销。
+	if reply == "" || !gjson.ValidBytes(body) {
 		return body, nil
 	}
 	if testPrompt == nil && c != nil && c.Request != nil {
@@ -31,14 +38,6 @@ func applyOpenAIPlainChatIdentity(c *gin.Context, account *Account, body []byte,
 		}
 	}
 	root := gjson.ParseBytes(body)
-	model := root.Get("model").String()
-	if testPrompt == nil {
-		model = account.GetMappedModel(model)
-	}
-	// OpenAI 兼容账号也可能转发其他厂商的模型，不能给它们设置 ChatGPT 身份。
-	if !isOpenAICodexGPTModel(model) {
-		return body, nil
-	}
 	for _, field := range []string{"instructions", "system", "prompt", "tools", "functions", "tool_choice", "function_call", "client_metadata", "metadata", "previous_response_id", "conversation", "response_format", "text.format"} {
 		value := root.Get(field)
 		if value.IsArray() && len(value.Array()) == 0 {
@@ -88,10 +87,11 @@ func applyOpenAIPlainChatIdentity(c *gin.Context, account *Account, body []byte,
 	if !isOpenAIPlainIdentityQuestion(question) {
 		return body, nil
 	}
+	instructions := "当前用户在进行普通对话，没有编程工具客户端身份。当用户询问你的身份时，即使历史回答包含其他身份，也只逐字回复下面这段介绍，不要补充模型版本、客户端、界面或运行环境等说明：\n" + reply
 	if !messages.Exists() {
-		return sjson.SetBytes(body, "instructions", openAIPlainChatIdentityInstructions)
+		return sjson.SetBytes(body, "instructions", instructions)
 	}
-	identity, err := json.Marshal(map[string]string{"role": "system", "content": openAIPlainChatIdentityInstructions})
+	identity, err := json.Marshal(map[string]string{"role": "system", "content": instructions})
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func isOpenAIPlainIdentityQuestion(question string) bool {
 	question = strings.TrimSpace(strings.TrimPrefix(question, "请问"))
 	question = strings.TrimLeft(question, "，,：: ")
 	switch question {
-	case "你是", "你是谁", "你是谁啊", "你是谁呀", "你是什么", "你是什么模型", "你是什么助手", "你是哪个模型", "你叫什么", "你叫什么名字", "介绍一下你自己", "介绍你自己", "请介绍自己", "请介绍一下你自己", "你是谁，你能做什么", "who are you", "what are you", "introduce yourself":
+	case "你是", "你是谁", "你是谁啊", "你是谁呀", "你是什么", "你是什么模型", "你是什么助手", "你是哪个模型", "你叫什么", "你叫什么名字", "介绍一下你自己", "介绍你自己", "请介绍自己", "请介绍一下你自己", "你是谁，你能做什么", "who are you", "what are you", "what model are you", "introduce yourself":
 		return true
 	default:
 		return false

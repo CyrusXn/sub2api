@@ -172,24 +172,6 @@
               {{ t('channelMonitorV2.trendView.line') }}
             </button>
           </div>
-
-          <div
-            v-if="trendView === 'pulse'"
-            class="tabs inline-flex shrink-0"
-            role="group"
-            :aria-label="t('channelMonitorV2.healthMode.label')"
-          >
-            <button
-              v-for="option in healthModeOptions"
-              :key="option.value"
-              type="button"
-              class="tab !px-2 !py-1 text-xs"
-              :class="healthMode === option.value ? 'tab-active' : ''"
-              @click="healthMode = option.value"
-            >
-              {{ option.label }}
-            </button>
-          </div>
         </div>
       </section>
 
@@ -259,8 +241,9 @@
           v-else-if="matrix"
           :rows="matrixRows"
           :coverage="matrix.coverage"
-          :health-mode="healthMode"
+          :minute-window="matrix.minute_window"
           :show-throughput="showThroughput"
+          @minute-offset-change="setMinuteOffset"
         />
         <div
           v-else-if="loading"
@@ -503,7 +486,6 @@ import {
 } from '@/features/channel-monitor-v2/monitorFormat'
 
 type Tab = 'models' | 'errors' | 'users'
-type HealthMode = 'overall' | 'success' | 'ttft' | 'cache'
 type TrendView = 'pulse' | 'line'
 
 const route = useRoute()
@@ -539,12 +521,6 @@ const matrixGroupOptions = computed(() => [
   { value: 'platform_model' as MonitorMatrixGroupBy, label: t('channelMonitorV2.groupBy.platformModel') },
   { value: 'platform_group_model' as MonitorMatrixGroupBy, label: t('channelMonitorV2.groupBy.platformGroupModel') },
 ])
-const healthModeOptions = computed(() => [
-  { value: 'overall' as HealthMode, label: t('channelMonitorV2.healthMode.overall') },
-  { value: 'success' as HealthMode, label: t('channelMonitorV2.healthMode.success') },
-  { value: 'ttft' as HealthMode, label: t('channelMonitorV2.healthMode.ttft') },
-  { value: 'cache' as HealthMode, label: t('channelMonitorV2.healthMode.cache') },
-])
 
 const filter = ref<MonitorFilter>({
   range: parseRange(route.query.range),
@@ -554,11 +530,11 @@ const filter = ref<MonitorFilter>({
 })
 const activeTab = ref<Tab>(parseTab(route.query.tab, showUserRanking.value))
 const matrixGroupBy = ref<MonitorMatrixGroupBy>(parseMatrixGroupBy(route.query.group_by))
-const healthMode = ref<HealthMode>(parseHealthMode(route.query.health_mode))
 const trendView = ref<TrendView>(parseTrendView(route.query.trend_view))
 const dimensions = ref<MonitorDimensions>({ platforms: [], groups: [], models: [] })
 const snapshot = ref<MonitorSnapshot | null>(null)
 const matrix = ref<MonitorMatrixResponse | null>(null)
+const minuteOffset = ref(0)
 const modelRows = ref<MonitorModelRow[]>([])
 const errorRows = ref<MonitorErrorRow[]>([])
 const userRows = ref<MonitorUserRow[]>([])
@@ -683,10 +659,6 @@ function parseTab(value: unknown, allowUsers: boolean): Tab {
   const allowed: Tab[] = allowUsers ? ['models', 'errors', 'users'] : ['models', 'errors']
   return allowed.includes(value as Tab) ? (value as Tab) : 'models'
 }
-function parseHealthMode(value: unknown): HealthMode {
-  const allowed: HealthMode[] = ['overall', 'success', 'ttft', 'cache']
-  return allowed.includes(value as HealthMode) ? (value as HealthMode) : 'overall'
-}
 function parseTrendView(value: unknown): TrendView {
   return value === 'line' ? 'line' : 'pulse'
 }
@@ -699,7 +671,6 @@ function syncQuery() {
       group: filter.value.groupIds.join(',') || undefined,
       model: filter.value.models.join(',') || undefined,
       group_by: matrixGroupBy.value,
-      health_mode: healthMode.value,
       trend_view: trendView.value === 'line' ? 'line' : undefined,
       tab: activeTab.value,
     },
@@ -721,7 +692,7 @@ async function loadDimensions(signal?: AbortSignal, id = sequence) {
 async function loadMetrics(signal?: AbortSignal, id = sequence) {
   const [nextSnapshot, nextMatrix] = await Promise.all([
     api.getSnapshot(filter.value, isAdmin.value, signal),
-    api.getMatrix(filter.value, matrixGroupBy.value, isAdmin.value, signal),
+    api.getMatrix(filter.value, matrixGroupBy.value, isAdmin.value, signal, minuteOffset.value),
   ])
   if (id !== sequence) return
   snapshot.value = nextSnapshot
@@ -818,7 +789,7 @@ function scheduleAutoRefresh() {
   // Poll faster while first-upgrade bootstrap is filling 90m→30d so the progress bar moves.
   const seconds = bootstrapActive.value
     ? 10
-    : snapshot.value?.config?.refresh_interval_seconds || 300
+    : 60
   autoRefreshTimer = window.setInterval(() => {
     if (!loading.value && !refreshing.value) {
       void reload(true)
@@ -900,9 +871,14 @@ function toggleError(category: string) {
 }
 
 let lastRange: MonitorRange = filter.value.range
+function setMinuteOffset(offset: number) {
+  minuteOffset.value = offset
+  void reloadMetricsOnly(true)
+}
 watch(
   filter,
   () => {
+    minuteOffset.value = 0
     syncQuery()
     const rangeChanged = filter.value.range !== lastRange
     lastRange = filter.value.range
@@ -915,7 +891,6 @@ watch(matrixGroupBy, () => {
   syncQuery()
   void reloadMetricsOnly(true)
 })
-watch(healthMode, syncQuery)
 watch(trendView, syncQuery)
 watch(activeTab, () => {
   syncQuery()

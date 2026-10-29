@@ -67,7 +67,7 @@ func newAstraOAuthSetup(t *testing.T, passthrough bool) *astraForwardSetup {
 }
 
 func codexCompletedSSE(inner string) string {
-	return "data: {\"type\":\"response.completed\",\"response\":" + inner + "}\n\ndata: [DONE]\n\n"
+	return openAITextSuccessDelta + "data: {\"type\":\"response.completed\",\"response\":" + inner + "}\n\ndata: [DONE]\n\n"
 }
 
 func astraRequestBody(model string, stream bool, mode, effort string) []byte {

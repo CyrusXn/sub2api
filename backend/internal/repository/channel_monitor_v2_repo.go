@@ -374,11 +374,11 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 		return nil, err
 	}
 	effectiveFilter := channelMonitorV2CommonCoverageFilter(filter, *coverage)
-	facts, err := r.loadFacts(ctx, effectiveFilter, cfg, true)
+	facts, err := r.loadFacts(ctx, effectiveFilter, cfg, false)
 	if err != nil {
 		return nil, err
 	}
-	histograms, err := r.loadHistograms(ctx, effectiveFilter, cfg, 0, true)
+	histograms, err := r.loadHistograms(ctx, effectiveFilter, cfg, 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -417,13 +417,7 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 		if key.groupID > 0 {
 			acc.groupName = fact.GroupName
 		}
-		bucket := acc.buckets[fact.BucketStart]
-		if bucket == nil {
-			bucket = newMetricAccumulator()
-			acc.buckets[fact.BucketStart] = bucket
-		}
 		acc.total.addFact(fact)
-		bucket.addFact(fact)
 	}
 	for _, histogram := range histograms {
 		if !channelMonitorV2ModelSelected(filter, cfg, histogram.Platform, histogram.Model) {
@@ -439,14 +433,25 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 			continue
 		}
 		acc.total.addHistogram(histogram)
-		if bucket := acc.buckets[histogram.BucketStart]; bucket != nil {
-			bucket.addHistogram(histogram)
-		}
 	}
 
 	result := &service.ChannelMonitorV2Matrix{GroupBy: groupBy, Coverage: *coverage, Items: make([]service.ChannelMonitorV2MatrixRow, 0, len(accs))}
+	minuteFilter, window := channelMonitorV2BestRequestWindow(filter, time.Now())
+	bestRequests, err := r.loadBestRequests(ctx, minuteFilter, cfg, groupBy)
+	if err != nil {
+		return nil, err
+	}
+	result.MinuteWindow = &window
+	result.Coverage.RequestedStart, result.Coverage.RequestedEnd = minuteFilter.Start, minuteFilter.End
+	result.Coverage.BucketSeconds = 60
+	// 新请求不等待汇总任务推进水位，仍可形成分钟色块。
+	for key, requests := range bestRequests {
+		if accs[key] == nil {
+			accs[key] = &channelMonitorV2MatrixAccumulator{total: newMetricAccumulator(), groupName: requests[0].GroupName}
+		}
+	}
 	minutes := channelMonitorV2CoveredMinutes(filter, *coverage)
-	ignoredByDimBucket, ignoredByDim, err := r.loadIgnoredErrorCountsByMatrixKey(ctx, effectiveFilter, cfg, groupBy)
+	_, ignoredByDim, err := r.loadIgnoredErrorCountsByMatrixKey(ctx, effectiveFilter, cfg, groupBy)
 	if err != nil {
 		return nil, fmt.Errorf("load ignored error counts by matrix key: %w", err)
 	}
@@ -463,19 +468,9 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 			groupID := key.groupID
 			row.GroupID = &groupID
 		}
-		bucketKeys := make([]string, 0, len(acc.buckets))
-		for bucket := range acc.buckets {
-			bucketKeys = append(bucketKeys, bucket)
-		}
-		sort.Strings(bucketKeys)
-		for _, bucketKey := range bucketKeys {
-			bucketStart, parseErr := time.Parse(time.RFC3339Nano, bucketKey)
-			if parseErr != nil {
-				continue
-			}
-			bucketMetrics := acc.buckets[bucketKey].metric(filter.Bucket.Minutes(), admin)
-			applyIgnoredErrors(&bucketMetrics, ignoredByDimBucket[key][bucketKey])
-			row.Buckets = append(row.Buckets, service.ChannelMonitorV2TrendPoint{BucketStart: bucketStart, Metrics: bucketMetrics, Health: service.ChannelMonitorV2HealthForWithThresholds(bucketMetrics, cfg.HealthThresholds)})
+		for _, request := range bestRequests[key] {
+			bucketMetrics := request.metric()
+			row.Buckets = append(row.Buckets, service.ChannelMonitorV2TrendPoint{BucketStart: request.BucketStart, Metrics: bucketMetrics, Health: service.ChannelMonitorV2BestRequestHealth(bucketMetrics, cfg.HealthThresholds)})
 		}
 		result.Items = append(result.Items, row)
 	}

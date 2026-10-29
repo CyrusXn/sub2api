@@ -913,7 +913,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsStickyHit(ctx 
 
 	// 1. 尝试粘性会话命中
 	// Try sticky session hit
-	// 低倍率模式先比较候选价格，普通会话粘性不能抢在更便宜的健康账号前。
+	// 低倍率模式统一按倍率、优先级和最近使用时间排序，普通会话粘性不能提前返回。
 	// previous_response_id 的归属约束已在外层单独处理。
 	if !preferLowUpstreamRate {
 		if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
@@ -935,15 +935,6 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsStickyHit(ctx 
 	if selected == nil {
 		return nil, false, noAvailableOpenAISelectionError(requestedModel, compactBlocked, filterStats.summary(""))
 	}
-	if preferLowUpstreamRate {
-		if sticky := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); sticky != nil {
-			order := newOpenAILegacyUpstreamRateOrder([]*Account{sticky, selected}, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
-			if order.compare(sticky, selected) <= 0 {
-				return sticky, true, nil
-			}
-		}
-	}
-
 	hydrated, err := s.hydrateSelectedAccount(ctx, selected)
 	if err != nil {
 		return nil, false, err
@@ -1203,16 +1194,6 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if len(accounts) == 0 {
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
-	skipStickyForLowerRate := preferLowUpstreamRate
-	if preferLowUpstreamRate && stickyAccountID > 0 {
-		if sticky := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); sticky != nil {
-			selected, _, _ := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, true)
-			order := newOpenAILegacyUpstreamRateOrder([]*Account{sticky, selected}, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
-			// 只让严格更便宜的合格候选覆盖粘性；同价时保留已有会话缓存。
-			skipStickyForLowerRate = order.compare(sticky, selected) > 0
-		}
-	}
-
 	isExcluded := func(accountID int64) bool {
 		if excludedIDs == nil {
 			return false
@@ -1227,7 +1208,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	// rewriting the durable binding here would make a short burst migrate the
 	// whole conversation to a cache-cold account.
 	stickySpillover := false
-	if sessionHash != "" && !skipStickyForLowerRate {
+	// 低倍率模式让普通会话进入统一排序，避免粘性越过同倍率账号的优先级和负载。
+	if sessionHash != "" && !preferLowUpstreamRate {
 		accountID := stickyAccountID
 		if accountID > 0 && !isExcluded(accountID) {
 			account, err := s.getSchedulableAccount(ctx, accountID)
@@ -1473,6 +1455,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			return selection, nil
 		} else if attempted {
 			if freshLoadMap, loadErr := s.concurrencyService.GetAccountsLoadBatchFresh(ctx, accountLoads); loadErr == nil {
+				// 抢槽失败后等待排序也必须沿用最新快照，避免负载反转时仍等待旧候选。
+				loadMap = freshLoadMap
 				if selection, _, selectErr := tryAcquireFromLoadMap(freshLoadMap); selectErr != nil {
 					return nil, selectErr
 				} else if selection != nil {
@@ -1484,9 +1468,24 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 	// ============ Layer 3: Fallback wait ============
 	sortAccountsByPriorityAndLastUsed(candidates, false)
-	if rateOrder.enabled {
+	if preferLowUpstreamRate {
 		sort.SliceStable(candidates, func(i, j int) bool {
-			return rateOrder.compare(candidates[i], candidates[j]) < 0
+			a, b := candidates[i], candidates[j]
+			if rateCmp := rateOrder.compare(a, b); rateCmp != 0 {
+				return rateCmp < 0
+			}
+			if a.Priority != b.Priority {
+				return a.Priority < b.Priority
+			}
+			// 等待路径也沿用已取得的负载；查询失败时两者均为零，保留前面的 LRU 顺序。
+			aLoad, bLoad := 0, 0
+			if loadInfo := loadMap[a.ID]; loadInfo != nil {
+				aLoad = loadInfo.LoadRate
+			}
+			if loadInfo := loadMap[b.ID]; loadInfo != nil {
+				bLoad = loadInfo.LoadRate
+			}
+			return aLoad < bLoad
 		})
 	}
 	if requireCompact {

@@ -40,6 +40,8 @@ export interface MonitorMetric {
   token_count: number
   rpm: number
   tpm: number
+  /** 分钟最佳请求的输出 Token / 实际请求秒数。 */
+  output_tps?: number | null
   error_rate: number
   cache_rate: number
   cache_rate_numerator: number
@@ -51,6 +53,8 @@ export interface MonitorMetric {
 }
 
 export interface MonitorHealth {
+  /** 有无请求的信号，不暴露普通用户不可见的请求量。 */
+  has_traffic?: boolean
   overall: HealthState
   error_rate: HealthState
   ttft: HealthState
@@ -172,6 +176,12 @@ export interface MonitorMatrixResponse {
   coverage: MonitorCoverage
   group_by: MonitorMatrixGroupBy
   items: MonitorMatrixRow[]
+  minute_window?: {
+    range_start: string
+    range_end: string
+    offset: number
+    max_offset: number
+  }
 }
 
 export interface MonitorDimensions {
@@ -245,8 +255,10 @@ export async function getSnapshot(filter: MonitorFilter, admin = false, signal?:
   const { data } = await apiClient.get<MonitorSnapshot>(`${base(admin)}/snapshot`, requestConfig(filter, signal))
   return data
 }
-export async function getMatrix(filter: MonitorFilter, groupBy: MonitorMatrixGroupBy, admin = false, signal?: AbortSignal) {
-  const { data } = await apiClient.get<MonitorMatrixResponse>(`${base(admin)}/matrix`, requestConfig(filter, signal, { group_by: groupBy }))
+export async function getMatrix(filter: MonitorFilter, groupBy: MonitorMatrixGroupBy, admin = false, signal?: AbortSignal, minuteOffset = 0) {
+  const extraParams: Record<string, unknown> = { group_by: groupBy }
+  if (minuteOffset > 0) extraParams.minute_offset = minuteOffset
+  const { data } = await apiClient.get<MonitorMatrixResponse>(`${base(admin)}/matrix`, requestConfig(filter, signal, extraParams))
   return data
 }
 export async function getModels(filter: MonitorFilter, admin = false, signal?: AbortSignal) {

@@ -74,9 +74,11 @@ var ChannelMonitorV2ErrorCategories = []string{
 }
 
 type ChannelMonitorV2Filter struct {
-	Range     string
-	Platforms []string
-	GroupIDs  []int64
+	// 仅矩阵使用：向历史移动的分钟数，整体汇总仍使用完整范围。
+	MinuteOffset int
+	Range        string
+	Platforms    []string
+	GroupIDs     []int64
 	// AllowedGroupIDs is the authenticated viewer's server-derived group scope.
 	// RestrictGroups distinguishes an ordinary user with no allowed groups from
 	// the unrestricted admin/configured scope represented by an empty slice.
@@ -108,6 +110,8 @@ type ChannelMonitorV2Metric struct {
 	Duration                 ChannelMonitorV2Latency `json:"duration"`
 	UpstreamAffectedRequests *int64                  `json:"upstream_affected_requests,omitempty"`
 	UpstreamAttemptCount     *int64                  `json:"upstream_attempt_count,omitempty"`
+	// 仅分钟最佳请求返回：所选请求的输出 Token / 实际请求秒数。
+	OutputTPS *float64 `json:"output_tps,omitempty"`
 }
 
 type ChannelMonitorV2Latency struct {
@@ -119,10 +123,12 @@ type ChannelMonitorV2Latency struct {
 }
 
 type ChannelMonitorV2Health struct {
-	Overall   string `json:"overall"`
-	ErrorRate string `json:"error_rate"`
-	TTFT      string `json:"ttft"`
-	Cache     string `json:"cache"`
+	// 仅暴露有无流量，避免隐藏请求量后把低样本误画成无流量。
+	HasTraffic bool   `json:"has_traffic"`
+	Overall    string `json:"overall"`
+	ErrorRate  string `json:"error_rate"`
+	TTFT       string `json:"ttft"`
+	Cache      string `json:"cache"`
 	// Score is 0–100 when samples are sufficient; omitted/null when unknown.
 	// 综合分只使用错误率与首 Token P50，缓存率仅单独展示。
 	Score          *float64                         `json:"score,omitempty"`
@@ -254,9 +260,17 @@ type ChannelMonitorV2MatrixRow struct {
 }
 
 type ChannelMonitorV2Matrix struct {
-	GroupBy  ChannelMonitorV2GroupBy     `json:"group_by"`
-	Coverage ChannelMonitorV2Coverage    `json:"coverage"`
-	Items    []ChannelMonitorV2MatrixRow `json:"items"`
+	GroupBy      ChannelMonitorV2GroupBy       `json:"group_by"`
+	Coverage     ChannelMonitorV2Coverage      `json:"coverage"`
+	Items        []ChannelMonitorV2MatrixRow   `json:"items"`
+	MinuteWindow *ChannelMonitorV2MinuteWindow `json:"minute_window,omitempty"`
+}
+
+type ChannelMonitorV2MinuteWindow struct {
+	RangeStart time.Time `json:"range_start"`
+	RangeEnd   time.Time `json:"range_end"`
+	Offset     int       `json:"offset"`
+	MaxOffset  int       `json:"max_offset"`
 }
 
 type ChannelMonitorV2ErrorRow struct {
@@ -447,7 +461,7 @@ func (s *ChannelMonitorV2Service) ParseFilter(rangeValue string, platforms, mode
 	var window, bucket time.Duration
 	switch strings.TrimSpace(rangeValue) {
 	case "", "90m":
-		rangeValue, window, bucket = "90m", 90*time.Minute, 5*time.Minute
+		rangeValue, window, bucket = "90m", 90*time.Minute, time.Minute
 	case "24h":
 		window, bucket = 24*time.Hour, time.Hour
 	case "7d":
@@ -458,7 +472,7 @@ func (s *ChannelMonitorV2Service) ParseFilter(rangeValue string, platforms, mode
 		return ChannelMonitorV2Filter{}, fmt.Errorf("%w: %s", ErrChannelMonitorV2InvalidRange, rangeValue)
 	}
 	start, end := now.Add(-window), now
-	if bucket > time.Minute {
+	if bucket >= time.Minute {
 		// Align display windows to a fixed number of whole buckets. The trailing
 		// bucket may point slightly into the future; SQL simply has no future rows,
 		// while the current partial bucket can still be shown and recomputed often.
@@ -664,6 +678,7 @@ func redactChannelMonitorV2Metric(m *ChannelMonitorV2Metric, hideThroughput bool
 	if hideThroughput {
 		m.RPM = 0
 		m.TPM = 0
+		m.OutputTPS = nil
 	}
 }
 
@@ -970,10 +985,42 @@ func ChannelMonitorV2HealthFor(metrics ChannelMonitorV2Metric) ChannelMonitorV2H
 	return ChannelMonitorV2HealthForWithThresholds(metrics, DefaultChannelMonitorV2HealthThresholds())
 }
 
+// 分钟色块使用固定规则，不套用整体汇总的样本数、缓存或加权评分。
+func ChannelMonitorV2BestRequestHealth(metrics ChannelMonitorV2Metric, _ ChannelMonitorV2HealthThresholds) ChannelMonitorV2Health {
+	result := ChannelMonitorV2Health{
+		HasTraffic: metrics.RequestCount > 0,
+		Overall:    "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
+		MinimumSample: 1,
+		Thresholds:    ChannelMonitorV2HealthThresholds{MinimumSample: 1, TargetTTFTMs: 10000, WarningTTFTMs: 10001},
+	}
+	if !result.HasTraffic {
+		return result
+	}
+	score, successScore := 0.0, 0.0
+	result.Overall, result.ErrorRate = "critical", "critical"
+	if metrics.SuccessRequests > 0 {
+		score, successScore = 60, 100
+		result.Overall, result.ErrorRate = "warning", "healthy"
+		// 单条请求的 P50 就是 usage_logs.first_token_ms 原值；缺失时不能判满分。
+		if firstToken := metrics.TTFT.P50Ms; firstToken != nil && *firstToken >= 0 {
+			result.TTFT = "warning"
+			if *firstToken <= 10000 {
+				score = 100
+				result.Overall, result.TTFT = "healthy", "healthy"
+			}
+			latencyScore := score
+			result.TTFTScore = &latencyScore
+		}
+	}
+	result.Score, result.ErrorRateScore = &score, &successScore
+	return result
+}
+
 func ChannelMonitorV2HealthForWithThresholds(metrics ChannelMonitorV2Metric, thresholds ChannelMonitorV2HealthThresholds) ChannelMonitorV2Health {
 	thresholds = NormalizeChannelMonitorV2HealthThresholds(thresholds)
 	result := ChannelMonitorV2Health{
-		Overall: "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
+		HasTraffic: metrics.RequestCount > 0,
+		Overall:    "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
 		MinimumSample: thresholds.MinimumSample, Thresholds: thresholds,
 	}
 	if metrics.RequestCount < result.MinimumSample {

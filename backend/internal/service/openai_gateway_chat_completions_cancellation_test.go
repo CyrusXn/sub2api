@@ -85,6 +85,7 @@ func TestForwardAsChatCompletions_CancelsUpstreamBeforeClosingBody(t *testing.T)
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstreamBody := []byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":17,\"output_tokens\":8,\"total_tokens\":25}}}\n\n")
+	upstreamBody = append([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"), upstreamBody...)
 	stream := newContextBoundBlockingReadCloser(upstreamBody)
 	t.Cleanup(stream.forceUnblock)
 

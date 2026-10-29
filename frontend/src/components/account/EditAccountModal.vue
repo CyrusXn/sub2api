@@ -1779,6 +1779,18 @@
         :platform="account.platform"
         :type="account.type"
       />
+      <div v-if="account.platform === 'openai' && account.type === 'apikey'">
+        <label class="input-label" for="account-identity-reply-content">{{ t('admin.accounts.identityReplyContent') }}</label>
+        <textarea
+          id="account-identity-reply-content"
+          v-model="identityReplyContent"
+          data-testid="identity-reply-content"
+          rows="3"
+          class="input"
+          :placeholder="t('admin.accounts.identityReplyContentPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.accounts.identityReplyContentHint') }}</p>
+      </div>
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-6">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
@@ -3868,6 +3880,11 @@ const upstreamBillingManualRatePlaceholder = computed(() =>
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
 const upstreamRequestIdHeader = ref('')
+const identityReplyContent = ref('')
+const readIdentityReplyContent = (extra: unknown): string => {
+  const value = (extra as Record<string, unknown> | undefined)?.identity_reply_content
+  return typeof value === 'string' ? value : ''
+}
 const readUpstreamRequestIdHeader = (extra: unknown): string => {
   const value = (extra as Record<string, unknown> | undefined)?.upstream_request_id_header
   return typeof value === 'string' ? value : ''
@@ -4418,6 +4435,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	mixedScheduling.value = extra?.mixed_scheduling === true
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
+	identityReplyContent.value = readIdentityReplyContent(extra)
 	openAIImagesUrlToB64JsonEnabled.value = extra?.images_url_to_b64_json === true
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
@@ -6190,6 +6208,15 @@ const handleSubmit = async () => {
         delete newExtra.upstream_request_id_header
       }
       updatePayload.extra = newExtra
+    }
+
+    if (props.account.platform === 'openai' && props.account.type === 'apikey') {
+      const nextIdentityReplyContent = identityReplyContent.value.trim()
+      if (nextIdentityReplyContent !== readIdentityReplyContent(props.account.extra)) {
+        const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
+        // 显式空字符串表示关闭，不能删除键后再次触发默认值初始化。
+        updatePayload.extra = { ...currentExtra, identity_reply_content: nextIdentityReplyContent }
+      }
     }
 
     // null 也是倍率清除指令；普通保存不应携带它，更不能把旧快照的倍率用于新上游身份。

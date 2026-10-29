@@ -686,6 +686,9 @@ export default {
       apiKeyHint: 'Your Claude Console API Key',
       upstreamRequestIdHeader: 'Upstream ID',
       upstreamRequestIdHeaderPlaceholder: 'Leave empty to record nothing',
+      identityReplyContent: 'Identity reply content (optional)',
+      identityReplyContentPlaceholder: 'Leave empty to use the original upstream reply',
+      identityReplyContentHint: 'Used as an upstream identity instruction only for plain questions such as “Who are you?” or “What model are you?”. Leave empty to disable. Ordinary conversations are unaffected and no extra upstream request is made.',
       upstreamRequestIdHeaderHelp: {
         intro: 'Name of the response header in which the direct upstream declares its request ID. The value is recorded in the "Upstream ID" column of the usage log; leave empty to record nothing.',
         examplesTitle: 'Common values',

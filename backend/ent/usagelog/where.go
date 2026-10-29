@@ -235,6 +235,11 @@ func FirstTokenMs(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldFirstTokenMs, v))
 }
 
+// FirstPacketMs applies equality check predicate on the "first_packet_ms" field. It's identical to FirstPacketMsEQ.
+func FirstPacketMs(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFirstPacketMs, v))
+}
+
 // UserAgent applies equality check predicate on the "user_agent" field. It's identical to UserAgentEQ.
 func UserAgent(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldUserAgent, v))
@@ -1893,6 +1898,56 @@ func FirstTokenMsIsNil() predicate.UsageLog {
 // FirstTokenMsNotNil applies the NotNil predicate on the "first_token_ms" field.
 func FirstTokenMsNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldFirstTokenMs))
+}
+
+// FirstPacketMsEQ applies the EQ predicate on the "first_packet_ms" field.
+func FirstPacketMsEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFirstPacketMs, v))
+}
+
+// FirstPacketMsNEQ applies the NEQ predicate on the "first_packet_ms" field.
+func FirstPacketMsNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldFirstPacketMs, v))
+}
+
+// FirstPacketMsIn applies the In predicate on the "first_packet_ms" field.
+func FirstPacketMsIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldFirstPacketMs, vs...))
+}
+
+// FirstPacketMsNotIn applies the NotIn predicate on the "first_packet_ms" field.
+func FirstPacketMsNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldFirstPacketMs, vs...))
+}
+
+// FirstPacketMsGT applies the GT predicate on the "first_packet_ms" field.
+func FirstPacketMsGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldFirstPacketMs, v))
+}
+
+// FirstPacketMsGTE applies the GTE predicate on the "first_packet_ms" field.
+func FirstPacketMsGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldFirstPacketMs, v))
+}
+
+// FirstPacketMsLT applies the LT predicate on the "first_packet_ms" field.
+func FirstPacketMsLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldFirstPacketMs, v))
+}
+
+// FirstPacketMsLTE applies the LTE predicate on the "first_packet_ms" field.
+func FirstPacketMsLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldFirstPacketMs, v))
+}
+
+// FirstPacketMsIsNil applies the IsNil predicate on the "first_packet_ms" field.
+func FirstPacketMsIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldFirstPacketMs))
+}
+
+// FirstPacketMsNotNil applies the NotNil predicate on the "first_packet_ms" field.
+func FirstPacketMsNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldFirstPacketMs))
 }
 
 // UserAgentEQ applies the EQ predicate on the "user_agent" field.

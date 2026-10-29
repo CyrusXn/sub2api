@@ -82,9 +82,9 @@ func TestOpenAIResponsesEmptyCompletedWithOutputSucceeds(t *testing.T) {
 	require.Equal(t, 5, result.Usage.OutputTokens)
 }
 
-// TestOpenAIResponsesEmptyCompletedWithUsageSucceeds ensures a completed event
-// carrying usage is not mistaken for a silent refusal even without output.
-func TestOpenAIResponsesEmptyCompletedWithUsageSucceeds(t *testing.T) {
+// TestOpenAIResponsesEmptyCompletedWithUsageFailsOver ensures usage alone does
+// not turn an empty terminal event into a successful empty reply.
+func TestOpenAIResponsesEmptyCompletedWithUsageFailsOver(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -96,7 +96,7 @@ func TestOpenAIResponsesEmptyCompletedWithUsageSucceeds(t *testing.T) {
 		)),
 	}}
 	svc := newOpenAIImageGenerationControlTestService(upstream)
-	c, _ := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+	c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
 	account := newOpenAIImageGenerationControlTestAccount()
 	account.Extra = map[string]any{"openai_passthrough": true}
 
@@ -106,11 +106,11 @@ func TestOpenAIResponsesEmptyCompletedWithUsageSucceeds(t *testing.T) {
 		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}]
 	}`)
 
-	result, err := svc.Forward(context.Background(), c, account, body)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, result.Usage)
-	require.Equal(t, 3, result.Usage.InputTokens)
+	_, err := svc.Forward(context.Background(), c, account, body)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Empty(t, recorder.Body.String(), "no empty success stream may reach the client")
 }
 
 func TestOpenAIResponsesCompletedEventIsEmpty(t *testing.T) {

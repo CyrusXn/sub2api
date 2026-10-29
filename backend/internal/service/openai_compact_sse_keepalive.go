@@ -32,8 +32,9 @@ type openAICompactSSEKeepalive struct {
 	// bytes 是心跳已写出的注释字节数。心跳不构成语义响应，handler 的
 	// "Forward 期间是否已写响应"判定（failover 放弃换号的依据）必须扣除
 	// 这部分字节，见 OpenAICompactKeepaliveAdjustedWrittenSize。
-	bytes int
-	stop  chan struct{}
+	bytes  int
+	stop   chan struct{}
+	timing *textStreamTiming
 }
 
 // StartOpenAICompactSSEKeepalive 为已标记 body-signal 客户端流式的 compact
@@ -73,6 +74,7 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 	k := &openAICompactSSEKeepalive{
 		writer: originalWriter,
 		stop:   make(chan struct{}),
+		timing: textStreamTimingFromContext(c),
 	}
 	c.Set(openAICompactSSEKeepaliveKey, k)
 	wrappedWriter := &openAICompactKeepaliveWriter{ResponseWriter: originalWriter, k: k}
@@ -83,7 +85,21 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 		reqDone = c.Request.Context().Done()
 	}
 	go func() {
-		timer := time.NewTimer(interval)
+		firstDelay := interval
+		if k.timing != nil {
+			k.timing.mu.Lock()
+			if !k.timing.placeholder && !k.timing.realOutput {
+				remaining := time.Until(k.timing.started.Add(TextStreamPlaceholderDelay))
+				if remaining < firstDelay {
+					firstDelay = remaining
+					if firstDelay <= 0 {
+						firstDelay = time.Nanosecond
+					}
+				}
+			}
+			k.timing.mu.Unlock()
+		}
+		timer := time.NewTimer(firstDelay)
 		defer timer.Stop()
 		for {
 			select {
@@ -111,10 +127,10 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 
 // 等待上游响应头期间也先保活；不会伪造模型 delta 或污染真实首字耗时。
 func startOpenAIResponsesHeaderKeepalive(c *gin.Context, stream bool, account *Account) func() {
-	if !stream || !requireOpenAIResponsesTerminal(account) {
+	if !stream || (!requireOpenAIResponsesTerminal(account) && textStreamTimingFromContext(c) == nil) {
 		return func() {}
 	}
-	return startOpenAISSEKeepalive(c, time.Second)
+	return startOpenAISSEKeepalive(c, TextStreamPlaceholderDelay)
 }
 
 // beat 在锁内提交（首次）响应头并写出一条 SSE 注释行；返回 false 表示心跳已
@@ -134,13 +150,21 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 		k.writer.WriteHeader(http.StatusOK)
 		k.started = true
 	}
-	n, err := k.writer.Write([]byte(": keepalive\n\n"))
+	frame := ": keepalive\n\n"
+	placeholder := k.timing != nil && time.Since(k.timing.started) >= TextStreamPlaceholderDelay && k.timing.reservePlaceholder()
+	if placeholder {
+		frame = ": \n\n"
+	}
+	n, err := k.writer.Write([]byte(frame))
 	k.bytes += n
 	if err != nil {
 		k.stopped = true
 		return false
 	}
 	k.writer.Flush()
+	if placeholder {
+		k.timing.recordPacket()
+	}
 	return true
 }
 
@@ -165,11 +189,11 @@ func (k *openAICompactSSEKeepalive) markStoppedLocked() {
 // 与心跳 goroutine 建立 happens-before，调用方可安全接管 ResponseWriter。
 func StopOpenAICompactSSEKeepaliveCommitted(c *gin.Context) bool {
 	if c == nil {
-		return false
+		return textStreamPlaceholderCommitted(c)
 	}
 	value, ok := c.Get(openAICompactSSEKeepaliveKey)
 	if !ok {
-		return false
+		return textStreamPlaceholderCommitted(c)
 	}
 	k, ok := value.(*openAICompactSSEKeepalive)
 	if !ok || k == nil {
@@ -179,7 +203,7 @@ func StopOpenAICompactSSEKeepaliveCommitted(c *gin.Context) bool {
 	k.markStoppedLocked()
 	committed := k.started
 	k.mu.Unlock()
-	return committed
+	return committed || textStreamPlaceholderCommitted(c)
 }
 
 // OpenAICompactKeepaliveAdjustedWrittenSize 返回排除 compact 心跳注释字节后
@@ -209,7 +233,7 @@ func OpenAICompactKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 	if size < 0 {
 		return size
 	}
-	keepaliveBytes := compactKeepaliveBytes + streamKeepaliveBytes
+	keepaliveBytes := compactKeepaliveBytes + streamKeepaliveBytes + textStreamPlaceholderBytes(c)
 	if keepaliveBytes <= 0 {
 		return size
 	}

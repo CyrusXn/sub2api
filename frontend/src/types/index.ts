@@ -1852,6 +1852,7 @@ export interface UsageLog {
   native_compaction_v2: boolean
   duration_ms: number | null
   first_token_ms: number | null
+  first_packet_ms?: number | null
 
   // 图片生成字段
   image_count: number

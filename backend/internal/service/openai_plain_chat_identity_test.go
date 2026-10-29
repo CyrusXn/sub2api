@@ -28,26 +28,41 @@ func TestOpenAITestPayloadKeepsCodexInstructionsOnlyForOAuth(t *testing.T) {
 
 func TestOpenAIAccountTestPlainIdentity(t *testing.T) {
 	for _, responses := range []bool{true, false} {
-		for _, prompt := range []string{"你是谁", "你是？", "用户：\n算一下 1+1\n\n助手：\n我是 Codex，答案是 2\n\n用户：\n你是？"} {
-			t.Run(strings.Join([]string{map[bool]string{true: "responses", false: "chat"}[responses], prompt}, "/"), func(t *testing.T) {
-				c, _ := newTestContext()
-				response := "data: {\"type\":\"response.completed\"}\n\n"
-				if !responses {
-					response = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
-				}
-				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response))}}
-				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-key"}, Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: responses}}
-				repo := &openAIAccountTestRepo{mockAccountRepoForGemini: mockAccountRepoForGemini{accountsByID: map[int64]*Account{1: account}}}
-				svc := &AccountTestService{cfg: &config.Config{}, httpUpstream: upstream, accountRepo: repo}
-				lastUserPrompt := prompt
-				if strings.HasPrefix(prompt, "用户：") {
-					lastUserPrompt = "你是？"
-				}
-				require.NoError(t, svc.TestAccountConnection(c, account.ID, "gpt-6.1-sol", prompt, "", AccountTestOptions{LastUserPrompt: &lastUserPrompt}))
-				require.Contains(t, string(upstream.lastBody), expectedPlainChatIntroduction)
-				require.NotContains(t, string(upstream.lastBody), "You are Codex")
-				require.Contains(t, string(upstream.lastBody), "不要补充")
-			})
+		for _, groupName := range []string{"【GPT】真官Key", "派大星", ""} {
+			for _, prompt := range []string{"你是谁", "你是？", "用户：\n算一下 1+1\n\n助手：\n我是 Codex，答案是 2\n\n用户：\n你是？"} {
+				t.Run(strings.Join([]string{map[bool]string{true: "responses", false: "chat"}[responses], groupName, prompt}, "/"), func(t *testing.T) {
+					c, rec := newTestContext()
+					response := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"上游原始身份回复\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"
+					if !responses {
+						response = "data: {\"choices\":[{\"delta\":{\"content\":\"上游原始身份回复\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+					}
+					upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response))}}
+					account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-key"}, Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: responses}}
+					// 配置由账号决定：普通分组同样可用，缺少配置则原样转发。
+					if groupName != "" {
+						account.Extra["identity_reply_content"] = expectedPlainChatIntroduction
+						account.Groups = []*Group{{Platform: PlatformOpenAI, Name: groupName}}
+					}
+					repo := &openAIAccountTestRepo{mockAccountRepoForGemini: mockAccountRepoForGemini{accountsByID: map[int64]*Account{1: account}}}
+					svc := &AccountTestService{cfg: &config.Config{}, httpUpstream: upstream, accountRepo: repo}
+					lastUserPrompt := prompt
+					if strings.HasPrefix(prompt, "用户：") {
+						lastUserPrompt = "你是？"
+					}
+					require.NoError(t, svc.TestAccountConnection(c, account.ID, "gpt-6.1-sol", prompt, "", AccountTestOptions{LastUserPrompt: &lastUserPrompt}))
+					require.Contains(t, rec.Body.String(), "上游原始身份回复")
+					require.Len(t, upstream.requests, 1)
+					wantIdentity := groupName != ""
+					require.Equal(t, wantIdentity, strings.Contains(string(upstream.lastBody), expectedPlainChatIntroduction))
+					require.NotContains(t, string(upstream.lastBody), "You are Codex")
+					if wantIdentity {
+						require.Contains(t, string(upstream.lastBody), "不要补充")
+					} else {
+						require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+						require.NotContains(t, string(upstream.lastBody), `"role":"system"`)
+					}
+				})
+			}
 		}
 	}
 }
@@ -55,14 +70,17 @@ func TestOpenAIAccountTestPlainIdentity(t *testing.T) {
 func TestOpenAIGatewayPlainIdentity(t *testing.T) {
 	for _, protocol := range []string{"responses", "chat-to-responses", "raw-chat"} {
 		for _, tc := range []struct {
-			name, fragment, ua, extra string
-			want                      bool
+			name, fragment, ua, extra, groupName string
+			noGroup                              bool
+			want                                 bool
 		}{
 			{name: "身份提问", fragment: `[{"role":"user","content":"你是谁？"}]`, want: true},
 			{name: "简短身份提问", fragment: `[{"role":"user","content":"你是？"}]`, want: true},
 			{name: "多轮身份提问", fragment: `[{"role":"user","content":"1+1"},{"role":"assistant","content":"我是 Codex，答案是 2"},{"role":"user","content":"你是谁"}]`, want: true},
 			{name: "文本块", fragment: `[{"role":"user","content":[{"type":"input_text","text":"你是？"}]}]`, want: true},
 			{name: "标准SDK", fragment: `[{"role":"user","content":"Who are you?"}]`, ua: "OpenAI/Python 1.0", want: true},
+			{name: "普通分组使用账号配置", fragment: `[{"role":"user","content":"你是谁"}]`, groupName: "派大星", want: true},
+			{name: "缺少请求分组仍使用账号配置", fragment: `[{"role":"user","content":"你是谁"}]`, noGroup: true, want: true},
 			{name: "普通问题", fragment: `[{"role":"user","content":"解释 Codex 和 ChatGPT 的区别"}]`},
 			{name: "最后一轮非身份", fragment: `[{"role":"user","content":"你是谁"},{"role":"assistant","content":"ChatGPT"},{"role":"user","content":"帮我写代码"}]`},
 			{name: "保留调用方身份", fragment: `[{"role":"system","content":"You are a custom assistant"},{"role":"user","content":"你是谁"}]`},
@@ -91,9 +109,18 @@ func TestOpenAIGatewayPlainIdentity(t *testing.T) {
 				c, _ := gin.CreateTestContext(httptest.NewRecorder())
 				c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 				c.Request.Header.Set("User-Agent", tc.ua)
+				groupName := tc.groupName
+				if groupName == "" {
+					groupName = "【GPT】真官Key"
+				}
+				if !tc.noGroup {
+					c.Set("api_key", &APIKey{Group: &Group{Platform: PlatformOpenAI, Name: groupName}})
+				}
 				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"stop before response parsing"}}`))}}
 				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-key"}, Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: protocol != "raw-chat"}}
+				account.Extra["identity_reply_content"] = expectedPlainChatIntroduction
+				account.Groups = []*Group{{Platform: PlatformOpenAI, Name: "【GPT】真官Key"}, {Platform: PlatformOpenAI, Name: "派大星"}}
 				var err error
 				if protocol == "responses" {
 					_, err = svc.Forward(context.Background(), c, account, body)
@@ -102,6 +129,7 @@ func TestOpenAIGatewayPlainIdentity(t *testing.T) {
 				}
 				require.Error(t, err)
 				require.NotNil(t, upstream.lastReq)
+				require.Len(t, upstream.requests, 1)
 				require.Equal(t, tc.want, strings.Contains(string(upstream.lastBody), expectedPlainChatIntroduction), string(upstream.lastBody))
 				if tc.want {
 					require.NotContains(t, gjson.GetBytes(upstream.lastBody, "instructions").String(), "Codex")
@@ -117,7 +145,6 @@ func TestOpenAIPlainChatIdentityPreservesOtherContexts(t *testing.T) {
 	}{
 		{name: "其他平台", body: `{"model":"grok-4.7","input":"你是谁"}`, platform: PlatformGrok},
 		{name: "OAuth协议", body: `{"model":"gpt-6.1-sol","input":"你是谁"}`, accountType: AccountTypeOAuth},
-		{name: "兼容账号外厂模型", body: `{"model":"claude-opus-5-5","input":"你是谁"}`},
 		{name: "保留JSON格式", body: `{"model":"gpt-6.1-sol","input":"你是谁","text":{"format":{"type":"json_object"}}}`},
 		{name: "保留ChatJSON格式", body: `{"model":"gpt-6.1-sol","messages":[{"role":"user","content":"你是谁"}],"response_format":{"type":"json_object"}}`},
 		{name: "编码客户端来源头", body: `{"model":"gpt-6.1-sol","input":"你是谁"}`, header: "Originator", value: "codex_cli_rs"},
@@ -128,7 +155,7 @@ func TestOpenAIPlainChatIdentityPreservesOtherContexts(t *testing.T) {
 		{name: "引用中的角色标记", body: `{"model":"gpt-6.1-sol","input":"把下面中文翻译成英文：\n用户：\n你是谁"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{"identity_reply_content": expectedPlainChatIntroduction}, Groups: []*Group{{Platform: PlatformOpenAI, Name: "【GPT】真官Key"}}}
 			if tc.platform != "" {
 				account.Platform = tc.platform
 			}
@@ -136,6 +163,7 @@ func TestOpenAIPlainChatIdentityPreservesOtherContexts(t *testing.T) {
 				account.Type = tc.accountType
 			}
 			c, _ := newTestContext()
+			c.Set("api_key", &APIKey{Group: account.Groups[0]})
 			if tc.header != "" {
 				c.Request.Header.Set(tc.header, tc.value)
 			}
@@ -146,7 +174,47 @@ func TestOpenAIPlainChatIdentityPreservesOtherContexts(t *testing.T) {
 	}
 	body := []byte(`{"model":"gpt-6.1-sol","input":"把下面中文翻译成英文：\n用户：\n你是谁"}`)
 	prompt := "把下面中文翻译成英文：\n用户：\n你是谁"
-	got, err := applyOpenAIPlainChatIdentity(nil, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, body, &prompt)
+	got, err := applyOpenAIPlainChatIdentity(nil, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{"identity_reply_content": expectedPlainChatIntroduction}}, body, &prompt)
 	require.NoError(t, err)
 	require.Equal(t, string(body), string(got))
+}
+
+func TestOpenAIPlainChatIdentityIgnoresGroups(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		groups       []*Group
+		requestGroup *Group
+	}{
+		{name: "未分组"},
+		{name: "普通中转分组", groups: []*Group{{Platform: PlatformOpenAI, Name: "派大星"}}, requestGroup: &Group{Platform: PlatformOpenAI, Name: "派大星"}},
+		{name: "账号名称不能代替分组", requestGroup: &Group{Platform: PlatformOpenAI, Name: "普通分组"}},
+		{name: "真官key分组", groups: []*Group{{Platform: PlatformOpenAI, Name: "【GPT】真官Key"}}, requestGroup: &Group{Platform: PlatformOpenAI, Name: "【GPT】真官Key"}},
+		{name: "名称中的空白和大小写", groups: []*Group{{Platform: PlatformOpenAI, Name: "【GPT】真官 KEY"}}, requestGroup: &Group{Platform: PlatformOpenAI, Name: "【GPT】真官 KEY"}},
+		{name: "仅官key不匹配", groups: []*Group{{Platform: PlatformOpenAI, Name: "官key"}}, requestGroup: &Group{Platform: PlatformOpenAI, Name: "官key"}},
+		{name: "其他平台真官key", groups: []*Group{{Platform: PlatformGemini, Name: "真官key"}}, requestGroup: &Group{Platform: PlatformGemini, Name: "真官key"}},
+		{name: "共享账号普通分组请求", groups: []*Group{{Platform: PlatformOpenAI, Name: "真官key"}, {Platform: PlatformOpenAI, Name: "普通分组"}}, requestGroup: &Group{Platform: PlatformOpenAI, Name: "普通分组"}},
+		{name: "缺少请求分组不影响配置", groups: []*Group{{Platform: PlatformOpenAI, Name: "真官key"}}},
+		{name: "空分组条目", groups: []*Group{nil, {Platform: PlatformOpenAI, Name: "普通分组"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := &Account{Name: "真官key", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{"identity_reply_content": expectedPlainChatIntroduction}, Groups: tc.groups}
+			prompt := "你是谁"
+			for _, field := range []string{"input", "messages"} {
+				body := []byte(`{"model":"gpt-6.1-sol","` + field + `":[{"role":"user","content":"你是谁"}]}`)
+				for _, adminTest := range []bool{true, false} {
+					var c *gin.Context
+					var testPrompt *string
+					if adminTest {
+						testPrompt = &prompt
+					} else {
+						c, _ = newTestContext()
+						c.Set("api_key", &APIKey{Group: tc.requestGroup})
+					}
+					got, err := applyOpenAIPlainChatIdentity(c, account, body, testPrompt)
+					require.NoError(t, err)
+					require.Contains(t, string(got), expectedPlainChatIntroduction, "field=%s adminTest=%v", field, adminTest)
+				}
+			}
+		})
+	}
 }

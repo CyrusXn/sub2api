@@ -61,10 +61,20 @@ export default {
     empty: { title: 'No data to display', description: 'Try changing the time range or filters' },
     bucket: { minutes: '{count}-minute buckets', hours: '{count}-hour buckets', days: '{count}-day buckets' },
     matrix: {
-      title: 'Availability trend', description: 'Each row is a channel dimension and each block is an aggregate interval; hover for details', wheelZoom: 'Scroll over blocks to zoom in (narrower range, wider blocks)', wheelZoomX: 'Scroll over blocks to zoom in (narrower range, wider blocks)', dimension: 'Channel dimension', emptyTitle: 'No matrix data for the selected window', legendAria: 'Health score legend', bad: 'Bad', good: 'Good', healthyLegend: 'Healthy (≥80)', warningLegend: 'Watch (50–79)', criticalLegend: 'Critical (<50)', unknownLegend: 'No traffic / insufficient samples', noTraffic: 'No traffic in this interval', noTrafficAt: '{time} · no traffic', scoreLine: 'Health score {score}', resetZoom: 'Reset zoom'
+      bestTitle: 'Best request per minute',
+      bestDescription: 'Best real request per minute: success with recorded first-token time ≤10s is green (100); success over 10s or missing latency is yellow; no successes is red. Cache does not affect scoring. Left columns summarize the full range.',
+      bestHealthyLegend: 'Success, first token ≤10s (100)',
+      bestWarningLegend: 'Success, first token >10s / missing',
+      bestCriticalLegend: 'Requests with no successes',
+      bestRequest: 'Best request in this minute',
+      outputTpsValue: 'Output tokens/s {value}',
+      minuteWindow: 'Browse historical minutes (up to 6 hours per window)',
+      unscoredLegend: 'Traffic / Not scored yet',
+      unscoredHint: 'Traffic is present; insufficient samples or missing metrics prevent health scoring',
+      title: 'Availability trend', description: 'Each row is a channel dimension and each block is an aggregate interval; hover for details', wheelZoom: 'Scroll over blocks to zoom in (narrower range, wider blocks)', wheelZoomX: 'Scroll over blocks to zoom in (narrower range, wider blocks)', dimension: 'Channel dimension', emptyTitle: 'No matrix data for the selected window', legendAria: 'Health score legend', bad: 'Bad', good: 'Good', healthyLegend: 'Healthy (≥80)', warningLegend: 'Watch (50–79)', criticalLegend: 'Critical (<50)', unknownLegend: 'No traffic / no data', noTraffic: 'No traffic in this interval', noTrafficAt: '{time} · no traffic', scoreLine: 'Health score {score}', resetZoom: 'Reset zoom'
     },
     chart: {
-      title: 'Availability trend', description: 'Smoothed trend: error rate · first token P50 · cache rate', emptyTitle: 'No trend data for the selected window', errorLegend: 'Error rate (left axis %)', cacheLegend: 'Cache rate (left axis %)', ttftLegend: 'First token P50 (right axis)', errorDataset: 'Error rate trend %', cacheDataset: 'Cache rate trend %', ttftDataset: 'First token trend P50 (ms)', percentAxis: 'Rate %', resetZoom: 'Reset zoom'
+      title: 'Overall traffic trend', description: 'All requests: error rate · first token P50 · cache rate', emptyTitle: 'No trend data for the selected window', errorLegend: 'Error rate (left axis %)', cacheLegend: 'Cache rate (left axis %)', ttftLegend: 'First token P50 (right axis)', errorDataset: 'Error rate trend %', cacheDataset: 'Cache rate trend %', ttftDataset: 'First token trend P50 (ms)', percentAxis: 'Rate %', resetZoom: 'Reset zoom'
     },
     errorDetail: { http: 'HTTP {code}', upstream: 'Upstream {code}', noMessage: 'No error message', empty: 'Category rates only (sample messages are admin-only)' },
     errorCategories: {
@@ -95,7 +105,7 @@ export default {
       enableHint:
         'Applies when system mode is V2. Turning this off only stops this config’s aggregation; the system mode switch remains under Feature switches.',
       refreshTitle: 'Aggregation interval',
-      refreshHint: 'Affects matrix time granularity and refresh cadence',
+      refreshHint: 'Controls aggregate refreshes. The best-request matrix always uses one-minute buckets and refreshes every minute.',
       refreshAria: 'Aggregation interval',
       selectPlatform: 'Select a platform',
       addPlatform: 'Add platform',
@@ -111,11 +121,11 @@ export default {
       groupsEmpty: 'No groups available',
       errorsTitle: 'Error categories and ignores',
       errorsHint:
-        'Checked “ignore” categories are excluded from error rate and health score, but still appear greyed in the error breakdown. Unmatched errors roll into “Other”.',
+        'Ignored categories are excluded from aggregate error rates and health scores, but remain greyed in the error breakdown. Best requests per minute use actual request outcomes. Unmatched errors roll into “Other”.',
       ignoredSummary: 'Ignored {ignored} categories · counted in error rate {counted} categories',
       healthTitle: 'Health thresholds',
       healthHint:
-        'Overall health uses only success rate and TTFT P50, with no TTFT penalty at or below 10 seconds. Cache thresholds apply only to the cache view, not overall health.',
+        'These thresholds and minimum samples apply to aggregates only. Minute blocks use the best real request: success with recorded first-token time ≤10s is green (100); slow success or missing latency is yellow; no success is red. Cache does not affect scoring.',
       fields: {
         minimumSample: 'Minimum samples',
         warningError: 'Error rate watch %',
@@ -130,7 +140,7 @@ export default {
       namedModelsCount: 'Showing {count} named model dimensions; unlisted models fold into per-platform “Other”.',
       userContractTitle: 'User-facing display contract',
       userContract: {
-        health: 'Default overall health weights: success rate 75% + TTFT P50 25%. TTFT at or below 10 seconds has no penalty; cache rate does not affect overall health.',
+        health: 'Minute blocks: success with recorded first-token time ≤10s is green (100); slow success or missing latency is yellow; no success is red. Cache does not affect scoring. Aggregates use configured thresholds.',
         trend: 'Trend can switch between pulse matrix and line chart (error · cache · first token)',
         latency: 'Latency shows AVG · P50 · P90; absolute request / error counts are not shown',
         models: 'Empty model lists show real names and never dump everything into “Other”',

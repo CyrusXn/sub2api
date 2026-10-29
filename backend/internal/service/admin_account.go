@@ -589,6 +589,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
 	}
+	if err := s.initializeAccountIdentityReply(ctx, account, groupIDs); err != nil {
+		return nil, err
+	}
 	if err := s.accountRepo.Create(ctx, account); err != nil {
 		return nil, err
 	}
@@ -626,6 +629,34 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	}
 
 	return account, nil
+}
+
+// 分组只用于新建时初始化，显式空值和自定义值均保留；请求路径不查询分组。
+func (s *adminServiceImpl) initializeAccountIdentityReply(ctx context.Context, account *Account, groupIDs []int64) error {
+	if !account.IsOpenAIApiKey() || len(groupIDs) == 0 {
+		return nil
+	}
+	if _, exists := account.Extra[accountIdentityReplyContentKey]; exists {
+		return nil
+	}
+	for _, id := range groupIDs {
+		group, err := s.groupRepo.GetByIDLite(ctx, id)
+		if err != nil {
+			return fmt.Errorf("get identity default group: %w", err)
+		}
+		if group == nil || group.Platform != PlatformOpenAI {
+			continue
+		}
+		name := strings.Join(strings.Fields(strings.ToLower(group.Name)), "")
+		if strings.Contains(name, "真官key") {
+			if account.Extra == nil {
+				account.Extra = make(map[string]any)
+			}
+			account.Extra[accountIdentityReplyContentKey] = defaultOpenAIIdentityReplyContent
+			return nil
+		}
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {

@@ -447,6 +447,8 @@ export default {
     duration: '耗时',
     latency: '延迟',
     latencyFirstToken: '首字',
+    firstPacketHint: '首包（含等待占位）；旧记录可能仅有真实首字。首包耗时不用于健康评估。',
+    firstPacketExport: '首包（毫秒；旧记录回退真实首字）',
     latencyDuration: '总耗时',
     outputTps: '输出 TPS',
     outputTpsHint: '输出 Token ÷ 总耗时（包含首字等待），单位 tok/s。输出 Token 可能包含推理 Token。',

@@ -118,3 +118,38 @@ func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAIChatSwitchesAccountWithRequestScopedPlaceholder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(4204)
+	accounts := []service.Account{}
+	for i, id := range []int64{9910, 9911, 9912, 9913} {
+		accounts = append(accounts, service.Account{ID: id, Name: "completion-test", Platform: service.PlatformOpenAI,
+			Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Priority: i + 1,
+			Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
+			Extra:       map[string]any{"openai_responses_supported": true},
+		})
+	}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Default.RateMultiplier = 1
+	cfg.Gateway.MaxAccountSwitches = 1
+	upstream := &completionFailoverUpstream{delayFailure: true}
+	cache := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(cache.Stop)
+	gateway := service.NewOpenAIGatewayService(&openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}, nil, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, cache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
+	h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), cache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-6-luna","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 1804, GroupID: &groupID, User: &service.User{ID: 1704, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}})
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1704, Concurrency: 0})
+	h.ChatCompletions(c)
+	require.Equal(t, []int64{9910, 9911, 9912, 9913}, upstream.calls, "占位之后仍应排除失败账号，遍历到健康账号")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1, strings.Count(rec.Body.String(), ": \n\n"), "切号不能重置请求级占位")
+	require.Contains(t, rec.Body.String(), "healthy-output")
+	require.Contains(t, rec.Body.String(), `"model":"gpt-6-luna"`, "手动选择的模型在切号后保持不变")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "data: [DONE]"))
+	require.NotNil(t, service.TextStreamFirstPacketMs(c))
+}

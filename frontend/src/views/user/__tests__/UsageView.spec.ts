@@ -385,7 +385,8 @@ describe('user UsageView', () => {
     expect(getDashboardSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: null }))
   })
 
-  it('exports csv with current filters and without admin-only fields', async () => {
+  it.each([null, 0, 1050])('exports csv using measured first packet %s or historical first token', async (firstPacketMs) => {
+    query.mockResolvedValue({ items: [{ ...usageLog, first_packet_ms: firstPacketMs }], total: 1, pages: 1 })
     const wrapper = mountUsageView()
     await flushPromises()
     ;(wrapper.vm as any).filters.native_compaction_v2 = true
@@ -419,8 +420,8 @@ describe('user UsageView', () => {
     expect(showSuccess).toHaveBeenCalled()
     expect(csvContent.startsWith('\uFEFF')).toBe(true)
     expect(csvContent.slice(1)).toBe([
-      'Time,API Key Name,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing Mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,First Token (ms),Duration (ms)',
-      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,-,,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,345',
+      'Time,API Key Name,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing Mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,First Packet (ms; legacy first token),Duration (ms)',
+      `2026-03-08T00:00:00Z,demo-key,gpt-5.4,-,,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,${firstPacketMs ?? 12},345`,
     ].join('\n'))
     expect(csvContent).toContain('IP Address')
     expect(csvContent).toContain('203.0.113.10')

@@ -219,8 +219,10 @@ type UsageLog struct {
 	NativeCompactionV2 bool
 	DurationMs         *int
 	FirstTokenMs       *int
-	UserAgent          *string
-	IPAddress          *string
+	// 首包包含已实际写出并 Flush 的等待占位，独立于用于健康与统计的真实首字。
+	FirstPacketMs *int
+	UserAgent     *string
+	IPAddress     *string
 	// SessionID is the explicit client-provided request correlation identifier
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.
