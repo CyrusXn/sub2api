@@ -807,6 +807,11 @@ export default {
       identityReplyContent: '身份回复内容（可选）',
       identityReplyContentPlaceholder: '留空使用上游真实回复',
       identityReplyContentHint: '仅在“你是谁”“你是什么模型”等普通身份提问时，使用此内容作为上游的身份回复指令。留空不注入；不影响普通对话，也不额外请求上游。',
+      identityAccount: '身份 APIKey（可选）',
+      identityAccountPlaceholder: '未配置，按当前账号调度',
+      identityAccountHint: '仅普通身份问句切换账号；目标不可用时，按当前分组的低倍率、低优先级数值顺序回退。支持链式配置，本次请求不重复进入同一账号；留空保持正常调度。',
+      identityAccountUnavailable: '已配置账号 #{id}（当前不可选）',
+      identityAccountLoadFailed: '账号列表加载失败，请重新打开弹窗重试；已保存的选择仍会保留。',
       upstreamRequestIdHeaderHelp: {
         intro: '填写直接上游在响应头中声明请求标识的头名，记录到用量明细的“上游ID”列；留空则不记录。',
         examplesTitle: '常见取值',

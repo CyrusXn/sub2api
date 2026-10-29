@@ -689,6 +689,11 @@ export default {
       identityReplyContent: 'Identity reply content (optional)',
       identityReplyContentPlaceholder: 'Leave empty to use the original upstream reply',
       identityReplyContentHint: 'Used as an upstream identity instruction only for plain questions such as “Who are you?” or “What model are you?”. Leave empty to disable. Ordinary conversations are unaffected and no extra upstream request is made.',
+      identityAccount: 'Identity API key (optional)',
+      identityAccountPlaceholder: 'Not configured; use normal scheduling',
+      identityAccountHint: 'Identity questions prefer the selected account, then fall back within the group with loop protection.',
+      identityAccountUnavailable: 'Configured account #{id} (currently unavailable)',
+      identityAccountLoadFailed: 'Unable to load accounts. Reopen this dialog to retry. The saved selection is preserved.',
       upstreamRequestIdHeaderHelp: {
         intro: 'Name of the response header in which the direct upstream declares its request ID. The value is recorded in the "Upstream ID" column of the usage log; leave empty to record nothing.',
         examplesTitle: 'Common values',

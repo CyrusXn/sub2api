@@ -2131,7 +2131,20 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapability(
 	if len(platformOverride) > 0 {
 		platform = platformOverride[0]
 	}
-	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	state, _ := ctx.Value(openAIIdentityRoutingContextKey{}).(*openAIIdentityRoutingState)
+	identityRequest := state != nil && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI
+	if identityRequest && state.active {
+		return s.selectOpenAIIdentityAccount(ctx, state, nil, groupID, requestedModel, excludedIDs, requiredTransport, requiredCapability, requireCompact)
+	}
+	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	if err != nil || selection == nil || selection.Account == nil || !identityRequest || !selection.Account.IsOpenAIApiKey() || identityAccountID(selection.Account) <= 0 {
+		return selection, decision, err
+	}
+	state.active = true
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+	return s.selectOpenAIIdentityAccount(ctx, state, selection.Account, groupID, requestedModel, excludedIDs, requiredTransport, requiredCapability, requireCompact)
 }
 
 func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(

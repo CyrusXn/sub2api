@@ -1942,6 +1942,20 @@
           :placeholder="t('admin.accounts.identityReplyContentPlaceholder')"
         />
         <p class="input-hint">{{ t('admin.accounts.identityReplyContentHint') }}</p>
+        <label class="input-label mt-3" for="account-identity-account">{{ t('admin.accounts.identityAccount') }}</label>
+        <Select
+          id="account-identity-account"
+          :model-value="identityAccountID"
+          data-testid="identity-account-select"
+          :options="identityAccountOptions"
+          :placeholder="t('admin.accounts.identityAccountPlaceholder')"
+          :loading="identityAccountsLoading"
+          @update:modelValue="setIdentityAccountID"
+          searchable
+          clearable
+        />
+        <p class="input-hint">{{ t('admin.accounts.identityAccountHint') }}</p>
+        <p v-if="identityAccountsLoadFailed" class="input-hint text-red-500">{{ t('admin.accounts.identityAccountLoadFailed') }}</p>
       </div>
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-6">
         <div>
@@ -3454,6 +3468,7 @@ import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import type {
   Account,
+  AccountListItem,
   Proxy,
   AdminGroup,
   Group,
@@ -4182,10 +4197,60 @@ const mixedScheduling = ref(false) // For antigravity accounts: enable mixed sch
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
 const upstreamRequestIdHeader = ref('')
 const identityReplyContent = ref('')
+const identityAccountID = ref<number | null>(null)
+const identityAccounts = ref<Array<Pick<AccountListItem, 'id' | 'name' | 'group_ids'>>>([])
+const identityAccountsLoading = ref(false)
+const identityAccountsLoadFailed = ref(false)
+const identityAccountOptions = computed(() => {
+  const groupIDs = new Set(form.group_ids)
+  const options = identityAccounts.value
+    .filter(item => item.id !== props.account?.id && (groupIDs.size === 0
+      ? !item.group_ids?.length
+      : (item.group_ids || []).some(id => groupIDs.has(id))))
+    .map(item => ({ value: item.id, label: `${item.name}（#${item.id}）`, disabled: false }))
+  if (identityAccountID.value != null && !options.some(option => option.value === identityAccountID.value)) {
+    options.push({ value: identityAccountID.value, label: t('admin.accounts.identityAccountUnavailable', { id: identityAccountID.value }), disabled: true })
+  }
+  return options
+})
+let identityAccountLoadVersion = 0
 const readIdentityReplyContent = (extra: unknown): string => {
   const value = (extra as Record<string, unknown> | undefined)?.identity_reply_content
   return typeof value === 'string' ? value : ''
 }
+const readIdentityAccountID = (extra: unknown): number | null => {
+  const value = (extra as Record<string, unknown> | undefined)?.identity_account_id
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+}
+const setIdentityAccountID = (value: unknown) => {
+  identityAccountID.value = readIdentityAccountID({ identity_account_id: value })
+}
+
+async function loadIdentityAccountOptions(account: Account) {
+  const version = ++identityAccountLoadVersion
+  identityAccounts.value = []
+  identityAccountsLoadFailed.value = false
+  identityAccountsLoading.value = false
+  if (account.platform !== 'openai' || account.type !== 'apikey') return
+  identityAccountsLoading.value = true
+  try {
+    const items: typeof identityAccounts.value = []
+    for (let page = 1; ; page++) {
+      const response = await adminAPI.accounts.list(page, 100, { platform: 'openai', type: 'apikey', lite: 'true' })
+      if (version !== identityAccountLoadVersion) return
+      items.push(...response.items.filter(item => item.platform === 'openai' && item.type === 'apikey'))
+      if (!response.items.length || page >= (response.pages || 1)) break
+    }
+    identityAccounts.value = items
+  } catch {
+    if (version === identityAccountLoadVersion) identityAccountsLoadFailed.value = true
+  } finally {
+    if (version === identityAccountLoadVersion) identityAccountsLoading.value = false
+  }
+}
+
+onBeforeUnmount(() => { identityAccountLoadVersion++ })
 const readUpstreamRequestIdHeader = (extra: unknown): string => {
   const value = (extra as Record<string, unknown> | undefined)?.upstream_request_id_header
   return typeof value === 'string' ? value : ''
@@ -4737,6 +4802,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
 	identityReplyContent.value = readIdentityReplyContent(extra)
+	identityAccountID.value = readIdentityAccountID(extra)
+	void loadIdentityAccountOptions(newAccount)
 	openAIImagesUrlToB64JsonEnabled.value = extra?.images_url_to_b64_json === true
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
@@ -6517,6 +6584,14 @@ const handleSubmit = async () => {
         const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
         // 显式空字符串表示关闭，不能删除键后再次触发默认值初始化。
         updatePayload.extra = { ...currentExtra, identity_reply_content: nextIdentityReplyContent }
+      }
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
+      const previousIdentityAccountID = readIdentityAccountID(props.account.extra)
+      if (identityAccountID.value !== previousIdentityAccountID) {
+        const nextExtra = { ...currentExtra }
+        if (identityAccountID.value == null) delete nextExtra.identity_account_id
+        else nextExtra.identity_account_id = identityAccountID.value
+        updatePayload.extra = nextExtra
       }
     }
 

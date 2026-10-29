@@ -179,6 +179,33 @@ func TestOpenAIPlainChatIdentityPreservesOtherContexts(t *testing.T) {
 	require.Equal(t, string(body), string(got))
 }
 
+func TestIsOpenAIPlainIdentityQuestion(t *testing.T) {
+	for _, tc := range []struct {
+		question string
+		want     bool
+	}{
+		{question: "你是谁？", want: true},
+		{question: "请问，你是什么大模型？", want: true},
+		{question: "模型", want: true},
+		{question: "大模型。", want: true},
+		{question: "什么大模型？", want: true},
+		{question: "你用的是什么模型呀？", want: true},
+		{question: "请问一下，你是哪个大模型呢？", want: true},
+		{question: "你是什么模型，帮我把代码修改一下"},
+		{question: "你是一个程序员，帮我修复问题"},
+		{question: "这是什么大模型部署方法"},
+		{question: "What model are you?", want: true},
+		{question: "你把xxx修改一下"},
+		{question: "帮我解释模型区别"},
+		{question: "把下面的‘你是谁’翻译成英文"},
+		{question: "请问模型怎么部署"},
+	} {
+		t.Run(tc.question, func(t *testing.T) {
+			require.Equal(t, tc.want, isOpenAIPlainIdentityQuestion(tc.question))
+		})
+	}
+}
+
 func TestOpenAIPlainChatIdentityIgnoresGroups(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

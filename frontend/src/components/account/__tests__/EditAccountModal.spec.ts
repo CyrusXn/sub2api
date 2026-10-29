@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import {
   BUILTIN_PLATFORM_CATALOG,
   resetPlatformCatalog,
   setPlatformCatalog
 } from '@/constants/platformCatalog'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, listAccountsMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
+  listAccountsMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
 
@@ -33,7 +34,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
-      checkMixedChannelRisk: checkMixedChannelRiskMock
+      checkMixedChannelRisk: checkMixedChannelRiskMock,
+      list: listAccountsMock
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -328,7 +330,7 @@ function buildOpenAIOAuthParentAccount() {
   } as any
 }
 
-function mountModal(account = buildAccount(), renderGroupSelector = false) {
+function mountModal(account = buildAccount(), renderGroupSelector = false, renderSelect = false) {
   return mount(EditAccountModal, {
     props: {
       show: true,
@@ -339,7 +341,7 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
     global: {
       stubs: {
         BaseDialog: BaseDialogStub,
-        Select: SelectStub,
+        Select: renderSelect ? false : SelectStub,
         Icon: true,
         ProxySelector: true,
         GroupSelector: renderGroupSelector ? false : GroupSelectorStub,
@@ -390,8 +392,103 @@ describe('EditAccountModal', () => {
     reopened.unmount()
   })
 
+  it('身份 APIKey 下拉只展示同组其他账号并保存账号 ID', async () => {
+    const account = buildAccount()
+    account.group_ids = [7]
+    listAccountsMock.mockResolvedValue({ items: [
+      { ...account, id: 1, group_ids: [7] },
+      { ...account, id: 2, name: '龙元官key', group_ids: [7] },
+      { ...account, id: 3, name: '其他分组', group_ids: [9] }
+    ] })
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const select = wrapper.get('[data-testid="identity-account-select"]')
+    const options = Array.from(select.element.querySelectorAll('option')).map(option => option.textContent)
+    expect(options.some(label => label?.includes('龙元官key'))).toBe(true)
+    expect(options.some(label => label?.includes('其他分组'))).toBe(false)
+    await select.setValue('2')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({ identity_account_id: 2 })
+    wrapper.unmount()
+  })
+
+  it('回填身份账号，清除后保存且保留其他配置', async () => {
+    const account = buildAccount()
+    account.extra = { identity_account_id: 2, unrelated_option: true }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const select = wrapper.findComponent('[data-testid="identity-account-select"]')
+    expect(select.props('modelValue')).toBe(2)
+    select.vm.$emit('update:modelValue', null)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    const saved = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(saved).not.toHaveProperty('identity_account_id')
+    expect(saved).toHaveProperty('unrelated_option', true)
+    wrapper.unmount()
+  })
+
+  it('分页加载身份账号并排除其他平台和分组', async () => {
+    const account = buildAccount()
+    account.group_ids = [7]
+    listAccountsMock.mockResolvedValueOnce({ items: [{ ...account, id: 2, name: '第一页' }], pages: 2 })
+      .mockResolvedValueOnce({ items: [
+        { ...account, id: 3, name: '第二页' },
+        { ...account, id: 4, platform: 'grok', name: '其他平台' },
+        { ...account, id: 5, group_ids: [9], name: '其他分组' }
+      ], pages: 2 })
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const labels = wrapper.get('[data-testid="identity-account-select"]').text()
+    expect(labels).toContain('第一页')
+    expect(labels).toContain('第二页')
+    expect(labels).not.toContain('其他平台')
+    expect(labels).not.toContain('其他分组')
+    wrapper.unmount()
+  })
+
+  it('列表加载失败时保留已配置的身份账号且普通保存不清空它', async () => {
+    const account = buildAccount()
+    account.extra = { identity_account_id: 8 }
+    listAccountsMock.mockRejectedValue(new Error('离线'))
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await flushPromises()
+    expect(wrapper.text()).toContain('admin.accounts.identityAccountLoadFailed')
+    expect(wrapper.findComponent('[data-testid="identity-account-select"]').props('modelValue')).toBe(8)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.identity_account_id ?? account.extra.identity_account_id).toBe(8)
+    wrapper.unmount()
+  })
+
+  it('身份 APIKey 使用真实可搜索下拉框选择并保存账号', async () => {
+    const account = buildAccount()
+    listAccountsMock.mockResolvedValue({ items: [
+      { ...account, id: 2, name: '龙元官key' },
+      { ...account, id: 3, name: '另一个官key' }
+    ] })
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account, false, true)
+    await flushPromises()
+    await wrapper.get('[data-testid="identity-account-select"] button').trigger('click')
+    await flushPromises()
+    const search = document.body.querySelector<HTMLInputElement>('.select-search-input')
+    expect(search).not.toBeNull()
+    await new DOMWrapper(search!).setValue('龙元')
+    await flushPromises()
+    const option = document.body.querySelector<HTMLElement>('[role="option"]')
+    expect(option?.textContent).toContain('龙元官key')
+    expect(document.body.querySelectorAll('[role="option"]')).toHaveLength(1)
+    await new DOMWrapper(option!).trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toHaveProperty('identity_account_id', 2)
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     authIsSimpleMode.value = true
+    listAccountsMock.mockReset().mockResolvedValue({ items: [] })
   })
 
   it('loads and submits the account settlement multiplier', async () => {
