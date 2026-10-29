@@ -8,6 +8,15 @@
         {{ errorMessage }}
       </div>
 
+      <div v-if="errorMessage || !opsEnabled" class="flex gap-3">
+        <button type="button" class="btn btn-secondary" @click="openErrorDetails('request')">
+          {{ t('admin.ops.errorDetails.requestErrors') }}
+        </button>
+        <button type="button" class="btn btn-secondary" @click="openErrorDetails('upstream')">
+          {{ t('admin.ops.errorDetails.upstreamErrors') }}
+        </button>
+      </div>
+
       <OpsDashboardSkeleton v-if="loading && !hasLoadedOnce" :fullscreen="isFullscreen" />
 
       <OpsDashboardHeader

@@ -126,7 +126,7 @@ func (s *OpsService) SetAccountRequestAlertSink(sink func([]*OpsInsertErrorLogIn
 }
 
 func (s *OpsService) notifyAccountRequestAlert(entries []*OpsInsertErrorLogInput) {
-	if s == nil || len(entries) == 0 {
+	if s == nil || len(entries) == 0 || !s.IsMonitoringEnabled(context.Background()) {
 		return
 	}
 	s.accountRequestAlertSinkMu.RLock()
@@ -172,6 +172,17 @@ func NewOpsService(
 
 func (s *OpsService) RequireMonitoringEnabled(ctx context.Context) error {
 	if s.IsMonitoringEnabled(ctx) {
+		return nil
+	}
+	return ErrOpsDisabled
+}
+
+func (s *OpsService) IsRequestErrorLoggingEnabled(ctx context.Context) bool {
+	return s != nil && ((s.cfg != nil && s.cfg.Ops.RequestErrorsEnabled) || s.IsMonitoringEnabled(ctx))
+}
+
+func (s *OpsService) RequireRequestErrorLoggingEnabled(ctx context.Context) error {
+	if s.IsRequestErrorLoggingEnabled(ctx) {
 		return nil
 	}
 	return ErrOpsDisabled
@@ -497,7 +508,7 @@ func (s *OpsService) prepareErrorLogInput(ctx context.Context, entry *OpsInsertE
 	if entry == nil {
 		return nil, false, nil
 	}
-	if !s.IsMonitoringEnabled(ctx) {
+	if !s.IsRequestErrorLoggingEnabled(ctx) {
 		return nil, false, nil
 	}
 	if s.opsRepo == nil {
@@ -719,7 +730,7 @@ func boundOpsUpstreamErrors(events []*OpsUpstreamErrorEvent) ([]*OpsUpstreamErro
 }
 
 func (s *OpsService) GetErrorLogs(ctx context.Context, filter *OpsErrorLogFilter) (*OpsErrorLogList, error) {
-	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+	if err := s.RequireRequestErrorLoggingEnabled(ctx); err != nil {
 		return nil, err
 	}
 	if s.opsRepo == nil {
@@ -779,7 +790,7 @@ func (s *OpsService) ListUserErrorRequests(ctx context.Context, userID int64, fi
 }
 
 func (s *OpsService) GetErrorLogByID(ctx context.Context, id int64) (*OpsErrorLogDetail, error) {
-	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+	if err := s.RequireRequestErrorLoggingEnabled(ctx); err != nil {
 		return nil, err
 	}
 	if s.opsRepo == nil {
@@ -825,7 +836,7 @@ func (s *OpsService) GetUserErrorRequestDetail(ctx context.Context, userID, id i
 }
 
 func (s *OpsService) UpdateErrorResolution(ctx context.Context, errorID int64, resolved bool, resolvedByUserID *int64) error {
-	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+	if err := s.RequireRequestErrorLoggingEnabled(ctx); err != nil {
 		return err
 	}
 	if s.opsRepo == nil {

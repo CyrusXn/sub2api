@@ -1657,6 +1657,17 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
 		return true
 	}
+	// 明确的上游服务故障允许在正文交付前切号；未知裸 error 仍保留原来的保守行为。
+	errType := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		gjson.GetBytes(payload, "error.type").String(), gjson.GetBytes(payload, "response.error.type").String())))
+	if errType == "upstream_error" || errType == "server_error" || errType == "internal_server_error" {
+		return openAIStreamFailedEventShouldFailover(payload, message)
+	}
+	for _, path := range openAIStreamErrorStatusPaths {
+		if status := int(gjson.GetBytes(payload, path).Int()); status >= 500 && status <= 599 {
+			return openAIStreamFailedEventShouldFailover(payload, message)
+		}
+	}
 	combined := strings.ToLower(strings.TrimSpace(message + " " +
 		gjson.GetBytes(payload, "error.message").String() + " " +
 		gjson.GetBytes(payload, "response.error.message").String()))

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -19,12 +20,18 @@ const (
 	// attempt plus a failover before reaching a healthy account. Low-traffic
 	// deployments were hit hardest, which is the opposite of what a breaker
 	// should do.
-	openAIModelTransientStreakTTL     = 30 * time.Minute
-	openAIModelTransientShortCooldown = 10 * time.Second
-	openAIModelTransientLongCooldown  = 45 * time.Second
-	openAIModelTransientDefaultMax    = 4096
-	openAIModelTransientMaxModelBytes = 512
+	openAIModelTransientStreakTTL      = 30 * time.Minute
+	openAIModelTransientShortCooldown  = 10 * time.Second
+	openAIModelTransientLongCooldown   = 45 * time.Second
+	openAIModelTransientDefaultMax     = 4096
+	openAIModelTransientMaxModelBytes  = 512
+	openAIModelFailureDisableThreshold = 3
 )
+
+// OpenAIModelFailureStreakCache 在多个 API 实例间共享连续故障计数，真实成功才清零。
+type OpenAIModelFailureStreakCache interface {
+	RecordOpenAIModelResult(context.Context, int64, string, bool, time.Duration) (int, error)
+}
 
 type openAIAccountModelKey struct {
 	AccountID int64
@@ -32,16 +39,18 @@ type openAIAccountModelKey struct {
 }
 
 type openAIAccountModelTransientEntry struct {
-	failureStreak int
-	lastFailure   time.Time
-	blockUntil    time.Time
-	lastTouched   time.Time
+	failureStreak        int
+	accountFailureStreak int
+	lastFailure          time.Time
+	blockUntil           time.Time
+	lastTouched          time.Time
 }
 
 type openAIAccountModelTransientDecision struct {
-	FailureStreak int
-	Cooldown      time.Duration
-	BlockUntil    time.Time
+	FailureStreak        int
+	AccountFailureStreak int
+	Cooldown             time.Duration
+	BlockUntil           time.Time
 }
 
 type openAIAccountModelTransientState struct {
@@ -76,7 +85,7 @@ func openAIAccountModelTransientKey(accountID int64, model string) (openAIAccoun
 	return openAIAccountModelKey{AccountID: accountID, Model: model}, true
 }
 
-func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model string, now time.Time) openAIAccountModelTransientDecision {
+func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model string, now time.Time, accountFailure ...bool) openAIAccountModelTransientDecision {
 	key, ok := openAIAccountModelTransientKey(accountID, model)
 	if s == nil || !ok {
 		return openAIAccountModelTransientDecision{}
@@ -102,9 +111,13 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 	// is stale beyond the TTL, or when the clock moved backwards.
 	if !exists || entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) > openAIModelTransientStreakTTL || now.Before(entry.lastFailure) {
 		entry.failureStreak = 0
+		entry.accountFailureStreak = 0
 		entry.blockUntil = time.Time{}
 	}
 	entry.failureStreak++
+	if len(accountFailure) == 0 || accountFailure[0] {
+		entry.accountFailureStreak++
+	}
 	entry.lastFailure = now
 	entry.lastTouched = now
 
@@ -121,9 +134,10 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 	}
 	s.entries[key] = entry
 	return openAIAccountModelTransientDecision{
-		FailureStreak: entry.failureStreak,
-		Cooldown:      cooldown,
-		BlockUntil:    entry.blockUntil,
+		FailureStreak:        entry.failureStreak,
+		AccountFailureStreak: entry.accountFailureStreak,
+		Cooldown:             cooldown,
+		BlockUntil:           entry.blockUntil,
 	}
 }
 

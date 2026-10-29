@@ -94,7 +94,7 @@ python3 /home/docker/sub2api/.server-release/bin/isolated-preview.py <完整SHA>
 - 项目 `sub2api-preview`，服务端目录 `/home/docker/sub2api-preview`（`0700`），配置和随机密钥文件 `0600`。
 - 端口仅 `127.0.0.1:18090`；数据库、Redis 不发布端口，使用独立内部网络和独立数据卷，无生产卷/网络挂载。
 - 全新测试数据库 `sub2api_preview`、独立 JWT/TOTP 密钥、空业务设置；不复制生产用户、API Key、账单、邮件或支付配置。
-- 应用 `api_only`、禁用 Ops；每个容器最多 0.5 核，内存分别为应用 768 MiB / PostgreSQL 512 MiB / Redis 128 MiB，禁止额外 swap，日志每容器最多 10 MiB。不自动重启；运行期每 5 秒采样资源和健康。
+- 应用 `api_only`、禁用 Ops 后台监控，仅通过 `OPS_REQUEST_ERRORS_ENABLED=true` 开启请求错误记录与查询，不触发告警通知；每个容器最多 0.5 核，内存分别为应用 768 MiB / PostgreSQL 512 MiB / Redis 128 MiB，禁止额外 swap，日志每容器最多 10 MiB。不自动重启；运行期每 5 秒采样资源和健康。
 - 运行器持有与发布相同的排他锁。验收期间禁止并发发布；完成验收后先退出运行器释放锁。
 
 通过 SSH 隧道把本机 `18090` 转发至服务器 `127.0.0.1:18090`，使用独立浏览器入口访问 `http://127.0.0.1:18090`。前后端均来自同一个候选镜像，不再使用“新页面代理旧 API”的方式验证后端改动。不要将测试端口加入生产 Nginx。

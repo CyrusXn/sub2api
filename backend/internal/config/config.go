@@ -1658,6 +1658,9 @@ type OpsConfig struct {
 	// This config flag is the "hard switch" for deployments that want to disable ops completely.
 	Enabled bool `mapstructure:"enabled"`
 
+	// RequestErrorsEnabled 仅启用请求错误的记录与查询，不启动监控、告警或清理任务。
+	RequestErrorsEnabled bool `mapstructure:"request_errors_enabled"`
+
 	// NodeExporterURL 是仅内部网络可访问的主机指标端点；为空时沿用容器指标。
 	NodeExporterURL string `mapstructure:"node_exporter_url"`
 	// HostSysfsPath 是应用容器内只读挂载的宿主机 sysfs，用于读取真实物理网卡计数器。
@@ -2369,6 +2372,7 @@ func setDefaults() {
 
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)
+	viper.SetDefault("ops.request_errors_enabled", false)
 	viper.SetDefault("ops.node_exporter_url", "")
 	viper.SetDefault("ops.host_sysfs_path", "")
 	viper.SetDefault("ops.use_preaggregated_tables", true)

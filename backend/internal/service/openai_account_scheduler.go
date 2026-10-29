@@ -2535,7 +2535,7 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 			failoverErr.Scope != GatewayFailureScopeRequest && failoverErr.Scope != GatewayFailureScopeProvider &&
 			(failoverErr.StatusCode == 429 || failoverErr.StatusCode >= 500) &&
 			!s.getOpenAIAccountModelTransientState().isBlocked(accountID, normalizeOpenAIAccountModelTransientModel(model), time.Now()) {
-			s.coolOpenAIAccountModelAfterFailure(context.Background(), account, model)
+			s.coolOpenAIAccountModelAfterFailure(context.Background(), account, model, failoverErr.StatusCode >= 500 && !failoverErr.RequestScopedTransient)
 		}
 	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())

@@ -24,7 +24,7 @@ func (h *OpsHandler) GetErrorLogByID(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
 		return
 	}
-	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+	if err := h.opsService.RequireRequestErrorLoggingEnabled(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -86,7 +86,7 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
 		return
 	}
-	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+	if err := h.opsService.RequireRequestErrorLoggingEnabled(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -253,7 +253,7 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
 		return
 	}
-	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+	if err := h.opsService.RequireRequestErrorLoggingEnabled(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -407,7 +407,7 @@ func (h *OpsHandler) ListRequestErrorUpstreamErrors(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
 		return
 	}
-	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+	if err := h.opsService.RequireRequestErrorLoggingEnabled(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -515,7 +515,7 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
 		return
 	}
-	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+	if err := h.opsService.RequireRequestErrorLoggingEnabled(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -733,7 +733,7 @@ func (h *OpsHandler) UpdateErrorResolution(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
 		return
 	}
-	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+	if err := h.opsService.RequireRequestErrorLoggingEnabled(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}

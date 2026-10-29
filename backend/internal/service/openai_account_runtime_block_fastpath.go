@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -103,7 +104,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	}
 	// 容量不足不永久摘号，但本模型短暂冷却，后续请求优先使用其他账号。
 	if account != nil && account.Platform == PlatformOpenAI && isOpenAIRequestScopedCapacityShed("", responseBody) {
-		s.coolOpenAIAccountModelAfterFailure(ctx, account, firstNonEmpty(canonicalModel...))
+		s.coolOpenAIAccountModelAfterFailure(ctx, account, firstNonEmpty(canonicalModel...), false)
 		return false
 	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
@@ -186,13 +187,14 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	}
 	if !shouldDisable && account.Platform == PlatformOpenAI &&
 		(statusCode == http.StatusTooManyRequests || statusCode == 529 || shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody)) {
-		s.coolOpenAIAccountModelAfterFailure(stateCtx, account, firstNonEmpty(canonicalModel...))
+		s.coolOpenAIAccountModelAfterFailure(stateCtx, account, firstNonEmpty(canonicalModel...), shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody))
 	}
 	return shouldDisable
 }
 
-func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Context, account *Account, canonicalModel string) {
-	decision := s.recordOpenAIAccountModelTransientFailure(account, canonicalModel, time.Now())
+func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Context, account *Account, canonicalModel string, accountFailure ...bool) {
+	eligible := len(accountFailure) == 0 || accountFailure[0]
+	decision := s.recordOpenAIAccountModelTransientFailure(account, canonicalModel, time.Now(), eligible)
 	if decision.FailureStreak == 0 {
 		return
 	}
@@ -204,11 +206,31 @@ func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Co
 	if s.accountRepo == nil {
 		return
 	}
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	streak := decision.AccountFailureStreak
+	if eligible {
+		if cache, ok := s.cache.(OpenAIModelFailureStreakCache); ok {
+			if count, err := cache.RecordOpenAIModelResult(stateCtx, account.ID, openAIAccountModelTransientModel(canonicalModel), false, openAIModelTransientStreakTTL); err == nil {
+				streak = count
+			} else {
+				slog.Warn("openai_model_failure_streak_cache_failed", "account_id", account.ID, "error", err)
+			}
+		}
+	}
+	if eligible && streak >= openAIModelFailureDisableThreshold {
+		message := fmt.Sprintf("模型 %s 连续 %d 次上游故障，已停止账号调度；请检查上游后清除错误或测试恢复", canonicalModel, streak)
+		if err := s.accountRepo.SetError(stateCtx, account.ID, message); err == nil {
+			account.Status, account.ErrorMessage, account.Schedulable = StatusError, message, false
+			s.BlockAccountScheduling(account, time.Time{}, "openai_consecutive_failures")
+			return
+		} else {
+			slog.Warn("openai_model_failure_disable_failed", "account_id", account.ID, "error", err)
+		}
+	}
 	if existing := account.modelRateLimitResetAt(canonicalModel); existing != nil && existing.After(decision.BlockUntil) {
 		return
 	}
-	stateCtx, cancel := openAIAccountStateContext(ctx)
-	defer cancel()
 	if err := s.accountRepo.SetModelRateLimit(stateCtx, account.ID, canonicalModel, decision.BlockUntil, "openai_model_transient"); err != nil {
 		slog.Warn("openai_model_transient_persist_failed", "account_id", account.ID, "error", err)
 	}
@@ -458,7 +480,7 @@ func openAIAccountModelTransientModel(canonicalModel string) string {
 	return normalizeOpenAIAccountModelTransientModel(canonicalModel)
 }
 
-func (s *OpenAIGatewayService) recordOpenAIAccountModelTransientFailure(account *Account, canonicalModel string, now time.Time) openAIAccountModelTransientDecision {
+func (s *OpenAIGatewayService) recordOpenAIAccountModelTransientFailure(account *Account, canonicalModel string, now time.Time, accountFailure ...bool) openAIAccountModelTransientDecision {
 	if s == nil || account == nil {
 		return openAIAccountModelTransientDecision{}
 	}
@@ -466,7 +488,7 @@ func (s *OpenAIGatewayService) recordOpenAIAccountModelTransientFailure(account 
 	if state == nil {
 		return openAIAccountModelTransientDecision{}
 	}
-	return state.recordFailure(account.ID, openAIAccountModelTransientModel(canonicalModel), now)
+	return state.recordFailure(account.ID, openAIAccountModelTransientModel(canonicalModel), now, accountFailure...)
 }
 
 func (s *OpenAIGatewayService) clearOpenAIAccountModelTransientState(accountID int64, model string) {
@@ -475,6 +497,13 @@ func (s *OpenAIGatewayService) clearOpenAIAccountModelTransientState(accountID i
 		return
 	}
 	state.recordSuccess(accountID, model)
+	if cache, ok := s.cache.(OpenAIModelFailureStreakCache); ok {
+		ctx, cancel := openAIAccountStateContext(context.Background())
+		defer cancel()
+		if _, err := cache.RecordOpenAIModelResult(ctx, accountID, model, true, openAIModelTransientStreakTTL); err != nil {
+			slog.Warn("openai_model_failure_streak_clear_failed", "account_id", accountID, "error", err)
+		}
+	}
 }
 
 func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Account, requestedModel string) bool {

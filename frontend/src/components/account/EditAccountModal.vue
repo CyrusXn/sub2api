@@ -3388,6 +3388,7 @@
         :groups="selectableGroups"
         :platform="account?.platform"
         :mixed-scheduling="mixedScheduling"
+        expanded
         data-tour="account-form-groups"
       />
 

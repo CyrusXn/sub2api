@@ -155,7 +155,7 @@ func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T
 	require.Empty(t, rec.Body.String(), "failover path must not commit downstream output")
 }
 
-func TestForwardAsAnthropic_StreamingGenericBareErrorBeforeOutputIsNotHiddenByFailover(t *testing.T) {
+func TestForwardAsAnthropic_StreamingExplicitServerErrorBeforeOutputAllowsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
@@ -178,8 +178,8 @@ func TestForwardAsAnthropic_StreamingGenericBareErrorBeforeOutputIsNotHiddenByFa
 
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
-	require.Contains(t, rec.Body.String(), "mixed tools failed")
+	require.True(t, errors.As(err, &failoverErr))
+	require.Empty(t, rec.Body.String())
 }
 
 func TestForwardAsAnthropic_BufferedResponseFailed_Failover(t *testing.T) {

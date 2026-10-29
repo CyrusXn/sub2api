@@ -38,6 +38,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(app['environment']['REDIS_HOST'], 'preview-redis')
         self.assertEqual(app['environment']['DEPLOYMENT_ROLE'], 'api_only')
         self.assertEqual(app['environment']['OPS_ENABLED'], 'false')
+        self.assertEqual(app['environment']['OPS_REQUEST_ERRORS_ENABLED'], 'true')
         self.assertEqual(app['environment']['SECURITY_URL_ALLOWLIST_ENABLED'], 'true')
         self.assertEqual(app['environment']['SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS'], 'false')
         self.assertEqual(app['environment']['SECURITY_URL_ALLOWLIST_UPSTREAM_HOSTS'], 'api.openai.com')

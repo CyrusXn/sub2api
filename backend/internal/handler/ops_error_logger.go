@@ -1098,7 +1098,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		if ops == nil {
 			return
 		}
-		if !ops.IsMonitoringEnabled(c.Request.Context()) {
+		if !ops.IsRequestErrorLoggingEnabled(c.Request.Context()) {
 			return
 		}
 		if c.GetBool(opsDedicatedErrorRecordedKey) {

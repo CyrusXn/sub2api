@@ -60,7 +60,7 @@ def manifest(image, postgres, redis, credentials, upstream_hosts=None):
                 'environment': {
                     'AUTO_SETUP': 'true', 'SERVER_HOST': '0.0.0.0', 'SERVER_PORT': '8080',
                     'SERVER_MODE': 'release', 'DEPLOYMENT_ROLE': 'api_only',
-                    'OPS_ENABLED': 'false', 'TZ': 'Asia/Shanghai',
+                    'OPS_ENABLED': 'false', 'OPS_REQUEST_ERRORS_ENABLED': 'true', 'TZ': 'Asia/Shanghai',
                     'GOMAXPROCS': '1', 'GOMEMLIMIT': '512MiB',
                     'DATABASE_HOST': 'preview-db', 'DATABASE_PORT': '5432',
                     'DATABASE_USER': 'sub2api_preview', 'DATABASE_DBNAME': 'sub2api_preview',

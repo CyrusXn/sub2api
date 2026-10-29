@@ -18,7 +18,8 @@
     </div>
     <div
       :class="[
-        'grid max-h-32 grid-cols-2 gap-1 overflow-y-auto p-2',
+        'grid grid-cols-2 gap-1 p-2',
+        expanded ? '' : 'max-h-32 overflow-y-auto',
         isSearchable
           ? 'rounded-b-lg border border-t-0 border-gray-200 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'
           : 'rounded-lg border border-gray-200 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'
@@ -73,6 +74,7 @@ interface Props {
   platform?: GroupPlatform // Optional platform filter
   mixedScheduling?: boolean // For antigravity accounts: allow anthropic/gemini groups
   searchable?: boolean | 'auto'
+  expanded?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
