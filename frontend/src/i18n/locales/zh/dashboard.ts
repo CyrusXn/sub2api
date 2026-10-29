@@ -447,7 +447,7 @@ export default {
     duration: '耗时',
     latency: '延迟',
     latencyFirstToken: '首字',
-    firstPacketHint: '首包（含等待占位）；旧记录可能仅有真实首字。首包耗时不用于健康评估。',
+    firstPacketHint: '首包（含等待占位）：优先显示浏览器实测接收耗时；未上报时显示服务端写出耗时，旧记录可能仅有真实首字。不用于健康评估。',
     firstPacketExport: '首包（毫秒；旧记录回退真实首字）',
     latencyDuration: '总耗时',
     outputTps: '输出 TPS',

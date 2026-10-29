@@ -18,6 +18,15 @@ const options = () => ({
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('密钥测试网关请求', () => {
+  it('返回服务端关联 ID，供浏览器接收时间关联使用记录', async () => {
+    const response = sseResponse([encoder.encode('data: {"choices":[{"delta":{"content":" "}}]}\n\ndata: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n')])
+    response.headers.set('X-Client-Request-ID', 'server-issued-id')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+    const onRequestID = vi.fn()
+    await streamKeyTest({ ...options(), onRequestID })
+    expect(onRequestID).toHaveBeenCalledTimes(1)
+    expect(onRequestID).toHaveBeenCalledWith('server-issued-id')
+  })
   it('空格交付给首包计时，但只有占位的终态不能算成功', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([encoder.encode(
       'data: {"choices":[{"delta":{"content":" "}}]}\n\ndata: [DONE]\n\n'

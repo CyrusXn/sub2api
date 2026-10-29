@@ -767,7 +767,15 @@ describe('admin UsageTable tooltip', () => {
 })
 
 describe('admin UsageTable real first-token value', () => {
-  it.each([0, 1001, 1050])('prefers measured first packet %d while keeping TPS unchanged', (firstPacketMs) => {
+  it.each([
+    [0, '0ms'],
+    [125.6, '126ms'],
+    [999, '999ms'],
+    [1001, '1.00s'],
+    [1017, '1.02s'],
+    [1050, '1.05s'],
+    [2350, '2.35s'],
+  ])('prefers measured first packet %d while keeping TPS unchanged', (firstPacketMs, expected) => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{ ...baseImageRow, image_count: 0, billing_mode: 'token', first_packet_ms: firstPacketMs, first_token_ms: 45_000, duration_ms: 50_000, output_tokens: 1000 } as unknown as AdminUsageLog],
@@ -776,9 +784,34 @@ describe('admin UsageTable real first-token value', () => {
       },
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
     })
-    expect(wrapper.text()).toContain(firstPacketMs === 0 ? '0ms' : firstPacketMs === 1001 ? '1.001s' : '1.05s')
+    expect(wrapper.text()).toContain(expected)
     expect(wrapper.text()).not.toContain('45.00s')
     expect(wrapper.find('[data-testid="output-tps"]').text()).toBe('20.0 tok/s')
+  })
+
+  it('formats total milliseconds without decimals', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, first_packet_ms: 12, duration_ms: 125.6 } as unknown as AdminUsageLog],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.text()).toContain('126ms')
+    expect(wrapper.text()).not.toContain('125.6ms')
+  })
+
+  it('显示浏览器实测首包 1.56 秒，保留服务器首包和真实首字', () => {
+    const row = { ...baseImageRow, client_first_packet_ms: 1560, first_packet_ms: 1010, first_token_ms: 45000 }
+    const wrapper = mount(UsageTable, {
+      props: { data: [row as unknown as AdminUsageLog], loading: false, columns: [{ key: 'latency', label: 'Latency' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.text()).toContain('1.56s')
+    expect(wrapper.text()).not.toContain('1.01s')
+    expect(row.first_packet_ms).toBe(1010)
+    expect(row.first_token_ms).toBe(45000)
   })
 
   it('uses the real first-token value for historical records', () => {

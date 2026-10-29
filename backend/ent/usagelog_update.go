@@ -793,6 +793,33 @@ func (_u *UsageLogUpdate) ClearFirstPacketMs() *UsageLogUpdate {
 	return _u
 }
 
+// SetClientFirstPacketMs sets the "client_first_packet_ms" field.
+func (_u *UsageLogUpdate) SetClientFirstPacketMs(v int) *UsageLogUpdate {
+	_u.mutation.ResetClientFirstPacketMs()
+	_u.mutation.SetClientFirstPacketMs(v)
+	return _u
+}
+
+// SetNillableClientFirstPacketMs sets the "client_first_packet_ms" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableClientFirstPacketMs(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetClientFirstPacketMs(*v)
+	}
+	return _u
+}
+
+// AddClientFirstPacketMs adds value to the "client_first_packet_ms" field.
+func (_u *UsageLogUpdate) AddClientFirstPacketMs(v int) *UsageLogUpdate {
+	_u.mutation.AddClientFirstPacketMs(v)
+	return _u
+}
+
+// ClearClientFirstPacketMs clears the value of the "client_first_packet_ms" field.
+func (_u *UsageLogUpdate) ClearClientFirstPacketMs() *UsageLogUpdate {
+	_u.mutation.ClearClientFirstPacketMs()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdate) SetUserAgent(v string) *UsageLogUpdate {
 	_u.mutation.SetUserAgent(v)
@@ -1416,6 +1443,15 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FirstPacketMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstPacketMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.ClientFirstPacketMs(); ok {
+		_spec.SetField(usagelog.FieldClientFirstPacketMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedClientFirstPacketMs(); ok {
+		_spec.AddField(usagelog.FieldClientFirstPacketMs, field.TypeInt, value)
+	}
+	if _u.mutation.ClientFirstPacketMsCleared() {
+		_spec.ClearField(usagelog.FieldClientFirstPacketMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -2415,6 +2451,33 @@ func (_u *UsageLogUpdateOne) ClearFirstPacketMs() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetClientFirstPacketMs sets the "client_first_packet_ms" field.
+func (_u *UsageLogUpdateOne) SetClientFirstPacketMs(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetClientFirstPacketMs()
+	_u.mutation.SetClientFirstPacketMs(v)
+	return _u
+}
+
+// SetNillableClientFirstPacketMs sets the "client_first_packet_ms" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableClientFirstPacketMs(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetClientFirstPacketMs(*v)
+	}
+	return _u
+}
+
+// AddClientFirstPacketMs adds value to the "client_first_packet_ms" field.
+func (_u *UsageLogUpdateOne) AddClientFirstPacketMs(v int) *UsageLogUpdateOne {
+	_u.mutation.AddClientFirstPacketMs(v)
+	return _u
+}
+
+// ClearClientFirstPacketMs clears the value of the "client_first_packet_ms" field.
+func (_u *UsageLogUpdateOne) ClearClientFirstPacketMs() *UsageLogUpdateOne {
+	_u.mutation.ClearClientFirstPacketMs()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdateOne) SetUserAgent(v string) *UsageLogUpdateOne {
 	_u.mutation.SetUserAgent(v)
@@ -3068,6 +3131,15 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.FirstPacketMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstPacketMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.ClientFirstPacketMs(); ok {
+		_spec.SetField(usagelog.FieldClientFirstPacketMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedClientFirstPacketMs(); ok {
+		_spec.AddField(usagelog.FieldClientFirstPacketMs, field.TypeInt, value)
+	}
+	if _u.mutation.ClientFirstPacketMsCleared() {
+		_spec.ClearField(usagelog.FieldClientFirstPacketMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)

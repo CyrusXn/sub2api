@@ -261,10 +261,10 @@ async function submit(): Promise<void> {
       target.messages = [...target.messages, { role: 'user', content: prompt }, { role: 'assistant', content: '' }]
       pendingMessages = target.messages
       const assistant = target.messages[target.messages.length - 1]
-      const startedAt = performance.now()
-      await streamWorkspaceChat({ selection: current, messages, signal: abort.signal, onText: text => {
+      await streamWorkspaceChat({ selection: current, messages, signal: abort.signal, onFirstPacket: milliseconds => {
+        assistant.firstTextMs = milliseconds
+      }, onText: text => {
         if (abort.signal.aborted || !text) return
-        if (assistant.firstTextMs == null) assistant.firstTextMs = performance.now() - startedAt
         assistant.content += text
       } })
     } else {

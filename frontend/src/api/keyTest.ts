@@ -54,6 +54,7 @@ export async function streamKeyTest(options: {
   messages: TestMessage[]
   signal: AbortSignal
   onText: (text: string) => void
+  onRequestID?: (id: string) => void
 }): Promise<void> {
   // Gemini 按模型原生端点测试；保留其他调用者的 OpenAI 流式契约。
   if (options.protocol === 'gemini') {
@@ -98,6 +99,9 @@ export async function streamKeyTest(options: {
   if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body) {
     throw new KeyTestError('invalidResponse')
   }
+
+  const requestID = response.headers.get('X-Client-Request-ID')
+  if (requestID) options.onRequestID?.(requestID)
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()

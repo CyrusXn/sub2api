@@ -82,10 +82,10 @@ func (u accountTextDelayedUpstream) DoWithTLS(req *http.Request, proxy string, i
 func TestAccountTextProbePlaceholderCoversHeadersAndBody(t *testing.T) {
 	for _, header := range []bool{false, true} {
 		name := "body"
-		upstream := accountTextDelayedUpstream{bodyDelay: 1200 * time.Millisecond}
+		upstream := accountTextDelayedUpstream{bodyDelay: TextStreamPlaceholderDelay + 200*time.Millisecond}
 		if header {
 			name = "headers"
-			upstream = accountTextDelayedUpstream{headerDelay: 1200 * time.Millisecond}
+			upstream = accountTextDelayedUpstream{headerDelay: TextStreamPlaceholderDelay + 200*time.Millisecond}
 		}
 		t.Run(name, func(t *testing.T) {
 			c, rec := newTestContext()
@@ -94,7 +94,7 @@ func TestAccountTextProbePlaceholderCoversHeadersAndBody(t *testing.T) {
 			err := svc.testOpenAIAccountConnection(c, account, "gpt-test", "hi", AccountTestModeDefault)
 			require.NoError(t, err)
 			require.NotNil(t, TextStreamFirstPacketMs(c))
-			require.Less(t, *TextStreamFirstPacketMs(c), 1200)
+			require.Less(t, *TextStreamFirstPacketMs(c), int((TextStreamPlaceholderDelay + 200*time.Millisecond).Milliseconds()))
 			require.Equal(t, 1, strings.Count(rec.Body.String(), `"text":" "`))
 			require.NotContains(t, rec.Body.String(), `"text":"\n"`)
 			require.Contains(t, rec.Body.String(), "hello")
@@ -106,7 +106,7 @@ func TestAccountTextProbeTerminalStopsPlaceholder(t *testing.T) {
 	for _, event := range []TestEvent{{Type: "error", Error: "failed"}, {Type: "test_complete", Success: true}} {
 		t.Run(event.Type, func(t *testing.T) {
 			c, rec := newTestContext()
-			ensureTextStreamTiming(c, time.Now().Add(-950*time.Millisecond))
+			ensureTextStreamTiming(c, time.Now().Add(-TextStreamPlaceholderDelay+50*time.Millisecond))
 			stop := startAccountTextProbePlaceholder(c)
 			defer stop()
 			(&AccountTestService{}).sendEvent(c, event)

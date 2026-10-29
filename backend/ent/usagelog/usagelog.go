@@ -88,6 +88,8 @@ const (
 	FieldFirstTokenMs = "first_token_ms"
 	// FieldFirstPacketMs holds the string denoting the first_packet_ms field in the database.
 	FieldFirstPacketMs = "first_packet_ms"
+	// FieldClientFirstPacketMs holds the string denoting the client_first_packet_ms field in the database.
+	FieldClientFirstPacketMs = "client_first_packet_ms"
 	// FieldUserAgent holds the string denoting the user_agent field in the database.
 	FieldUserAgent = "user_agent"
 	// FieldIPAddress holds the string denoting the ip_address field in the database.
@@ -203,6 +205,7 @@ var Columns = []string{
 	FieldDurationMs,
 	FieldFirstTokenMs,
 	FieldFirstPacketMs,
+	FieldClientFirstPacketMs,
 	FieldUserAgent,
 	FieldIPAddress,
 	FieldImageCount,
@@ -492,6 +495,11 @@ func ByFirstTokenMs(opts ...sql.OrderTermOption) OrderOption {
 // ByFirstPacketMs orders the results by the first_packet_ms field.
 func ByFirstPacketMs(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFirstPacketMs, opts...).ToFunc()
+}
+
+// ByClientFirstPacketMs orders the results by the client_first_packet_ms field.
+func ByClientFirstPacketMs(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldClientFirstPacketMs, opts...).ToFunc()
 }
 
 // ByUserAgent orders the results by the user_agent field.

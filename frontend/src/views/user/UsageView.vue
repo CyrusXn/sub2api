@@ -692,7 +692,7 @@ const exportToCSV = async () => {
       log.rate_multiplier,
       log.actual_cost.toFixed(8),
       log.total_cost.toFixed(8),
-      log.first_packet_ms ?? log.first_token_ms ?? '',
+      log.client_first_packet_ms ?? log.first_packet_ms ?? log.first_token_ms ?? '',
       log.duration_ms ?? '',
     ].map(escapeCSVValue))
     const csvContent = [

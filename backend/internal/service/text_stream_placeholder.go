@@ -14,7 +14,7 @@ import (
 )
 
 // TextStreamPlaceholderDelay 只控制等待占位，不参与上游超时、健康或计费。
-const TextStreamPlaceholderDelay = time.Second
+const TextStreamPlaceholderDelay = 3 * time.Second
 
 const textStreamTimingKey = "text_stream_timing"
 const textStreamTimingDisabledKey = "text_stream_timing_disabled"

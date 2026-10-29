@@ -1,4 +1,5 @@
 import { keysAPI } from './keys'
+import { apiClient } from './client'
 import type { ApiKey, PaginatedResponse } from '@/types'
 import { fetchKeyTestModels, streamKeyTest, type TestMessage } from './keyTest'
 
@@ -130,21 +131,53 @@ export async function loadWorkspaceSelection(keys: WorkspaceKey[], tab: Workspac
   return getWorkspaceSelection(keys, tab)
 }
 
-export function streamWorkspaceChat(options: {
+export async function streamWorkspaceChat(options: {
   selection: WorkspaceSelection
   messages: TestMessage[]
   signal: AbortSignal
   onText: (text: string) => void
+  onFirstPacket?: (milliseconds: number) => void
 }): Promise<void> {
-  return streamKeyTest({
-    baseUrl: options.selection.key.baseUrl,
-    apiKey: options.selection.key.key,
-    model: options.selection.model,
-    protocol: /^gemini-/i.test(options.selection.model) ? 'gemini' : 'openai',
-    messages: options.messages,
-    signal: options.signal,
-    onText: options.onText
-  })
+  const startedAt = performance.now()
+  let requestID: string | undefined
+  let firstPacketMs: number | undefined
+  try {
+    await streamKeyTest({
+      baseUrl: options.selection.key.baseUrl,
+      apiKey: options.selection.key.key,
+      model: options.selection.model,
+      protocol: /^gemini-/i.test(options.selection.model) ? 'gemini' : 'openai',
+      messages: options.messages,
+      signal: options.signal,
+      onRequestID: id => { requestID = id },
+      onText: text => {
+        if (options.signal.aborted) return
+        if (firstPacketMs == null && text) {
+          firstPacketMs = Math.round(performance.now() - startedAt)
+          options.onFirstPacket?.(firstPacketMs)
+        }
+        options.onText(text)
+      }
+    })
+  } finally {
+    // 取消或流失败也保留已收到的首包；独立上报不能阻塞正文或影响请求终态。
+    if (requestID && firstPacketMs != null) {
+      void reportWorkspaceFirstPacket(options.selection.key.id, requestID, Math.round(firstPacketMs))
+    }
+  }
+}
+
+async function reportWorkspaceFirstPacket(apiKeyID: number, requestID: string, milliseconds: number): Promise<void> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await apiClient.post('/usage/client-first-packet', { api_key_id: apiKeyID, request_id: requestID, milliseconds }, { timeout: 5000 })
+      return
+    } catch (cause) {
+      // 用量异步入库允许短暂滞后；鉴权/参数失败不重试，避免无用请求。
+      if ((cause as { status?: number }).status !== 404 || attempt === 5) return
+      await new Promise(resolve => window.setTimeout(resolve, 200 * 2 ** attempt))
+    }
+  }
 }
 
 export interface VideoResult {

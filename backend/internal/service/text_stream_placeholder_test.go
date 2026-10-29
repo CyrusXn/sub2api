@@ -19,12 +19,20 @@ import (
 
 const openAITextSuccessDelta = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\",\"output_index\":0,\"content_index\":0}\n\n"
 
+func TestTextStreamPlaceholderWaitsThreeSeconds(t *testing.T) {
+	c, _ := newPassthroughKeepaliveTestContext(t)
+	ensureTextStreamTiming(c, time.Now().Add(-2*time.Second))
+	k := &openAICompactSSEKeepalive{writer: c.Writer, stop: make(chan struct{}), timing: textStreamTimingFromContext(c)}
+	require.True(t, k.beat())
+	require.Nil(t, TextStreamFirstPacketMs(c), "2 秒时只能发心跳，不能提前发占位")
+}
+
 func TestChatPlaceholderIsVisibleDataAndKeepsFailover(t *testing.T) {
 	for _, headerWait := range []bool{false, true} {
 		c, rec := newPassthroughKeepaliveTestContext(t)
 		c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 		SetTextStreamRequestStart(c, time.Now().Add(-2350*time.Millisecond), "gpt-6-luna")
-		ensureTextStreamTiming(c, time.Now().Add(-2*time.Second))
+		ensureTextStreamTiming(c, time.Now().Add(-TextStreamPlaceholderDelay-time.Second))
 		if headerWait {
 			k := &openAICompactSSEKeepalive{writer: c.Writer, stop: make(chan struct{}), timing: textStreamTimingFromContext(c)}
 			require.True(t, k.beat())
@@ -142,7 +150,7 @@ func TestTextStreamSlowResponsesHasPacketBeforeRealOutput(t *testing.T) {
 	defer pr.Close()
 	go func() {
 		defer pw.Close()
-		time.Sleep(1200 * time.Millisecond)
+		time.Sleep(TextStreamPlaceholderDelay + 200*time.Millisecond)
 		_, _ = io.WriteString(pw, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"+
 			"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
 	}()
@@ -151,7 +159,7 @@ func TestTextStreamSlowResponsesHasPacketBeforeRealOutput(t *testing.T) {
 		&Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, started, "gpt-6-luna", "gpt-6-luna")
 	require.NoError(t, err)
 	require.NotNil(t, result.firstTokenMs)
-	require.GreaterOrEqual(t, *result.firstTokenMs, 1200)
+	require.GreaterOrEqual(t, *result.firstTokenMs, int(TextStreamPlaceholderDelay.Milliseconds()))
 	require.NotNil(t, TextStreamFirstPacketMs(c))
 	require.Less(t, *TextStreamFirstPacketMs(c), *result.firstTokenMs)
 	require.Equal(t, 1, strings.Count(rec.Body.String(), ": \n\n"))
@@ -207,7 +215,7 @@ func TestTextStreamHTTPDeliveryAcrossProtocols(t *testing.T) {
 					} else {
 						_, _ = io.WriteString(writer, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"model\":\"gpt-6-luna\"}}\n\n")
 					}
-					time.Sleep(1200 * time.Millisecond)
+					time.Sleep(TextStreamPlaceholderDelay + 200*time.Millisecond)
 					if protocol == "raw_chat" {
 						_, _ = io.WriteString(writer, "data: {\"id\":\"chat_test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 					} else {
@@ -265,7 +273,7 @@ func TestTextStreamHTTPDeliveryAcrossProtocols(t *testing.T) {
 			} else {
 				require.Equal(t, ": \n", firstLine)
 			}
-			require.Less(t, time.Since(started), 1200*time.Millisecond, "占位应在正文之前通过真实HTTP交付")
+			require.Less(t, time.Since(started), TextStreamPlaceholderDelay+200*time.Millisecond, "占位应在正文之前通过真实HTTP交付")
 			body, err := io.ReadAll(reader)
 			require.NoError(t, err)
 			require.Contains(t, string(body), "hello")
@@ -274,7 +282,7 @@ func TestTextStreamHTTPDeliveryAcrossProtocols(t *testing.T) {
 			require.NotNil(t, result.packet)
 			require.NotNil(t, result.token)
 			require.Less(t, *result.packet, *result.token)
-			require.GreaterOrEqual(t, *result.token, 1200)
+			require.GreaterOrEqual(t, *result.token, int(TextStreamPlaceholderDelay.Milliseconds()))
 		})
 	}
 }

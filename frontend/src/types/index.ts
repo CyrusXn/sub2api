@@ -1889,6 +1889,7 @@ export interface UsageLog {
   duration_ms: number | null
   first_token_ms: number | null
   first_packet_ms?: number | null
+  client_first_packet_ms?: number | null
 
   // 图片生成字段
   image_count: number

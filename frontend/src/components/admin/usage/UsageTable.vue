@@ -800,7 +800,7 @@ const formatUserAgent = (ua: string): string => {
   return ua
 }
 
-const getFirstPacketMs = (row: AdminUsageLog) => row.first_packet_ms ?? row.first_token_ms
+const getFirstPacketMs = (row: AdminUsageLog) => row.client_first_packet_ms ?? row.first_packet_ms ?? row.first_token_ms
 
 const getFirstTokenSeverity = (row: AdminUsageLog) => {
   const firstTokenMs = getFirstPacketMs(row)
@@ -813,9 +813,9 @@ const getFirstTokenSeverity = (row: AdminUsageLog) => {
 // 超过 1 分钟简化为 "Xm Ys"，免去人工换算（超过 1 小时再进位为 "Xh Ym"）
 const formatDuration = (ms: number | null | undefined, precise = false): string => {
   if (ms == null) return '-'
-  if (ms < 1000) return `${ms}ms`
-  // 首包保留实测毫秒，避免 1001ms 等值被四舍五入成看似固定的 1.00s。
-  if (precise) return `${(ms / 1000).toFixed(3).replace(/0$/, '')}s`
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  // 仅统一显示精度，原始首包毫秒仍用于记录和导出。
+  if (precise) return `${(ms / 1000).toFixed(2)}s`
   if (ms < 60_000) return `${(ms / 1000).toFixed(2)}s`
   const totalSec = Math.round(ms / 1000)
   if (totalSec < 3600) return `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`

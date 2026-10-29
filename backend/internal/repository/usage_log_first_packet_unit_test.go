@@ -40,8 +40,8 @@ func TestUsageLogFirstPacketPersistence(t *testing.T) {
 		key := usageLogBatchKey("req", 1)
 		batch, _ := buildUsageLogBatchInsertQuery([]string{key}, map[string]usageLogInsertPrepared{key: prepared})
 		bestEffort, _ := buildUsageLogBestEffortInsertQuery([]usageLogInsertPrepared{prepared})
-		require.Equal(t, 3, strings.Count(batch, "first_packet_ms"), "CTE、INSERT、SELECT 必须对应")
-		require.Equal(t, 3, strings.Count(bestEffort, "first_packet_ms"))
+		require.Len(t, regexp.MustCompile(`\bfirst_packet_ms\b`).FindAllString(batch, -1), 3, "CTE、INSERT、SELECT 必须对应")
+		require.Len(t, regexp.MustCompile(`\bfirst_packet_ms\b`).FindAllString(bestEffort, -1), 3)
 		for _, query := range []string{batch, bestEffort} {
 			for _, match := range regexp.MustCompile(`(?s)(?:WITH input \(|INSERT INTO usage_logs \(|SELECT\n\s+user_id,)(.*?)\n\s*(?:\)|FROM input)`).FindAllStringSubmatch(query, -1) {
 				list := strings.Join(strings.Fields(match[1]), " ")
@@ -56,7 +56,7 @@ func TestUsageLogFirstPacketPersistence(t *testing.T) {
 	}
 }
 
-type firstPacketScanner struct{ packet sql.NullInt64 }
+type firstPacketScanner struct{ packet, client sql.NullInt64 }
 
 func (s firstPacketScanner) Scan(dest ...any) error {
 	for i, column := range strings.Split(usageLogSelectColumns, ", ") {
@@ -67,9 +67,24 @@ func (s firstPacketScanner) Scan(dest ...any) error {
 			value.Set(reflect.ValueOf(s.packet))
 		case "first_token_ms":
 			value.Set(reflect.ValueOf(sql.NullInt64{Valid: true, Int64: 45000}))
+		case "client_first_packet_ms":
+			value.Set(reflect.ValueOf(s.client))
 		}
 	}
 	return nil
+}
+
+func TestScanClientFirstPacketKeepsIndependentMeasurements(t *testing.T) {
+	for _, packet := range []sql.NullInt64{{}, {Valid: true}, {Valid: true, Int64: 1560}} {
+		log, err := scanUsageLog(firstPacketScanner{packet: sql.NullInt64{Valid: true, Int64: 1010}, client: packet})
+		require.NoError(t, err)
+		require.Equal(t, packet.Valid, log.ClientFirstPacketMs != nil)
+		if packet.Valid {
+			require.Equal(t, int(packet.Int64), *log.ClientFirstPacketMs)
+		}
+		require.Equal(t, 1010, *log.FirstPacketMs)
+		require.Equal(t, 45000, *log.FirstTokenMs)
+	}
 }
 
 func TestScanUsageLogFirstPacketPreservesNullAndZero(t *testing.T) {

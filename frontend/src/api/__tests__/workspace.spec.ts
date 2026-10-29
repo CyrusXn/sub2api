@@ -1,13 +1,47 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { keysAPI } from '../keys'
+import { apiClient } from '../client'
 import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceSelection, modelMatchesTab, preferredModels, streamWorkspaceChat, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey } from '../workspace'
 
 vi.mock('../keys', () => ({ keysAPI: { list: vi.fn() } }))
+vi.mock('../client', () => ({ apiClient: { post: vi.fn() } }))
 
 const key = (id: number, models: string[] = [], groupName = '分组'): WorkspaceKey => ({
   id, name: `Key ${id}`, key: 'test-only-key', groupName, platform: 'grok', baseUrl: 'https://relay.example/prefix/v1/', models, allowImageGeneration: true
 })
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers() })
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); vi.restoreAllMocks(); vi.mocked(apiClient.post).mockReset() })
+
+describe('工作台首包实测上报', () => {
+  it('显示和上报同一接收耗时，空格只计第一次；等待异步用量入库', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(performance, 'now').mockReturnValueOnce(100).mockReturnValueOnce(1660)
+    vi.mocked(apiClient.post).mockRejectedValueOnce({ status: 404 }).mockResolvedValueOnce({ data: {} })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      'data: {"choices":[{"delta":{"content":" "}}]}\n\ndata: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n',
+      { headers: { 'Content-Type': 'text/event-stream', 'X-Client-Request-ID': 'server-issued-id' } }
+    )))
+    const onFirstPacket = vi.fn()
+    const onText = vi.fn()
+    await streamWorkspaceChat({ selection: { key: key(1), model: 'text-model' }, messages: [], signal: new AbortController().signal, onText, onFirstPacket })
+    expect(onFirstPacket.mock.calls).toEqual([[1560]])
+    expect(onText.mock.calls).toEqual([[' '], ['OK']])
+    await vi.runAllTimersAsync()
+    expect(apiClient.post).toHaveBeenCalledTimes(2)
+    for (const call of vi.mocked(apiClient.post).mock.calls) {
+      expect(call[1]).toEqual({ api_key_id: 1, request_id: 'server-issued-id', milliseconds: 1560 })
+    }
+  })
+
+  it('没有正文或占位时不伪造接收耗时，也不创建用量记录', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('data: [DONE]\n\n', {
+      headers: { 'Content-Type': 'text/event-stream', 'X-Client-Request-ID': 'server-issued-id' }
+    })))
+    const onFirstPacket = vi.fn()
+    await expect(streamWorkspaceChat({ selection: { key: key(1), model: 'text-model' }, messages: [], signal: new AbortController().signal, onText: vi.fn(), onFirstPacket })).rejects.toMatchObject({ code: 'empty' })
+    expect(onFirstPacket).not.toHaveBeenCalled()
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+})
 
 describe('workspace model selection', () => {
   it.each([

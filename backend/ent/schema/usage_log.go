@@ -145,6 +145,10 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("first_packet_ms").
 			Optional().
 			Nillable(),
+		// 客户端首包为独立遥测值，不能覆盖服务端计时或真实输出指标。
+		field.Int("client_first_packet_ms").
+			Optional().
+			Nillable(),
 		field.String("user_agent").
 			MaxLen(512).
 			Optional().
