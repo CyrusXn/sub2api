@@ -263,11 +263,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
-	out := make([]dto.AdminUsageLog, 0, len(records))
-	for i := range records {
-		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
-	}
-	response.Paginated(c, out, result.Total, page, pageSize)
+	response.Paginated(c, adminUsageLogResponses(c, records), result.Total, page, pageSize)
 }
 
 // CCSwitchAPIKeyCandidates returns recent non-admin GPT API Keys for the local CC-Switch companion.
