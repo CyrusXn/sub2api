@@ -128,7 +128,7 @@
 
         <OpsErrorDetailsModal
           :show="showErrorDetails"
-          :time-range="timeRange"
+          :time-range="errorDetailsTimeRange"
           :custom-start-time="customStartTime"
           :custom-end-time="customEndTime"
           :platform="platform"
@@ -210,6 +210,8 @@ const errorMessage = ref('')
 const lastUpdated = ref<Date | null>(new Date())
 
 const timeRange = ref<TimeRange>('1h')
+// 独立错误入口没有时间范围控件，使用 24 小时避免测试记录在一小时后不可见。
+const errorDetailsTimeRange = computed<TimeRange>(() => (opsEnabled.value ? timeRange.value : '24h'))
 const platform = ref<string>('')
 const groupId = ref<number | null>(null)
 const queryMode = ref<QueryMode>('auto')
