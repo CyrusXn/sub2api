@@ -71,7 +71,7 @@ function mountModal(account: Record<string, unknown> = {
   platform: 'gemini',
   type: 'apikey',
   status: 'active'
-}) {
+}, realTextArea = false) {
   return mount(AccountTestModal, {
     props: {
       show: false,
@@ -81,7 +81,7 @@ function mountModal(account: Record<string, unknown> = {
       stubs: {
         BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
         Select: { template: '<div class="select-stub"></div>' },
-        TextArea: {
+        TextArea: realTextArea ? false : {
           props: ['modelValue'],
           emits: ['update:modelValue'],
           template: '<textarea class="textarea-stub" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
@@ -151,6 +151,25 @@ describe('AccountTestModal', () => {
     await flushPromises()
     expect(wrapper.get('[data-test="probe-tab"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.get('[data-test="chat-tab"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('实际入口的真实输入框 Enter 发送，换行和输入法确认不发送', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-6.1-sol', display_name: 'Sol' }])
+    const wrapper = mountModal({ id: 42, platform: 'openai', type: 'apikey', name: 'OpenAI' }, true)
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await wrapper.get('[data-test="chat-tab"]').trigger('click')
+    const input = wrapper.get('textarea')
+    await input.setValue('回车发送')
+    await input.trigger('keydown', { key: 'Enter', shiftKey: true })
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    await input.trigger('keydown', { key: 'Enter', keyCode: 229 })
+    expect(global.fetch).not.toHaveBeenCalled()
+    await input.trigger('keydown', { key: 'Enter' })
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(global.fetch).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 

@@ -201,7 +201,8 @@
         </div>
         <TextArea v-model="testPrompt" :label="t('admin.accounts.testConversationInput')"
           :placeholder="t('admin.accounts.testConversationPlaceholder')"
-          :disabled="running || loadingModels || !selectedModelId" rows="2" />
+          :disabled="running || loadingModels || !selectedModelId" rows="2"
+          @keydown="handleConversationKeydown" />
         <div v-if="status === 'error'" role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{{ errorMessage }}</div>
       </div>
 
@@ -874,6 +875,12 @@ const scrollToBottom = async () => {
   if (conversationRef.value) {
     conversationRef.value.scrollTop = conversationRef.value.scrollHeight
   }
+}
+
+const handleConversationKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  if (canStartTest.value) void startTest()
 }
 
 const startTest = async () => {
