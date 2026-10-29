@@ -89,7 +89,7 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 		if k.timing != nil {
 			k.timing.mu.Lock()
 			if !k.timing.placeholder && !k.timing.realOutput {
-				remaining := time.Until(k.timing.started.Add(TextStreamPlaceholderDelay))
+				remaining := time.Until(k.timing.generationStarted.Add(TextStreamPlaceholderDelay))
 				if remaining < firstDelay {
 					firstDelay = remaining
 					if firstDelay <= 0 {
@@ -151,9 +151,9 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 		k.started = true
 	}
 	frame := ": keepalive\n\n"
-	placeholder := k.timing != nil && time.Since(k.timing.started) >= TextStreamPlaceholderDelay && k.timing.reservePlaceholder()
+	placeholder := k.timing != nil && time.Since(k.timing.generationStarted) >= TextStreamPlaceholderDelay && k.timing.reservePlaceholder()
 	if placeholder {
-		frame = ": \n\n"
+		frame = k.timing.placeholderFrame
 	}
 	n, err := k.writer.Write([]byte(frame))
 	k.bytes += n

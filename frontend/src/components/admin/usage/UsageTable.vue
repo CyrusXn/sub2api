@@ -285,7 +285,7 @@
             ></span>
             <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500" :title="t('usage.firstPacketHint')">{{ t('usage.latencyFirstToken') }}</span>
-              <span v-if="getFirstPacketMs(row) != null" :title="t('usage.firstPacketHint')" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[getFirstTokenSeverity(row)]">{{ formatDuration(getFirstPacketMs(row)) }}</span>
+              <span v-if="getFirstPacketMs(row) != null" :title="t('usage.firstPacketHint')" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[getFirstTokenSeverity(row)]">{{ formatDuration(getFirstPacketMs(row), true) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
@@ -811,9 +811,11 @@ const getFirstTokenSeverity = (row: AdminUsageLog) => {
 }
 
 // 超过 1 分钟简化为 "Xm Ys"，免去人工换算（超过 1 小时再进位为 "Xh Ym"）
-const formatDuration = (ms: number | null | undefined): string => {
+const formatDuration = (ms: number | null | undefined, precise = false): string => {
   if (ms == null) return '-'
   if (ms < 1000) return `${ms}ms`
+  // 首包保留实测毫秒，避免 1001ms 等值被四舍五入成看似固定的 1.00s。
+  if (precise) return `${(ms / 1000).toFixed(3).replace(/0$/, '')}s`
   if (ms < 60_000) return `${(ms / 1000).toFixed(2)}s`
   const totalSec = Math.round(ms / 1000)
   if (totalSec < 3600) return `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`

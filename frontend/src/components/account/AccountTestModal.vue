@@ -112,6 +112,7 @@
           :placeholder="t('admin.accounts.testConversationPlaceholder')"
           :disabled="status === 'connecting'"
           rows="2"
+          @keydown="handleConversationKeydown"
         />
       </div>
 
@@ -482,8 +483,14 @@ const scrollToBottom = async () => {
   }
 }
 
+const handleConversationKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  if (status.value !== 'connecting') void startTest()
+}
+
 const startTest = async () => {
-  if (!props.account || !selectedModelId.value) return
+  if (!props.account || !selectedModelId.value || status.value === 'connecting') return
 
   const prompt = testPrompt.value.trim() || '你是谁'
   if (!supportsImageTest.value) {

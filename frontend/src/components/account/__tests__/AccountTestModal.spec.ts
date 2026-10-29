@@ -95,6 +95,21 @@ function buildAccount() {
 }
 
 describe('AccountTestModal', () => {
+  it('Enter 发送，Shift+Enter 与输入法确认不发送', async () => {
+    const wrapper = mount(AccountTestModal, {
+      props: { show: true, account: buildAccount() },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } }
+    })
+    await flushPromises()
+    const input = wrapper.get('textarea')
+    await input.setValue('测试回车')
+    await input.trigger('keydown', { key: 'Enter', shiftKey: true })
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    expect(global.fetch).not.toHaveBeenCalled()
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
   const originalFetch = global.fetch
 
   beforeEach(() => {

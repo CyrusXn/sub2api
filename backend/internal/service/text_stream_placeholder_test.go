@@ -14,9 +14,40 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 const openAITextSuccessDelta = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\",\"output_index\":0,\"content_index\":0}\n\n"
+
+func TestChatPlaceholderIsVisibleDataAndKeepsFailover(t *testing.T) {
+	for _, headerWait := range []bool{false, true} {
+		c, rec := newPassthroughKeepaliveTestContext(t)
+		c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		SetTextStreamRequestStart(c, time.Now().Add(-2350*time.Millisecond), "gpt-6-luna")
+		ensureTextStreamTiming(c, time.Now().Add(-2*time.Second))
+		if headerWait {
+			k := &openAICompactSSEKeepalive{writer: c.Writer, stop: make(chan struct{}), timing: textStreamTimingFromContext(c)}
+			require.True(t, k.beat())
+		} else {
+			require.True(t, writeTextStreamPlaceholder(c, c.Writer))
+		}
+		frame := strings.TrimPrefix(strings.TrimSpace(rec.Body.String()), "data: ")
+		require.True(t, gjson.Valid(frame), "占位须是客户端可解析的 Chat Completions 事件")
+		require.Equal(t, " ", gjson.Get(frame, "choices.0.delta.content").String())
+		require.Equal(t, "chat.completion.chunk", gjson.Get(frame, "object").String())
+		require.Equal(t, "gpt-6-luna", gjson.Get(frame, "model").String())
+		require.False(t, textStreamHasRealOutput(c))
+		require.False(t, writeTextStreamPlaceholder(c, c.Writer))
+	}
+}
+
+func TestTextStreamPacketIncludesTimeBeforeForwarding(t *testing.T) {
+	c, _ := newPassthroughKeepaliveTestContext(t)
+	c.Set("text_stream_request_started", time.Now().Add(-2350*time.Millisecond))
+	ensureTextStreamTiming(c, time.Now())
+	require.True(t, writeTextStreamPlaceholder(c, c.Writer))
+	require.GreaterOrEqual(t, *TextStreamFirstPacketMs(c), 2350)
+}
 
 func TestChatStreamErrorAfterFastOutputKeepsSSEProtocol(t *testing.T) {
 	c, recorder := newPassthroughKeepaliveTestContext(t)
@@ -218,13 +249,22 @@ func TestTextStreamHTTPDeliveryAcrossProtocols(t *testing.T) {
 			started := time.Now()
 			client := server.Client()
 			client.Timeout = 5 * time.Second
-			resp, err := client.Get(server.URL)
+			path := "/v1/responses"
+			if protocol == "raw_chat" || protocol == "converted_chat" {
+				path = "/v1/chat/completions"
+			}
+			resp, err := client.Get(server.URL + path)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 			reader := bufio.NewReader(resp.Body)
 			firstLine, err := reader.ReadString('\n')
 			require.NoError(t, err)
-			require.Equal(t, ": \n", firstLine)
+			if path == "/v1/chat/completions" {
+				require.True(t, strings.HasPrefix(firstLine, "data: "))
+				require.Equal(t, " ", gjson.Get(strings.TrimPrefix(firstLine, "data: "), "choices.0.delta.content").String())
+			} else {
+				require.Equal(t, ": \n", firstLine)
+			}
 			require.Less(t, time.Since(started), 1200*time.Millisecond, "占位应在正文之前通过真实HTTP交付")
 			body, err := io.ReadAll(reader)
 			require.NoError(t, err)

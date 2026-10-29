@@ -18,6 +18,14 @@ const options = () => ({
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('密钥测试网关请求', () => {
+  it('空格交付给首包计时，但只有占位的终态不能算成功', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([encoder.encode(
+      'data: {"choices":[{"delta":{"content":" "}}]}\n\ndata: [DONE]\n\n'
+    )])))
+    const opts = options()
+    await expect(streamKeyTest(opts)).rejects.toMatchObject({ code: 'empty' })
+    expect(opts.onText).toHaveBeenCalledWith(' ')
+  })
   it.each([
     ['https://relay.example/prefix/v1/', false, 'https://relay.example/prefix/v1beta/models/gemini-4-argon-high:generateContent'],
     ['https://relay.example/v1', true, '/v1beta/models/gemini-4-argon-high:generateContent'],

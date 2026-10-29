@@ -213,7 +213,7 @@ function reload(): void { if (!busy.value && !imageBusy.value && !loading.value)
 function goToKeys(): void { void router.push({ path: '/keys', query: { returnTo: '/workspace', tab: tab.value } }) }
 function newConversation(): void { if (tab.value === 'chat' && !busy.value) states.chat.messages = [] }
 function handleChatKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void submit() }
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); void submit() }
 }
 function cancelRequest(): void {
   requestController?.abort()

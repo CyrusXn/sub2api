@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"io"
 	"strings"
 	"sync"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
 
@@ -16,14 +18,24 @@ const TextStreamPlaceholderDelay = time.Second
 
 const textStreamTimingKey = "text_stream_timing"
 const textStreamTimingDisabledKey = "text_stream_timing_disabled"
+const textStreamRequestStartedKey = "text_stream_request_started"
+const textStreamRequestModelKey = "text_stream_request_model"
 
 type textStreamTiming struct {
-	mu            sync.Mutex
-	started       time.Time
-	placeholder   bool
-	realOutput    bool
-	firstPacketMs *int
-	bytes         int
+	mu                sync.Mutex
+	started           time.Time
+	generationStarted time.Time
+	placeholderFrame  string
+	placeholder       bool
+	realOutput        bool
+	firstPacketMs     *int
+	bytes             int
+}
+
+// SetTextStreamRequestStart 只保存计时元数据；通过鉴权并进入生成时才启用占位。
+func SetTextStreamRequestStart(c *gin.Context, started time.Time, model string) {
+	c.Set(textStreamRequestStartedKey, started)
+	c.Set(textStreamRequestModelKey, model)
 }
 
 func textStreamTimingFromContext(c *gin.Context) *textStreamTiming {
@@ -45,7 +57,22 @@ func ensureTextStreamTiming(c *gin.Context, started time.Time) *textStreamTiming
 	if state := textStreamTimingFromContext(c); state != nil {
 		return state
 	}
-	state := &textStreamTiming{started: started}
+	state := &textStreamTiming{started: started, generationStarted: started, placeholderFrame: ": \n\n"}
+	if value, ok := c.Get(textStreamRequestStartedKey); ok {
+		if requestStarted, valid := value.(time.Time); valid && !requestStarted.IsZero() {
+			state.started = requestStarted
+		}
+	}
+	if c.Request != nil && strings.HasSuffix(c.Request.URL.Path, "/chat/completions") {
+		model := c.GetString(textStreamRequestModelKey)
+		// 使用请求级标识，避免把占位绑定到随后可能被排除的上游账号。
+		payload, _ := json.Marshal(map[string]any{
+			"id": "chatcmpl-placeholder-" + uuid.NewString(), "object": "chat.completion.chunk",
+			"created": state.started.Unix(), "model": model,
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]string{"content": " "}, "finish_reason": nil}},
+		})
+		state.placeholderFrame = "data: " + string(payload) + "\n\n"
+	}
 	c.Set(textStreamTimingKey, state)
 	return state
 }
@@ -124,7 +151,7 @@ func textStreamPlaceholderTimer(c *gin.Context) (*time.Timer, <-chan time.Time) 
 	if state == nil {
 		return nil, nil
 	}
-	remaining := time.Until(state.started.Add(TextStreamPlaceholderDelay))
+	remaining := time.Until(state.generationStarted.Add(TextStreamPlaceholderDelay))
 	if remaining <= 0 {
 		remaining = time.Nanosecond
 	}
@@ -178,7 +205,11 @@ func stampTextStreamTiming(c *gin.Context, result *OpenAIForwardResult) {
 }
 
 func writeTextStreamPlaceholder(c *gin.Context, w gin.ResponseWriter) bool {
-	return writeTextStreamPlaceholderFrame(c, w, ": \n\n")
+	state := textStreamTimingFromContext(c)
+	if state == nil {
+		return false
+	}
+	return writeTextStreamPlaceholderFrame(c, w, state.placeholderFrame)
 }
 
 func writeTextStreamPlaceholderFrame(c *gin.Context, w gin.ResponseWriter, frame string) bool {

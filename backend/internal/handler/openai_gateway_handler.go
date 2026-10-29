@@ -469,6 +469,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	service.SetTextStreamRequestStart(c, requestStart, reqModel)
 	clientModelCandidates := requestmodel.FromBodyCandidates("", "application/json", body)
 	clientReqModel := reqModel
 	rewrittenBody, effectiveModel, subagentKind, rewritten := h.gatewayService.ApplyOpenAICodexSubagentModelInheritance(

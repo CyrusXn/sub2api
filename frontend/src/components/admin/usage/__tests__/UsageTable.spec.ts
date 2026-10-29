@@ -767,7 +767,7 @@ describe('admin UsageTable tooltip', () => {
 })
 
 describe('admin UsageTable real first-token value', () => {
-  it.each([0, 1050])('prefers measured first packet %d while keeping TPS unchanged', (firstPacketMs) => {
+  it.each([0, 1001, 1050])('prefers measured first packet %d while keeping TPS unchanged', (firstPacketMs) => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{ ...baseImageRow, image_count: 0, billing_mode: 'token', first_packet_ms: firstPacketMs, first_token_ms: 45_000, duration_ms: 50_000, output_tokens: 1000 } as unknown as AdminUsageLog],
@@ -776,7 +776,7 @@ describe('admin UsageTable real first-token value', () => {
       },
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
     })
-    expect(wrapper.text()).toContain(firstPacketMs === 0 ? '0ms' : '1.05s')
+    expect(wrapper.text()).toContain(firstPacketMs === 0 ? '0ms' : firstPacketMs === 1001 ? '1.001s' : '1.05s')
     expect(wrapper.text()).not.toContain('45.00s')
     expect(wrapper.find('[data-testid="output-tps"]').text()).toBe('20.0 tok/s')
   })

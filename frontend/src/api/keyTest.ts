@@ -125,7 +125,7 @@ export async function streamKeyTest(options: {
     const choice = payload?.choices?.[0]
     const content = choice?.delta?.content
     if (typeof content === 'string' && content.length > 0) {
-      hasText = true
+      if (content.trim()) hasText = true
       options.onText(content)
     }
     // finish_reason 后可能还有用量帧，继续读到 DONE 或正常 EOF，避免提前取消上游。
