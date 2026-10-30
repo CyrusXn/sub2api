@@ -117,11 +117,63 @@ func TestOpenAIIdentityRoutingBusyAndSticky(t *testing.T) {
 	require.Equal(t, third.ID, selection.Account.ID, "身份目标并发满时应跳过")
 	require.Equal(t, "identity_account", decision.Layer)
 	releaseLegacySchedulerDecisionSelection(selection)
-	require.Equal(t, []int64{38101, 38102, 38103}, acquired)
-	require.ElementsMatch(t, []int64{38101, 38103}, released)
+	require.Equal(t, []int64{38102, 38103}, acquired)
+	require.Equal(t, []int64{38103}, released)
 	boundID, err := svc.getStickySessionAccountID(context.Background(), &groupID, "ordinary-session")
 	require.NoError(t, err)
 	require.Equal(t, accounts[0].ID, boundID, "后续普通对话仍绑定原账号")
+}
+
+func TestOpenAIIdentityRoutingSkipsOriginSlot(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		for _, full := range []bool{false, true} {
+			name := map[bool]string{false: "逐个选号", true: "批量负载"}[batch] + map[bool]string{false: "/入口空闲", true: "/入口并发满"}[full]
+			t.Run(name, func(t *testing.T) {
+				resetOpenAIAdvancedSchedulerSettingCacheForTest()
+				defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+				groupID := int64(9)
+				accounts := newLegacySchedulerDecisionTestAccounts(groupID, true)
+				accounts[0].Extra[accountIdentityAccountIDKey] = accounts[1].ID
+				var acquired []int64
+				cache := schedulerTestConcurrencyCache{acquiredIDs: &acquired}
+				if full {
+					cache.acquireResults = map[int64]bool{accounts[0].ID: false}
+					cache.loadMap = map[int64]*AccountLoadInfo{accounts[0].ID: {AccountID: accounts[0].ID, LoadRate: 100, CurrentConcurrency: 1}}
+				}
+				svc := newLegacySchedulerDecisionTestService(accounts, batch, cache)
+				ctx := WithOpenAIIdentityRouting(context.Background(), true)
+				selection, _, err := svc.SelectAccountWithSchedulerForCapability(ctx, &groupID, "", "", "gpt-test", nil,
+					OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true)
+				require.NoError(t, err)
+				require.NotNil(t, selection)
+				require.Equal(t, accounts[1].ID, selection.Account.ID)
+				require.True(t, IsOpenAIIdentityRoutingActive(ctx))
+				require.Equal(t, []int64{accounts[1].ID}, acquired, "身份入口账号只用于读取配置，不应申请并发槽")
+				releaseLegacySchedulerDecisionSelection(selection)
+			})
+		}
+	}
+}
+
+func TestOpenAIIdentityRoutingPreviousResponseSkipsOriginSlot(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	groupID := int64(9)
+	accounts := newLegacySchedulerDecisionTestAccounts(groupID, true)
+	accounts[0].Extra[accountIdentityAccountIDKey] = accounts[1].ID
+	var acquired []int64
+	svc := newLegacySchedulerDecisionTestService(accounts, true, schedulerTestConcurrencyCache{acquiredIDs: &acquired})
+	responseID := "identity-previous-response"
+	require.NoError(t, svc.getOpenAIWSStateStore().BindResponseAccount(context.Background(), groupID, responseID, accounts[0].ID, time.Hour))
+
+	ctx := WithOpenAIIdentityRouting(context.Background(), true)
+	selection, _, err := svc.SelectAccountWithSchedulerForCapability(ctx, &groupID, responseID, "", "gpt-test", nil,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, accounts[1].ID, selection.Account.ID)
+	require.Equal(t, []int64{accounts[1].ID}, acquired, "previous_response 命中身份入口时也不能申请入口并发槽")
+	releaseLegacySchedulerDecisionSelection(selection)
 }
 
 func TestIdentityAccountIDInvalidValues(t *testing.T) {

@@ -3666,6 +3666,10 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	}
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
+	if service.IsOpenAIModelNotFoundError(statusCode, responseBody) {
+		h.handleStreamingAwareErrorWithCode(c, http.StatusNotFound, "invalid_request_error", "model_not_found", "The requested model is not available in this group", streamStarted, false)
+		return
+	}
 	if statusCode == http.StatusBadRequest && service.IsOpenAICompatibleModelNotFound400(responseBody) && !streamStarted {
 		upstreamMsg := service.SanitizeUpstreamErrorMessage(service.ExtractUpstreamErrorMessage(responseBody))
 		service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")

@@ -139,7 +139,7 @@ func TestRateLimitService_HandleUpstreamError_Bare404UsesModelScopedTempUnschedu
 	require.Equal(t, "not found", state.MatchedKeyword)
 }
 
-func TestRateLimitService_HandleUpstreamError_Bare404WithoutModelKeepsAccountTempUnschedulable(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_Bare404WithoutModelKeepsAccountAvailable(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &RateLimitService{accountRepo: repo}
 	account := openAIModelNotFoundTempAccount()
@@ -152,8 +152,8 @@ func TestRateLimitService_HandleUpstreamError_Bare404WithoutModelKeepsAccountTem
 		[]byte(`{"error":{"message":"endpoint not found"}}`),
 	)
 
-	require.True(t, handled)
-	require.Equal(t, 1, repo.tempCalls)
+	require.False(t, handled)
+	require.Zero(t, repo.tempCalls)
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 

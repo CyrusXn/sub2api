@@ -826,7 +826,8 @@ func TestSyncUpstreamModelCatalogDoesNotOverwriteSnapshotWhenRegistryFails(t *te
 		Code:    UpstreamModelMetadataIncompleteCode,
 		Message: "Model IDs were synced, but capability metadata is incomplete.",
 	}}, catalog.Warnings)
-	require.Nil(t, repo.updates, "a failed metadata enrichment must not erase a previously saved snapshot")
+	require.NotContains(t, repo.updates, UpstreamModelMetadataExtraKey, "能力补全失败不能覆盖原有能力快照")
+	require.Contains(t, repo.updates, UpstreamModelCatalogExtraKey, "成功发现的模型清单仍需保存")
 }
 
 func TestSyncUpstreamModelCatalogDoesNotPersistPartialMetadataWhenRegistryFails(t *testing.T) {
@@ -853,7 +854,8 @@ func TestSyncUpstreamModelCatalogDoesNotPersistPartialMetadataWhenRegistryFails(
 	require.Equal(t, []string{"partially-described-model"}, catalog.Models)
 	require.Equal(t, "Partial Model", catalog.Metadata["partially-described-model"].DisplayName)
 	require.Equal(t, UpstreamModelMetadataIncompleteCode, catalog.Warnings[0].Code)
-	require.Nil(t, repo.updates, "partial metadata must not replace a more complete persisted snapshot")
+	require.NotContains(t, repo.updates, UpstreamModelMetadataExtraKey, "不完整的能力不能覆盖已有快照")
+	require.Contains(t, repo.updates, UpstreamModelCatalogExtraKey)
 }
 
 // Scenario: 图片专用模型缺少 context 时，不阻止 agent 模型能力落库，也不误报整批失败。

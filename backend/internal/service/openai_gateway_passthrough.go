@@ -784,6 +784,12 @@ func stripOpenAILegacyResponsesBeta(headers http.Header) {
 }
 
 func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, responseBody []byte) bool {
+	if !allowsOpenAINextAccount(statusCode, "", responseBody) {
+		return false
+	}
+	if account != nil && isUpstreamModelNotFoundError(statusCode, responseBody) {
+		return true
+	}
 	if hit, _, _ := detectOpenAICyberPolicy(responseBody); hit {
 		return false
 	}
@@ -915,6 +921,10 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		upstreamDetail = truncateString(string(body), maxBytes)
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+	if isUpstreamInsufficientBalanceError(resp.StatusCode, body) {
+		writeOpenAIBalanceError(c, resp.StatusCode)
+		return fmt.Errorf("upstream rejected request: insufficient balance")
+	}
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
 	reqModel, _, _ := extractOpenAIRequestMetaFromBody(requestBody)
 	canonicalModel := canonicalOpenAIAccountSchedulingModel(account, reqModel)
@@ -982,6 +992,10 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
 	// 错误体虽不会原样透传，运行态账号状态仍需更新，避免粘性路由继续复用
 	// 刚被限流的账号。cyber 例外：不冷却账号。
+	if isUpstreamInsufficientBalanceError(resp.StatusCode, body) {
+		writeOpenAIBalanceError(c, resp.StatusCode)
+		return fmt.Errorf("upstream rejected request: insufficient balance")
+	}
 	if !cyberHit {
 		reqModel, _, _ := extractOpenAIRequestMetaFromBody(requestBody)
 		canonicalModel := canonicalOpenAIAccountSchedulingModel(account, reqModel)
@@ -1430,6 +1444,12 @@ var openAIStreamErrorStatusPaths = []string{
 }
 
 func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
+	if isUpstreamInsufficientBalanceError(http.StatusBadGateway, payload) {
+		return http.StatusForbidden
+	}
+	if isUpstreamModelNotFoundError(http.StatusNotFound, payload) {
+		return http.StatusNotFound
+	}
 	if isOpenAIContextWindowError(message, payload) {
 		return http.StatusBadRequest
 	}
@@ -1441,8 +1461,7 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	}
 	combined := strings.TrimSpace(errType + " " + code + " " + strings.ToLower(strings.TrimSpace(message)))
 	for _, path := range openAIStreamErrorStatusPaths {
-		if status := int(gjson.GetBytes(payload, path).Int()); status == http.StatusUnauthorized ||
-			status == http.StatusForbidden || status == http.StatusTooManyRequests || status == 529 {
+		if status := int(gjson.GetBytes(payload, path).Int()); status >= 400 && status <= 599 {
 			return status
 		}
 	}
@@ -1469,8 +1488,14 @@ func openAIStreamFailureStatus(payload []byte, message string) int {
 		return http.StatusBadGateway
 	}
 	semanticStatus := openAIStreamFailedEventSemanticStatus(payload, message)
+	if semanticStatus == http.StatusBadRequest && isOpenAITransientProcessingError(semanticStatus, message, payload) {
+		return http.StatusBadGateway
+	}
+	if semanticStatus >= 400 && semanticStatus < 500 {
+		return semanticStatus
+	}
 	switch semanticStatus {
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, 529:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests, 529:
 		return semanticStatus
 	case http.StatusServiceUnavailable:
 		if isOpenAIUpstreamCapacityShedEvent(payload) {
@@ -1573,6 +1598,9 @@ func applyOpenAIStreamFailedErrorPassthroughRule(
 	payload []byte,
 	failedMessage string,
 ) (status int, errType string, errMsg string, matched bool) {
+	if isUpstreamInsufficientBalanceError(http.StatusBadGateway, payload) {
+		return http.StatusForbidden, "invalid_request_error", "Insufficient account balance", true
+	}
 	ruleBody := openAIStreamFailedEventPassthroughBody(payload, failedMessage)
 	upstreamStatus := openAIStreamFailedEventSemanticStatus(payload, failedMessage)
 	return applyErrorPassthroughRule(
@@ -1586,7 +1614,24 @@ func applyOpenAIStreamFailedErrorPassthroughRule(
 	)
 }
 
+func openAIStreamTerminalClientStatus(payload []byte, message string) int {
+	if isUpstreamInsufficientBalanceError(http.StatusBadGateway, payload) {
+		return http.StatusForbidden
+	}
+	status := openAIStreamFailureStatus(payload, message)
+	if status >= 400 && status < 500 && status != http.StatusUnauthorized && status != http.StatusForbidden {
+		return status
+	}
+	return http.StatusBadGateway
+}
+
 func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool {
+	if !allowsOpenAINextAccount(openAIStreamFailedEventSemanticStatus(payload, message), message, payload) {
+		return false
+	}
+	if isUpstreamModelNotFoundError(http.StatusNotFound, payload) {
+		return true
+	}
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
 		return false
 	}
@@ -1639,6 +1684,12 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 }
 
 func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
+	if !allowsOpenAINextAccount(openAIStreamFailedEventSemanticStatus(payload, message), message, payload) {
+		return false
+	}
+	if isUpstreamModelNotFoundError(http.StatusNotFound, payload) {
+		return true
+	}
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
 		return false
 	}
@@ -1691,7 +1742,7 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 			return statusCode, false
 		}
 		fallthrough
-	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+	case http.StatusUnauthorized, http.StatusNotFound, http.StatusTooManyRequests, 529:
 		ctx := context.Background()
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()
@@ -1829,7 +1880,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 		classificationHeaders = nil
 	}
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
-	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
+	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient || isUpstreamModelNotFoundError(statusCode, payload) {
 		return failoverErr
 	}
 	// Preserve the existing generic envelope for unclassified stream failures;
@@ -2578,6 +2629,10 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
+		if isUpstreamInsufficientBalanceError(http.StatusBadGateway, terminalPayload) {
+			writeOpenAIBalanceError(c, http.StatusForbidden)
+			return nil, fmt.Errorf("upstream rejected request: insufficient balance")
+		}
 		msg := extractOpenAISSEErrorMessage(terminalPayload)
 		if msg == "" {
 			msg = "Upstream compact response failed"
@@ -2588,7 +2643,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, true, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
 			return nil, failoverErr
 		}
-		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
+		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg, openAIStreamFailureStatus(terminalPayload, msg))
 	}
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 	if !ok && terminalOK {

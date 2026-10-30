@@ -337,7 +337,7 @@ func (s *OpenAIGatewayService) handleOpenAIWSFailureAccountSideEffects(ctx conte
 	message := extractOpenAISSEErrorMessage(payload)
 	status := openAIStreamFailureStatus(payload, message)
 	switch status {
-	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+	case http.StatusUnauthorized, http.StatusNotFound, http.StatusTooManyRequests, 529:
 		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
 		return true
 	case http.StatusForbidden:
@@ -449,6 +449,11 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	accountID, account, responseID, store := s.resolveAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	if accountID <= 0 || account == nil || store == nil {
 		return nil, nil
+	}
+	// 身份请求只把入口账号作为路由配置来源；不能因为 previous_response_id
+	// 命中入口账号就先申请它的并发槽，外层会继续跟随身份账号链。
+	if openAIIdentityRoutingEntry(ctx, account) {
+		return &AccountSelectionResult{Account: account}, nil
 	}
 
 	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)

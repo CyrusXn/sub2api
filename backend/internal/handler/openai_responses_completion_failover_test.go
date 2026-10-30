@@ -29,7 +29,7 @@ type completionFailoverUpstream struct {
 func (u *completionFailoverUpstream) Do(_ *http.Request, _ string, id int64, _ int) (*http.Response, error) {
 	u.calls = append(u.calls, id)
 	if id == 9910 && u.delayHeaders {
-		time.Sleep(1200 * time.Millisecond)
+		time.Sleep(service.TextStreamPlaceholderDelay + 200*time.Millisecond)
 	}
 	if id == 9911 && u.emptyStructure {
 		return &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"server_error","message":"temporary upstream failure"}}`))}, nil
@@ -53,7 +53,7 @@ func (u *completionFailoverUpstream) Do(_ *http.Request, _ string, id int64, _ i
 			if _, err := io.WriteString(writer, data); err != nil {
 				return
 			}
-			timer := time.NewTimer(1200 * time.Millisecond)
+			timer := time.NewTimer(service.TextStreamPlaceholderDelay + 200*time.Millisecond)
 			defer timer.Stop()
 			<-timer.C
 		}()
@@ -147,7 +147,7 @@ func TestOpenAIChatSwitchesAccountWithRequestScopedPlaceholder(t *testing.T) {
 	h.ChatCompletions(c)
 	require.Equal(t, []int64{9910, 9911, 9912, 9913}, upstream.calls, "占位之后仍应排除失败账号，遍历到健康账号")
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, 1, strings.Count(rec.Body.String(), ": \n\n"), "切号不能重置请求级占位")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), `"content":" "`), "切号不能重置请求级占位")
 	require.Contains(t, rec.Body.String(), "healthy-output")
 	require.Contains(t, rec.Body.String(), `"model":"gpt-6-luna"`, "手动选择的模型在切号后保持不变")
 	require.Equal(t, 1, strings.Count(rec.Body.String(), "data: [DONE]"))

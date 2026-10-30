@@ -571,6 +571,9 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		)
 		return nil, true, nil
 	}
+	if openAIIdentityRoutingEntry(ctx, account) {
+		return &AccountSelectionResult{Account: account}, false, nil
+	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr != nil && req.DisableStickyEscape {
 		return nil, false, acquireErr
@@ -1185,6 +1188,9 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		if candidate.account == nil {
 			continue
 		}
+		if openAIIdentityRoutingEntry(ctx, candidate.account) {
+			return &AccountSelectionResult{Account: candidate.account}, compactBlocked, nil
+		}
 		if candidate.loadKnown && candidate.account.Concurrency > 0 &&
 			candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency {
 			continue
@@ -1319,6 +1325,9 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		if isGrokTeamModelRateLimited(account, upstreamModel, now) ||
 			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
+		}
+		if openAIIdentityRoutingEntry(ctx, account) {
+			return &AccountSelectionResult{Account: account}, nil
 		}
 		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
 		if acquireErr != nil {
@@ -2302,7 +2311,7 @@ func (s *OpenAIGatewayService) selectLegacyAccountByPreviousResponse(
 		}
 		return nil, false, nil
 	}
-	if sessionHash != "" {
+	if sessionHash != "" && !openAIIdentityRoutingEntry(ctx, account) {
 		_ = s.bindOpenAIStickySessionDuringSelection(ctx, groupID, sessionHash, account.ID)
 	}
 	return selection, true, nil

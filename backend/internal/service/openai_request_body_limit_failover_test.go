@@ -16,7 +16,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestOpenAIRequestBodyLimitFailover_HTTP413SwitchesAccountsBeforeWrite(t *testing.T) {
+func TestOpenAIRequestBodyLimitFailover_HTTP413DoesNotSwitchAccounts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	requestBody := []byte(`{"model":"gpt-5.2","stream":false,"input":"hello"}`)
 
@@ -70,16 +70,10 @@ func TestOpenAIRequestBodyLimitFailover_HTTP413SwitchesAccountsBeforeWrite(t *te
 
 			require.Nil(t, result)
 			var failoverErr *UpstreamFailoverError
-			require.ErrorAs(t, err, &failoverErr)
-			require.Equal(t, http.StatusRequestEntityTooLarge, failoverErr.StatusCode)
-			require.Equal(t, GatewayFailureScopeAccount, failoverErr.Scope)
-			require.Equal(t, GatewayFailureReason("openai_request_body_too_large"), failoverErr.Reason)
-			require.Equal(t, NextAccountRetry, failoverErr.NextAccountAction)
-			require.Equal(t, http.StatusRequestEntityTooLarge, failoverErr.ClientStatusCode)
-			require.Equal(t, "Request payload is too large", failoverErr.ClientMessage)
-			require.False(t, failoverErr.RetryableOnSameAccount, "a body limit requires another account, not another attempt on the same account")
-			require.False(t, c.Writer.Written(), "account failover must happen before downstream output is committed")
-			require.Empty(t, rec.Body.String())
+			require.Error(t, err)
+			require.False(t, errors.As(err, &failoverErr))
+			require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+			require.NotEmpty(t, rec.Body.String())
 			require.True(t, body.closed)
 			if passthrough {
 				require.Equal(t, requestBody, upstream.lastBody)

@@ -391,7 +391,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				if openAIStreamFailedEventShouldFailover([]byte(payload), message) {
 					return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, []byte(payload), message, upstreamModel, resp.Header)
 				}
-				writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+				if isUpstreamInsufficientBalanceError(http.StatusBadGateway, []byte(payload)) {
+					writeChatCompletionsError(c, http.StatusForbidden, "invalid_request_error", "Insufficient account balance")
+				} else {
+					writeChatCompletionsError(c, openAIStreamTerminalClientStatus([]byte(payload), message), "upstream_error", message)
+				}
 				return nil, fmt.Errorf("upstream response failed: %s", message)
 			}
 			if trimmedPayload != "[DONE]" {

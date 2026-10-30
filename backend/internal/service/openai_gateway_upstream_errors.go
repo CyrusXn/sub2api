@@ -310,6 +310,9 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 }
 
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Account, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if !allowsOpenAINextAccount(statusCode, upstreamMsg, upstreamBody) {
+		return false
+	}
 	// cyber_policy is request-scoped even when an intermediary wraps the
 	// provider response in a retryable 5xx status. Never punish or rotate the
 	// selected credential for it.
@@ -334,8 +337,8 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 	// preserve the deterministic upstream 400 instead of returning an unwritten
 	// retry signal. Managed gateway instances always have an account repository;
 	// their handler can exclude this account and actually select another one.
-	if s != nil && s.accountRepo != nil && account != nil && account.IsOpenAICompatible() && statusCode == http.StatusBadRequest &&
-		isOpenAICompatibleModelNotFound400(upstreamBody) {
+	if s != nil && s.accountRepo != nil && account != nil && account.IsOpenAICompatible() &&
+		((statusCode == http.StatusBadRequest && isOpenAICompatibleModelNotFound400(upstreamBody)) || isUpstreamModelNotFoundError(statusCode, upstreamBody)) {
 		return true
 	}
 	if s.shouldFailoverUpstreamError(statusCode) {
@@ -349,12 +352,12 @@ func isOpenAICompatibleModelNotFound400(respBody []byte) bool {
 }
 
 func isOpenAICompatibleModelNotFoundBody(respBody []byte) bool {
-	code := strings.TrimSpace(extractUpstreamErrorCode(respBody))
+	code := firstNonEmpty(upstreamErrorStringValues(respBody, "error.code", "response.error.code", "code")...)
 	if code != "" {
 		return strings.EqualFold(code, "model_not_found")
 	}
 
-	msg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+	msg := strings.ToLower(strings.Join(upstreamErrorStringValues(respBody, "error.message", "response.error.message", "detail", "detail.message", "message"), " "))
 	if msg == "" && !gjson.ValidBytes(respBody) {
 		msg = strings.ToLower(strings.TrimSpace(string(respBody)))
 	}
@@ -643,6 +646,10 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		upstreamDetail = truncateString(string(body), maxBytes)
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+	if isUpstreamInsufficientBalanceError(resp.StatusCode, body) {
+		writeOpenAIBalanceError(c, resp.StatusCode)
+		return nil, fmt.Errorf("upstream rejected request: insufficient balance")
+	}
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
 
 	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -657,26 +664,9 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	if isOpenAIRequestBodyTooLargeError(resp.StatusCode, upstreamMsg, body) {
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			ProxyID:            opsUpstreamProxyID(account),
-			ProxyName:          opsUpstreamProxyName(account),
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
-			Kind:               "failover",
-			Message:            upstreamMsg,
-			Detail:             upstreamDetail,
-		})
-		s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, cooldownModel)
-		return nil, newOpenAIUpstreamFailoverError(
-			resp.StatusCode,
-			resp.Header,
-			body,
-			upstreamMsg,
-			false,
-		)
+		MarkResponseCommitted(c)
+		writeOpenAIUpstreamClientError(c, resp.StatusCode, body, upstreamMsg)
+		return nil, fmt.Errorf("upstream request payload too large")
 	}
 
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
@@ -754,7 +744,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
 	})
-	if shouldDisable {
+	if shouldDisable && allowsOpenAINextAccount(resp.StatusCode, upstreamMsg, body) {
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
@@ -890,6 +880,12 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 
+	if isUpstreamInsufficientBalanceError(resp.StatusCode, body) {
+		MarkResponseCommitted(c)
+		writeError(c, upstreamBalanceClientStatus(resp.StatusCode), "invalid_request_error", "Insufficient account balance")
+		return nil, fmt.Errorf("upstream rejected request: insufficient balance")
+	}
+
 	// Apply error passthrough rules
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
 		c, account.Platform, resp.StatusCode, body,
@@ -953,7 +949,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
 	})
-	if shouldDisable {
+	if shouldDisable && allowsOpenAINextAccount(resp.StatusCode, upstreamMsg, body) {
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,

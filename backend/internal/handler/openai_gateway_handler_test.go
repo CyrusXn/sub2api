@@ -2621,7 +2621,7 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxSwitchesImmediatelyThenExhausts
 	require.Equal(t, "Upstream service temporarily unavailable", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureSwitchesImmediatelyToHealthyAccount(t *testing.T) {
+func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureDoesNotSwitchAccount(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int
@@ -2716,9 +2716,9 @@ func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureSwitchesImmediatelyToHe
 
 			h.Responses(c)
 
-			require.Equal(t, []int64{9910, 9911}, upstream.calls())
-			require.Equal(t, http.StatusOK, rec.Code)
-			require.Equal(t, "resp_healthy", gjson.GetBytes(rec.Body.Bytes(), "id").String())
+			require.Equal(t, []int64{9910}, upstream.calls())
+			require.Equal(t, http.StatusBadGateway, rec.Code)
+			require.Empty(t, gjson.GetBytes(rec.Body.Bytes(), "id").String())
 		})
 	}
 }

@@ -1860,7 +1860,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeConfigured5xxRetriesSame
 	require.False(t, c.Writer.Written())
 }
 
-func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailover(t *testing.T) {
+func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsDoNotSwitchAccounts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
 		name        string
@@ -1914,11 +1914,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailove
 			_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","input":"hello"}`))
 
 			var failoverErr *UpstreamFailoverError
-			require.ErrorAs(t, err, &failoverErr)
-			require.Equal(t, tt.statusCode, failoverErr.StatusCode)
-			require.True(t, failoverErr.RetryableOnSameAccount)
-			require.False(t, c.Writer.Written(), "pool-mode auth failure must fail over before committing a response")
-			require.False(t, IsResponseCommitted(c))
+			require.Error(t, err)
+			require.NotErrorAs(t, err, &failoverErr)
+			require.GreaterOrEqual(t, rec.Code, 400)
+			require.True(t, c.Writer.Written(), "认证拒绝应直接结束当前请求")
 		})
 	}
 }

@@ -829,7 +829,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety(t *testing.T) {
 		wantFailover bool
 		wantWrites   int
 	}{
-		{name: "first_turn_401", turn: 1, status: http.StatusUnauthorized, wantFailover: true},
+		{name: "first_turn_401", turn: 1, status: http.StatusUnauthorized, wantWrites: 1},
 		{name: "first_turn_429", turn: 1, status: http.StatusTooManyRequests, wantFailover: true},
 		{name: "first_turn_500", turn: 1, status: http.StatusInternalServerError, wantFailover: true},
 		{name: "later_turn_500_does_not_replay", turn: 2, status: http.StatusInternalServerError, wantWrites: 1},

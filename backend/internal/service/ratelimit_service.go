@@ -300,6 +300,9 @@ const (
 // CheckErrorPolicy 检查自定义错误码和临时不可调度规则。
 // 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
+	if account.Platform == PlatformOpenAI && isUpstreamInsufficientBalanceError(statusCode, responseBody) {
+		return ErrorPolicySkipped
+	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	if account.IsCustomErrorCodesEnabled() {
 		if account.ShouldHandleErrorCode(statusCode) {
@@ -331,6 +334,9 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
+	if account.Platform == PlatformOpenAI && isUpstreamInsufficientBalanceError(statusCode, responseBody) {
+		return false
+	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
@@ -393,6 +399,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		if s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel)) {
 			return true
 		}
+	}
+	// 404 无论是否命中自定义规则，都不能升级为整号错误；已知模型由上面的模型级处理隔离。
+	if account.Platform == PlatformOpenAI && statusCode == http.StatusNotFound {
+		return false
 	}
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
@@ -2663,6 +2673,9 @@ func tempUnschedRulesApply(account *Account, statusCode int, responseBody []byte
 // tempUnschedHitUsesModelScope 决定一次命中是否按模型级冷却：凭据级 401 始终按账号处理，
 // 其余由规则作用范围决定。
 func tempUnschedHitUsesModelScope(account *Account, rule TempUnschedulableRule, modelKey string, statusCode int, responseBody []byte) bool {
+	if account != nil && account.Platform == PlatformOpenAI && statusCode == http.StatusNotFound && strings.TrimSpace(modelKey) != "" {
+		return true
+	}
 	if statusCode == http.StatusUnauthorized && unauthorizedRequiresCredentialHandling(account, responseBody) {
 		return false
 	}
@@ -2768,6 +2781,9 @@ func (s *RateLimitService) tryTempUnschedulable(ctx context.Context, account *Ac
 		return false
 	}
 	if !account.IsTempUnschedulableEnabled() {
+		return false
+	}
+	if account.Platform == PlatformOpenAI && statusCode == http.StatusNotFound && tempUnschedulableModel(ctx, requestedModel) == "" {
 		return false
 	}
 	matches := matchTempUnschedulableRules(account, statusCode, responseBody)

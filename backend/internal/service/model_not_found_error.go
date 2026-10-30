@@ -13,11 +13,26 @@ func isUpstreamModelNotFoundError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusNotFound {
 		return false
 	}
-	normalized := normalizeModelNotFoundBody(body)
+	for _, code := range upstreamErrorStringValues(body, "error.code", "response.error.code", "code") {
+		if strings.EqualFold(code, "model_not_found") {
+			return true
+		}
+	}
+	message := strings.Join(upstreamErrorStringValues(body, "error.message", "response.error.message", "detail.message", "detail", "message"), " ")
+	if message == "" && !gjson.ValidBytes(body) {
+		message = string(body)
+	}
+	normalized := normalizeModelNotFoundBody([]byte(message))
 	if normalized == "" || !strings.Contains(normalized, "model") {
 		return false
 	}
-	return containsModelNotFoundKeyword(normalized)
+	return containsModelNotFoundKeyword(normalized) || strings.Contains(normalized, "not supported") ||
+		strings.Contains(normalized, "does not exist") || strings.Contains(normalized, "not available")
+}
+
+// IsOpenAIModelNotFoundError 供耗尽处理保留模型级 404，不泄漏上游原始错误。
+func IsOpenAIModelNotFoundError(statusCode int, body []byte) bool {
+	return isUpstreamModelNotFoundError(statusCode, body)
 }
 
 func isModelNotFoundError(statusCode int, body []byte) bool {
@@ -42,7 +57,7 @@ func isOpenAICodexPlanGatedModelError(statusCode int, body []byte) bool {
 		return false
 	}
 	// 只信任明确的错误字段，不能因上游回显了用户输入就冷却健康账号。
-	message := firstNonEmpty(extractUpstreamErrorMessage(body), gjson.GetBytes(body, "response.error.message").String())
+	message := strings.Join(upstreamErrorStringValues(body, "error.message", "response.error.message", "detail", "detail.message", "message"), " ")
 	if message == "" && !gjson.ValidBytes(body) {
 		message = string(body)
 	}

@@ -273,7 +273,7 @@ func TestOpenAIResponsesRealOutputFailureIsNotReplayed(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesOneSecondKeepalivePreservesFailover(t *testing.T) {
+func TestOpenAIResponsesPlaceholderKeepalivePreservesFailover(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		t.Run(map[bool]string{true: "passthrough", false: "native"}[passthrough], func(t *testing.T) {
 			rec := newOpenAIResponseFlushRecorder()
@@ -299,10 +299,10 @@ func TestOpenAIResponsesOneSecondKeepalivePreservesFailover(t *testing.T) {
 			require.NoError(t, err)
 			select {
 			case <-rec.flushEvents:
-			case <-time.After(1600 * time.Millisecond):
+			case <-time.After(TextStreamPlaceholderDelay + time.Second):
 				writer.Close()
 				<-done
-				t.Fatal("1 秒未生成正文时应先发送保活占位")
+				t.Fatal("占位等待结束后应先发送保活，不改变后续切号资格")
 			}
 			body, _ := rec.snapshot()
 			require.True(t, strings.HasPrefix(body, ":"), body)

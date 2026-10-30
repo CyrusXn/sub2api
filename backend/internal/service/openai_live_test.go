@@ -215,7 +215,7 @@ func TestLiveCreateFailoverUsesExistingOpenAIPolicy(t *testing.T) {
 		StatusCode:   http.StatusBadRequest,
 		ResponseBody: []byte(`{"error":{"message":"invalid session"}}`),
 	}))
-	require.True(t, service.shouldFailoverLiveCreateError(account, &UpstreamFailoverError{
+	require.False(t, service.shouldFailoverLiveCreateError(account, &UpstreamFailoverError{
 		StatusCode: http.StatusForbidden,
 	}))
 	require.True(t, service.shouldFailoverLiveCreateError(account, &UpstreamFailoverError{

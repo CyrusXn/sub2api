@@ -33,8 +33,7 @@ const astraProSuccessResponse = `{"id":"resp_astra","model":"gpt-6-astra","statu
 	`"usage":{"input_tokens":1,"output_tokens":2},` +
 	`"reasoning":{"mode":"pro","effort":"max"}}`
 
-// astraProForbiddenResponse: a plain upstream 403 that stays failover-eligible but
-// is not reclassified as access-state/credential failure nor a silent refusal.
+// 普通 403 直接结束请求，不换账号且不降级用户选择的模型与推理参数。
 const astraProForbiddenResponse = `{"error":{"type":"forbidden_error","code":"forbidden","message":"Forbidden"}}`
 
 // astraProCapturedUpstream records URL/accountID/body per forwarded attempt.
@@ -137,9 +136,8 @@ func assertAstraProAccountSwitch(t *testing.T, accountIDs []int64) {
 	require.ElementsMatch(t, []int64{1, 2}, accountIDs, "both OAuth accounts must be reached")
 }
 
-// 403 then a second OAuth account succeeding: wire bodies keep pro+max/model and the
-// winning account's structured reasoning.mode=pro reaches the client unchanged.
-func TestOpenAIGatewayHandlerResponses_AstraProFirst403SecondSucceeds(t *testing.T) {
+// 权限拒绝在当前账号结束，不重放到第二个账号，保留用户选择的模型与推理参数。
+func TestOpenAIGatewayHandlerResponses_AstraPro403DoesNotSwitchAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstream := newAstraProCapturedUpstream(astra403(), astra200())
@@ -150,15 +148,11 @@ func TestOpenAIGatewayHandlerResponses_AstraProFirst403SecondSucceeds(t *testing
 
 	urls, accountIDs, bodies := upstream.snapshot()
 	assertAstraProWire(t, urls, bodies)
-	assertAstraProAccountSwitch(t, accountIDs)
-	require.Equal(t, http.StatusOK, rec.Code, "winning account must yield a 200 to the client")
-	require.Equal(t, "completed", gjson.GetBytes(rec.Body.Bytes(), "status").String())
-	require.Equal(t, "pro", gjson.GetBytes(rec.Body.Bytes(), "reasoning.mode").String(), "client must keep the winning response's mode=pro")
-	require.Equal(t, "max", gjson.GetBytes(rec.Body.Bytes(), "reasoning.effort").String())
+	require.Equal(t, []int64{1}, accountIDs, "权限拒绝不能重放到第二个账号")
+	require.Equal(t, http.StatusBadGateway, rec.Code)
 }
 
-// both OAuth accounts 403: exhausted keeps every wire body pro+max/model, is not 200,
-// and surfaces the existing-policy 502 upstream_error (unchanged 403-masking policy).
+// 多账号均拒绝权限时也只调用首个账号，沿用凭据错误对外隐藏策略。
 func TestOpenAIGatewayHandlerResponses_AstraProBoth403NoDowngrade(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -170,7 +164,7 @@ func TestOpenAIGatewayHandlerResponses_AstraProBoth403NoDowngrade(t *testing.T) 
 
 	urls, accountIDs, bodies := upstream.snapshot()
 	assertAstraProWire(t, urls, bodies)
-	assertAstraProAccountSwitch(t, accountIDs)
+	require.Equal(t, []int64{1}, accountIDs)
 	require.NotEqual(t, http.StatusOK, rec.Code, "all-403 must never surface a 200 to the client")
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())

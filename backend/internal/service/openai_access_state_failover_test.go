@@ -77,8 +77,8 @@ func TestOpenAIUpstreamAccessStateClassification(t *testing.T) {
 			if !tt.want {
 				return
 			}
-			require.True(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusForbidden, "", body))
-			require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusForbidden, body))
+			require.False(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusForbidden, "", body))
+			require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusForbidden, body))
 
 			err := newOpenAIUpstreamFailoverError(http.StatusForbidden, nil, body, "", true)
 			require.True(t, err.IsCredentialFailure())
@@ -135,7 +135,7 @@ func TestOpenAIStreamEchoedAccessStateMessageDoesNotDisableOrFailover(t *testing
 	require.False(t, isOpenAIUpstreamAccessStateError(message, payload))
 	require.False(t, openAIStreamFailedEventShouldFailover(payload, message))
 	status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, nil)
-	require.Equal(t, http.StatusBadGateway, status)
+	require.Equal(t, http.StatusBadRequest, status)
 	require.False(t, disabled)
 	require.Zero(t, repo.setErrorCalls)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
@@ -148,7 +148,7 @@ func TestOpenAIHTTPAccessStateTrustsStructuredCode(t *testing.T) {
 	body := []byte(`{"error":{"code":"organization_deactivated","message":"request rejected"}}`)
 
 	require.True(t, isOpenAIHTTPUpstreamAccessStateError(http.StatusBadRequest, "", body))
-	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusBadRequest, "", body))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusBadRequest, "", body))
 	require.True(t, svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusBadRequest, nil, body))
 	require.Equal(t, 1, repo.setErrorCalls)
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
@@ -211,7 +211,7 @@ func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T)
 		status       int
 		wantFailover bool
 	}{
-		{"unauthorized", `{"type":"error","error":{"type":"authentication_error","code":"invalid_api_key","message":"unauthorized"}}`, http.StatusUnauthorized, true},
+		{"unauthorized", `{"type":"error","error":{"type":"authentication_error","code":"invalid_api_key","message":"unauthorized"}}`, http.StatusUnauthorized, false},
 		{"forbidden", `{"type":"response.failed","response":{"error":{"type":"permission_error","message":"forbidden"}}}`, http.StatusForbidden, false},
 		{"rate_limit", `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`, http.StatusTooManyRequests, true},
 		{"overload_529", `{"type":"error","error":{"status_code":529,"code":"overloaded","message":"overloaded"}}`, 529, true},
@@ -239,7 +239,7 @@ func TestOpenAIStreamSemanticStatusHonorsErrorStatusAlias(t *testing.T) {
 			name:         "response.error.status unauthorized",
 			body:         `{"type":"response.failed","response":{"error":{"code":"server_error","status":401,"message":"upstream rejected the key"}}}`,
 			status:       http.StatusUnauthorized,
-			wantFailover: true,
+			wantFailover: false,
 		},
 		{
 			name:         "error.status rate limited",
@@ -308,17 +308,17 @@ func TestOpenAIStream403FailoverRequiresStructuredAccountCredentialSignal(t *tes
 		{
 			name:    "structured access state",
 			payload: `{"type":"response.failed","response":{"error":{"code":"workspace_suspended","message":"workspace is suspended"}}}`,
-			want:    true,
+			want:    false,
 		},
 		{
 			name:    "explicit credential auth code",
 			payload: `{"type":"error","error":{"type":"permission_error","code":"invalid_api_key","status_code":403,"message":"credential rejected"}}`,
-			want:    true,
+			want:    false,
 		},
 		{
 			name:    "explicit authentication type",
 			payload: `{"type":"error","error":{"type":"authentication_error","status_code":403,"message":"credential rejected"}}`,
-			want:    true,
+			want:    false,
 		},
 	}
 

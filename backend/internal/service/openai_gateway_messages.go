@@ -604,7 +604,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	finalResponse, usage, acc, prior, err := s.readOpenAICompatBufferedTerminal(resp, c, account, "openai messages buffered", requestID)
+	finalResponse, usage, acc, prior, terminalPayload, err := s.readOpenAICompatBufferedTerminal(resp, c, account, "openai messages buffered", requestID)
 	if err != nil {
 		var readErr *openAICompatBufferedReadError
 		if errors.As(err, &readErr) && readErr != nil {
@@ -626,7 +626,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	observer.ObserveServiceTier(finalResponse.ServiceTier, true)
 
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
-		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
+		payload := terminalPayload
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
 			MarkOpsCyberPolicy(c, CyberPolicyMark{
 				Code:           code,
@@ -660,7 +660,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			writeAnthropicError(c, status, errType, errMsg)
 			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
-		writeAnthropicError(c, http.StatusBadGateway, "api_error", message)
+		writeAnthropicError(c, openAIStreamTerminalClientStatus(payload, message), "api_error", message)
 		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 	if strings.TrimSpace(finalResponse.Status) == "completed" {
@@ -824,11 +824,11 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 	account *Account,
 	logPrefix string,
 	requestID string,
-) (*apicompat.ResponsesResponse, OpenAIUsage, *apicompat.BufferedResponseAccumulator, openAICompatPriorModelAudit, error) {
+) (*apicompat.ResponsesResponse, OpenAIUsage, *apicompat.BufferedResponseAccumulator, openAICompatPriorModelAudit, []byte, error) {
 	acc := apicompat.NewBufferedResponseAccumulator()
 	var usage OpenAIUsage
 	if resp == nil || resp.Body == nil {
-		return nil, usage, acc, openAICompatPriorModelAudit{}, errors.New("upstream response body is nil")
+		return nil, usage, acc, openAICompatPriorModelAudit{}, nil, errors.New("upstream response body is nil")
 	}
 	prior := newOpenAICompatPriorModelAudit(account)
 	recordPrior := func(event *apicompat.ResponsesStreamEvent) {
@@ -921,11 +921,12 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 							if response.Usage != nil {
 								usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
 							}
-							return response, usage, acc, prior, nil
+							// 保留原始终止事件，不能因协议 DTO 未声明状态字段而把请求错误变成 502。
+							return response, usage, acc, prior, []byte(payload), nil
 						}
 					}
 				}
-				return nil, usage, acc, prior, nil
+				return nil, usage, acc, prior, nil, nil
 			}
 			resetTimeout()
 			if ev.err != nil {
@@ -935,11 +936,11 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 						zap.String("request_id", requestID),
 					)
 				}
-				return nil, usage, acc, prior, &openAICompatBufferedReadError{cause: ev.err}
+				return nil, usage, acc, prior, nil, &openAICompatBufferedReadError{cause: ev.err}
 			}
 
 			if isOpenAICompatDoneSentinelLine(ev.line) {
-				return nil, usage, acc, prior, nil
+				return nil, usage, acc, prior, nil, nil
 			}
 			frame, ok := parser.AddLine(ev.line)
 			if !ok {
@@ -971,7 +972,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 				if response.Usage != nil {
 					usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
 				}
-				return response, usage, acc, prior, nil
+				return response, usage, acc, prior, []byte(payload), nil
 			}
 
 		case <-timeoutCh:
@@ -980,7 +981,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 				zap.String("request_id", requestID),
 				zap.Duration("interval", streamInterval),
 			)
-			return nil, usage, acc, prior, fmt.Errorf("stream data interval timeout")
+			return nil, usage, acc, prior, nil, fmt.Errorf("stream data interval timeout")
 		}
 	}
 }
@@ -1139,7 +1140,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					return true
 				}
 				message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
-				errStatus, errType, errMsg := http.StatusBadGateway, "api_error", message
+				errStatus, errType, errMsg := openAIStreamTerminalClientStatus(payloadBytes, message), "api_error", message
 				// 统一走语义状态推断 + body 归一化（与 /v1/responses 路径一致），
 				// 使按错误码配置的透传规则可命中。
 				if status, et, em, matched := applyOpenAIStreamFailedErrorPassthroughRule(

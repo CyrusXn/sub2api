@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// 身份入口只提供路由配置；外层会立即跟随目标，不占用入口账号的并发槽。
+func openAIIdentityRoutingEntry(ctx context.Context, account *Account) bool {
+	state, _ := ctx.Value(openAIIdentityRoutingContextKey{}).(*openAIIdentityRoutingState)
+	return state != nil && !state.active && identityAccountID(account) > 0
+}
+
 func identityAccountID(account *Account) int64 {
 	if account == nil || !account.IsOpenAIApiKey() {
 		return 0
@@ -39,6 +45,21 @@ func identityAccountID(account *Account) int64 {
 		return 0
 	}
 	return id
+}
+
+func identityAccountTestGroupID(account *Account) *int64 {
+	if account == nil {
+		return nil
+	}
+	if len(account.GroupIDs) > 0 && account.GroupIDs[0] > 0 {
+		id := account.GroupIDs[0]
+		return &id
+	}
+	if len(account.AccountGroups) > 0 && account.AccountGroups[0].GroupID > 0 {
+		id := account.AccountGroups[0].GroupID
+		return &id
+	}
+	return nil
 }
 
 // selectOpenAIIdentityAccount 在整次请求中共享 visited；配置链和上游失败重选均不得回访。
@@ -138,4 +159,17 @@ func (s *OpenAIGatewayService) selectOpenAIIdentityAccount(
 		decision.SelectedAccountType = fresh.Type
 		return selection, decision, nil
 	}
+}
+
+// SelectOpenAIIdentityAccountFromOrigin 用于账号对话测试：来源账号仅提供身份路由配置，不申请来源并发槽。
+func (s *OpenAIGatewayService) SelectOpenAIIdentityAccountFromOrigin(
+	ctx context.Context,
+	origin *Account,
+	groupID *int64,
+	model string,
+	transport OpenAIUpstreamTransport,
+	capability OpenAIEndpointCapability,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	state := &openAIIdentityRoutingState{active: true, visited: make(map[int64]struct{})}
+	return s.selectOpenAIIdentityAccount(ctx, state, origin, groupID, model, nil, transport, capability, false)
 }

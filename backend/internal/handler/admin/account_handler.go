@@ -1490,11 +1490,14 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	lastUserPrompt := lastTestUserPrompt(req.Messages, req.Prompt)
 	req.Prompt = formatTestConversation(req.Messages, req.Prompt)
+	testedAccountID := accountID
 
 	opts := service.AccountTestOptions{
-		ImageDataURL:   req.ImageDataURL,
-		AudioDataURL:   req.AudioDataURL,
-		LastUserPrompt: &lastUserPrompt,
+		ImageDataURL:    req.ImageDataURL,
+		AudioDataURL:    req.AudioDataURL,
+		LastUserPrompt:  &lastUserPrompt,
+		RouteIdentity:   len(req.Messages) > 0,
+		TestedAccountID: &testedAccountID,
 	}
 
 	// Use AccountTestService to test the account with SSE streaming
@@ -1504,7 +1507,7 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	}
 
 	if h.rateLimitService != nil {
-		if _, err := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); err != nil {
+		if _, err := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), testedAccountID); err != nil {
 			_ = c.Error(err)
 		}
 	}

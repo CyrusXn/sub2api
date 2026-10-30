@@ -309,10 +309,9 @@ func TestOpenAIGatewayForwardCompactFailoverEventCarriesManagedProxy(t *testing.
 
 	contextFailed := "event: response.failed\n" +
 		`data: {"type":"response.failed","response":{"status":"failed","error":{"code":"context_length_exceeded","message":"context window exceeded"}}}` + "\n\n"
-	// The fallback model's failure is an account-state error, which
-	// shouldFailoverOpenAIUpstreamResponse classifies as failover-worthy.
+	// 使用上游临时故障验证切号归因；认证与权限拒绝不再通过换号重放。
 	workspaceFailed := "event: response.failed\n" +
-		`data: {"type":"response.failed","response":{"status":"failed","error":{"code":"deactivated_workspace","message":"workspace deactivated"}}}` + "\n\n"
+		`data: {"type":"response.failed","response":{"status":"failed","error":{"status_code":503,"message":"upstream temporarily unavailable"}}}` + "\n\n"
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(contextFailed))},
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(workspaceFailed))},

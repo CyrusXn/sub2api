@@ -719,7 +719,7 @@ func TestOpenAIOAuth429_NonmatchingModelTempRuleKeepsAccountRuntimeBlock(t *test
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 
-func TestOpenAITempUnschedulable_UnknownModelKeepsAccountRuntimeBlock(t *testing.T) {
+func TestOpenAITempUnschedulable_UnknownModel404KeepsAccountAvailable(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &OpenAIGatewayService{
 		rateLimitService: &RateLimitService{accountRepo: repo},
@@ -734,9 +734,9 @@ func TestOpenAITempUnschedulable_UnknownModelKeepsAccountRuntimeBlock(t *testing
 		[]byte(`{"error":{"message":"endpoint not found"}}`),
 	)
 
-	require.True(t, shouldDisable)
-	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
-	require.Equal(t, 1, repo.tempCalls)
+	require.False(t, shouldDisable)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Zero(t, repo.tempCalls)
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 

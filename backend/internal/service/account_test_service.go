@@ -72,6 +72,10 @@ type AccountTestOptions struct {
 	AudioDataURL string
 	// 保留真实消息边界，避免把被引用的“用户：”正文误判为身份提问。
 	LastUserPrompt *string
+	// 身份对话测试跟随身份路由；探针仍只测试指定账号。
+	RouteIdentity bool
+	// 成功后只恢复实际发起上游请求的账号。
+	TestedAccountID *int64
 }
 
 func firstAccountTestOptions(opts []AccountTestOptions) AccountTestOptions {
@@ -378,6 +382,30 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
+	}
+	if testOpts.TestedAccountID != nil {
+		*testOpts.TestedAccountID = accountID
+	}
+	if testOpts.RouteIdentity && normalizeAccountTestMode(mode) == AccountTestModeDefault &&
+		account.IsOpenAIApiKey() && testOpts.LastUserPrompt != nil &&
+		isOpenAIPlainIdentityQuestion(*testOpts.LastUserPrompt) && identityAccountID(account) > 0 &&
+		s.openaiGatewayService != nil {
+		groupID := identityAccountTestGroupID(account)
+		selection, _, selectErr := s.openaiGatewayService.SelectOpenAIIdentityAccountFromOrigin(
+			ctx, account, groupID, modelID, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions)
+		if selectErr != nil {
+			return s.sendErrorAndEnd(c, "身份账号不可用，且当前分组没有可用回退账号")
+		}
+		if selection == nil || selection.Account == nil {
+			return s.sendErrorAndEnd(c, "身份账号不可用，且当前分组没有可用回退账号")
+		}
+		if selection.ReleaseFunc != nil {
+			defer selection.ReleaseFunc()
+		}
+		account = selection.Account
+		if testOpts.TestedAccountID != nil {
+			*testOpts.TestedAccountID = account.ID
+		}
 	}
 	bindAccountTestPlatform(c, account)
 

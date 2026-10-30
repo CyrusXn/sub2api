@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ const (
 	modelsDevRegistryURL                      = "https://models.dev/api.json"
 	modelsDevRegistryTTL                      = 6 * time.Hour
 	UpstreamModelMetadataExtraKey             = "upstream_model_metadata"
+	UpstreamModelCatalogExtraKey              = "upstream_model_catalog"
 	UpstreamModelMetadataIncompleteCode       = "upstream_model_metadata_incomplete"
 	UpstreamModelMetadataPartialCode          = "upstream_model_metadata_partial"
 
@@ -50,6 +52,47 @@ type UpstreamModelMetadataSnapshot struct {
 	Source   string                           `json:"source"`
 	SyncedAt string                           `json:"synced_at"`
 	Models   map[string]UpstreamModelMetadata `json:"models"`
+}
+
+// 完整发现清单独立于能力元数据；后者可能只有部分模型，不能作为调度白名单。
+type UpstreamModelCatalogSnapshot struct {
+	SyncedAt string   `json:"synced_at"`
+	Models   []string `json:"models"`
+	Binding  string   `json:"binding,omitempty"`
+}
+
+func upstreamModelCatalogBinding(account *Account) string {
+	// 仅保存摘要；更换上游、凭据或协议后旧清单不能继续限制新配置。
+	value := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%t", account.Platform, account.Type,
+		account.GetOpenAIBaseURL(), account.GetOpenAIProtocolAPIKey(), account.GetCredential("chatgpt_account_id"), account.UsesOpenAICodexProtocol())
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+}
+
+func (a *Account) supportsDiscoveredUpstreamModel(upstreamModel string) bool {
+	if a == nil || a.Platform != PlatformOpenAI {
+		return true
+	}
+	raw, exists := a.Extra[UpstreamModelCatalogExtraKey]
+	if !exists {
+		return true
+	}
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return true
+	}
+	var snapshot UpstreamModelCatalogSnapshot
+	if json.Unmarshal(body, &snapshot) != nil || snapshot.Models == nil {
+		return true
+	}
+	if snapshot.Binding != "" && snapshot.Binding != upstreamModelCatalogBinding(a) {
+		return true
+	}
+	for _, model := range snapshot.Models {
+		if strings.TrimSpace(model) == strings.TrimSpace(upstreamModel) {
+			return true
+		}
+	}
+	return false
 }
 
 type UpstreamModelCatalog struct {
@@ -259,6 +302,17 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		)
 	} else if saveErr := s.saveGrokCatalogObservation(ctx, account, grokObservation); saveErr != nil {
 		return nil, newUpstreamModelSyncInternalError("Failed to save upstream model catalog", saveErr)
+	}
+	// 只保存真实发现成功的清单；/models 不可用时的配置回退不能声称掌握上游全部模型。
+	if liveListAvailable && account != nil && account.Platform == PlatformOpenAI && account.ID > 0 && s.accountRepo != nil {
+		snapshot := UpstreamModelCatalogSnapshot{SyncedAt: time.Now().UTC().Format(time.RFC3339), Models: append([]string{}, models...), Binding: upstreamModelCatalogBinding(account)}
+		if err := s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{UpstreamModelCatalogExtraKey: snapshot}); err != nil {
+			return nil, newUpstreamModelSyncInternalError("Failed to save upstream model catalog", err)
+		}
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		account.Extra[UpstreamModelCatalogExtraKey] = snapshot
 	}
 	catalog := &UpstreamModelCatalog{Models: models, Metadata: make(map[string]UpstreamModelMetadata)}
 	if account != nil && account.IsGrok() {
