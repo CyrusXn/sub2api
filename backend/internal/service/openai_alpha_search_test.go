@@ -365,7 +365,7 @@ func TestForwardAlphaSearchSetupToken429CarriesSameAccountRetryWindow(t *testing
 	require.False(t, c.Writer.Written())
 }
 
-func TestForwardAlphaSearchAccessStateUsesTypedFailover(t *testing.T) {
+func TestForwardAlphaSearchAccessStateStopsWithoutFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -395,12 +395,48 @@ func TestForwardAlphaSearchAccessStateUsesTypedFailover(t *testing.T) {
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body)
 
 	require.Nil(t, result)
-	assertOpenAIAlphaSearchAccessStateFailover(t, err, "req_alpha_access_state")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "deactivated_workspace")
+	require.Empty(t, recorder.Header().Get("x-request-id"), "上游请求标识继续遵循响应头过滤")
 	require.Equal(t, chatgptCodexAlphaSearchURL, upstream.lastReq.URL.String())
-	require.False(t, c.Writer.Written())
+	require.True(t, c.Writer.Written())
 }
 
-func TestForwardAlphaSearchPATFallbackAccessStateUsesTypedFailover(t *testing.T) {
+func TestForwardAlphaSearchBalanceRejectNeverFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, pat := range []bool{false, true} {
+		for _, status := range []int{403, 404, 405, 429, 502} {
+			t.Run(strconv.FormatBool(pat)+"/"+strconv.Itoa(status), func(t *testing.T) {
+				body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", bytes.NewReader(body))
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{"error":{"code":"insufficient_balance","message":"Insufficient account balance"}}`)),
+				}}
+				repo := &alphaSearchAccountStateRepo{}
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream, accountRepo: repo}
+				account := &Account{ID: 91, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+					Credentials: map[string]any{"api_key": "sk-test"}}
+				if pat {
+					account.Type = AccountTypeOAuth
+					account.Credentials = map[string]any{"access_token": "at-test-token", "auth_mode": OpenAIAuthModePersonalAccessToken, "chatgpt_account_id": "chatgpt-account"}
+				}
+				result, err := svc.ForwardAlphaSearch(context.Background(), c, account, body)
+				require.Nil(t, result)
+				require.NoError(t, err, "已回写的余额拒绝不能变成切号错误")
+				require.True(t, c.Writer.Written())
+				require.Equal(t, upstreamBalanceClientStatus(status), rec.Code)
+				require.Equal(t, "insufficient_balance", gjson.Get(rec.Body.String(), "error.code").String())
+				require.Zero(t, repo.setErrorCalls)
+			})
+		}
+	}
+}
+
+func TestForwardAlphaSearchPATFallbackAccessStateStopsWithoutFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -431,24 +467,12 @@ func TestForwardAlphaSearchPATFallbackAccessStateUsesTypedFailover(t *testing.T)
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body)
 
 	require.Nil(t, result)
-	assertOpenAIAlphaSearchAccessStateFailover(t, err, "req_alpha_pat_access_state")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "account_disabled")
+	require.Empty(t, recorder.Header().Get("x-request-id"), "上游请求标识继续遵循响应头过滤")
 	require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
-	require.False(t, c.Writer.Written())
-}
-
-func assertOpenAIAlphaSearchAccessStateFailover(t *testing.T, err error, requestID string) {
-	t.Helper()
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusForbidden, failoverErr.StatusCode)
-	require.Equal(t, GatewayFailureStageAccountAuth, failoverErr.Stage)
-	require.Equal(t, GatewayFailureScopeAccount, failoverErr.Scope)
-	require.Equal(t, OpenAIUpstreamAccessStateReason, failoverErr.Reason)
-	require.Equal(t, NextAccountRetry, failoverErr.NextAccountAction)
-	require.Equal(t, http.StatusBadGateway, failoverErr.ClientStatusCode)
-	require.Equal(t, openAIUpstreamAccessUnavailableClientMessage, failoverErr.ClientMessage)
-	require.False(t, failoverErr.RetryableOnSameAccount)
-	require.Equal(t, requestID, failoverErr.ResponseHeaders.Get("x-request-id"))
+	require.True(t, c.Writer.Written())
 }
 
 func TestForwardAlphaSearchUnauthorizedDoesNotMarkAccountError(t *testing.T) {
@@ -486,12 +510,12 @@ func TestForwardAlphaSearchUnauthorizedDoesNotMarkAccountError(t *testing.T) {
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body)
 
 	require.Nil(t, result)
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusUnauthorized, failoverErr.StatusCode)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "Unauthorized")
 	require.Zero(t, repo.setErrorCalls)
 	require.Empty(t, repo.lastError)
-	require.False(t, c.Writer.Written())
+	require.True(t, c.Writer.Written())
 }
 
 func TestForwardAlphaSearchPATResponsesFallbackUnauthorizedDoesNotMarkAccountError(t *testing.T) {
@@ -529,15 +553,15 @@ func TestForwardAlphaSearchPATResponsesFallbackUnauthorizedDoesNotMarkAccountErr
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body)
 
 	require.Nil(t, result)
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusUnauthorized, failoverErr.StatusCode)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "Unauthorized")
 	require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Zero(t, repo.setErrorCalls)
 	require.Empty(t, repo.lastError)
-	require.False(t, c.Writer.Written())
+	require.True(t, c.Writer.Written())
 }
 
 // API key 上游（官方平台或第三方中转）不提供 /v1/alpha/search 时返回的

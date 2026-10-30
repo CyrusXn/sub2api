@@ -90,6 +90,11 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
+		// 余额拒绝优先于搜索端点兼容回退，不能因 404/405 或 5xx 包装重放。
+		if isUpstreamInsufficientBalanceError(resp.StatusCode, respBody) {
+			writeOpenAIBalanceError(c, resp.StatusCode)
+			return nil, nil
+		}
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) ||
 			isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode) {
@@ -174,6 +179,10 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
+		if isUpstreamInsufficientBalanceError(resp.StatusCode, respBody) {
+			writeOpenAIBalanceError(c, resp.StatusCode)
+			return nil, nil
+		}
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))

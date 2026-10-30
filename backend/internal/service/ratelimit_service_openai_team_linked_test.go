@@ -121,8 +121,8 @@ func TestTeamLinkedError_GenericPaymentErrorDoesNotFanout(t *testing.T) {
 
 	rl.HandleUpstreamError(context.Background(), &trigger, http.StatusPaymentRequired, http.Header{}, []byte(`{"error":{"message":"insufficient balance"}}`))
 
-	require.Equal(t, []int64{1}, repo.setErrorIDs)
-	require.Contains(t, repo.setErrorMsgs[1], "Payment required (402)")
+	require.Empty(t, repo.setErrorIDs, "余额拒绝不能污染账号健康状态")
+	require.Empty(t, repo.setErrorMsgs)
 	require.Zero(t, repo.listCalls)
 }
 
