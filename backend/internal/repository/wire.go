@@ -75,6 +75,7 @@ var ProviderSet = wire.NewSet(
 	NewAlertEmailOutboxRepository,
 	NewTablePreferenceRepository,
 	NewLowBalanceReminderRepository,
+	NewMCPOAuthRepository,
 	NewAPIKeyRepository,
 	NewGroupRepository,
 	NewAdminGroupRepository,
