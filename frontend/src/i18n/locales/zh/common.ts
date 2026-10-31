@@ -186,7 +186,6 @@ export default {
     modelFactory: '模型广场',
     subscriptions: '订阅管理',
     accounts: '账号管理',
-    mockAccounts: 'Mock账号',
     upstreamSites: '上游站点账号',
     balanceCenter: '余额中心',
     businessHistory: '经营历史',

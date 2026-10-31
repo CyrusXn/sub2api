@@ -104,5 +104,8 @@ describe('channel monitor refresh interval', () => {
     wrapper.findComponent(MonitorCardGrid).vm.$emit('cardClick', items[0])
     await flushPromises()
     expect(wrapper.findComponent(MonitorDetailDialog).props('passiveItem')).toEqual(items[0])
+    expect(wrapper.findComponent(MonitorDetailDialog).props('countdownSeconds')).toBe(60)
+    await vi.advanceTimersByTimeAsync(59000)
+    expect(wrapper.findComponent(MonitorDetailDialog).props('countdownSeconds')).toBe(1)
   })
 })

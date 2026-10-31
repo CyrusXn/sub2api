@@ -143,7 +143,8 @@ type FailoverState struct {
 	// SwitchCount 也不前进的活锁。清空后必须把它们放回排除集。
 	profitVetoedAccountIDs map[int64]struct{}
 	// profitVetoCount 本次请求累计的利润否决次数，用于 maxProfitVetoAttempts 上限。
-	profitVetoCount int
+	profitVetoCount      int
+	lastFailoverPlatform string
 }
 
 // NewFailoverState 创建 failover 状态
@@ -209,6 +210,7 @@ func (s *FailoverState) HandleFailoverError(
 		return FailoverCanceled
 	}
 	s.LastFailoverErr = failoverErr
+	s.lastFailoverPlatform = platform
 	if failoverErr == nil || !failoverErr.ShouldRetryNextAccount() {
 		return FailoverExhausted
 	}
@@ -247,7 +249,7 @@ func (s *FailoverState) HandleFailoverError(
 	s.FailedAccountIDs[accountID] = struct{}{}
 
 	// 检查是否耗尽
-	if s.SwitchCount >= s.MaxSwitches {
+	if s.SwitchCount >= s.MaxSwitches && platform != service.PlatformOpenAI {
 		return FailoverExhausted
 	}
 
@@ -283,6 +285,9 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 	// 不代表账号耗尽，直接按取消终止。
 	if ctx.Err() != nil {
 		return FailoverCanceled
+	}
+	if s.lastFailoverPlatform == service.PlatformOpenAI {
+		return FailoverExhausted
 	}
 
 	if s.LastFailoverErr != nil &&

@@ -409,20 +409,6 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 	bindAccountTestPlatform(c, account)
 
-	// Synthetic UI load-test accounts exercise the real SSE parsing and modal
-	// interactions, but intentionally do not send their placeholder credentials
-	// to an upstream provider.
-	if account.IsSyntheticUITest() {
-		testModelID := modelID
-		if testModelID == "" {
-			testModelID = claude.DefaultTestModel
-		}
-		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
-		s.sendEvent(c, TestEvent{Type: "content", Text: "Synthetic Anthropic OAuth account is healthy and interactive."})
-		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-		return nil
-	}
-
 	// Route to platform-specific test method
 	// 按入站协议分流的多协议供应商（国产厂商等）：按账号协议选测试路径。
 	if account.RoutesProtocolByInbound() {
@@ -2446,7 +2432,7 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 	account.RateLimitedAt = &now
 	account.RateLimitResetAt = resetAt
 
-	if account.Status == StatusError {
+	if account.Status == StatusError && !isOpenAIUpstreamBalanceStopped(account) {
 		if err := s.accountRepo.ClearError(ctx, account.ID); err != nil {
 			return
 		}

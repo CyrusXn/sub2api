@@ -4,15 +4,17 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
-// 余额拒绝与请求绑定，不能因代理包装成 429/5xx 就切号或污染账号健康状态。
-// 只读取错误字段，防止回显的用户输入改变调度结果。
+// 此函数只用于已经收到的上游响应：余额属于所选上游账号，而非本站用户。
+// 本站用户余额由入站鉴权/计费拦截；这里只读取错误字段，防止用户回显污染分类。
 func isUpstreamInsufficientBalanceError(statusCode int, body []byte) bool {
-	if statusCode < http.StatusBadRequest {
+	if statusCode < http.StatusBadRequest || hasOpenAIExplicitRequestErrorCode(body) {
 		return false
+	}
+	if isOpenAIImagesInsufficientBalance(body) {
+		return true
 	}
 	values := upstreamErrorStringValues(body, "error.code", "error.message", "error.type", "error", "message", "code", "type", "detail", "detail.code", "detail.message", "response.error.code", "response.error.type", "response.error.message")
 	if !gjson.ValidBytes(body) {
@@ -29,24 +31,14 @@ func isUpstreamInsufficientBalanceError(statusCode int, body []byte) bool {
 	return false
 }
 
-func upstreamBalanceClientStatus(status int) int {
-	if status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
-		return http.StatusForbidden
-	}
-	return status
-}
-
-func writeOpenAIBalanceError(c *gin.Context, status int) {
-	MarkResponseCommitted(c)
-	writeOpenAIErrorJSON(c, upstreamBalanceClientStatus(status), gin.H{"error": gin.H{
-		"type": "invalid_request_error", "code": "insufficient_balance", "message": "Insufficient account balance",
-	}})
-}
-
-// 状态处置与切号资格分开：认证、权限和普通参数错误不通过切换账号重放。
+// 明确的来源和错误语义优先于 HTTP 包装状态；不能将上游欠费伪装成用户欠费。
 func allowsOpenAINextAccount(status int, message string, body []byte) bool {
-	if isUpstreamInsufficientBalanceError(status, body) {
+	if isOpenAIRequestError(status, message, body) {
 		return false
+	}
+	if isUpstreamInsufficientBalanceError(status, body) || isOpenAIExplicitUpstreamError(body) ||
+		isOpenAIHTTPUpstreamAccessStateError(status, message, body) || isOpenAIExplicitCredentialFailure(body) {
+		return true
 	}
 	if status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
 		return true
@@ -55,6 +47,88 @@ func allowsOpenAINextAccount(status int, message string, body []byte) bool {
 		return true
 	}
 	return status == http.StatusBadRequest && isOpenAITransientProcessingError(status, message, body)
+}
+
+func isOpenAIExplicitUpstreamError(body []byte) bool {
+	for _, value := range upstreamErrorStringValues(body, "error.type", "response.error.type", "detail.type", "type") {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "upstream_error", "server_error", "internal_server_error", "api_error", "overloaded_error":
+			return true
+		}
+	}
+	return false
+}
+
+// 泛型 invalid_request_error 不能覆盖明确的上游欠费、模型缺失或配额信号；
+// 反之明确的上下文/参数错误不能因被包装成 429/5xx 而处罚账号。
+func isOpenAIRequestError(status int, message string, body []byte) bool {
+	if hasOpenAIExplicitRequestErrorCode(body) {
+		return true
+	}
+	if isUpstreamInsufficientBalanceError(status, body) ||
+		isUpstreamModelNotFoundError(status, body) || isOpenAICompatibleModelNotFoundBody(body) ||
+		isOpenAIHTTPUpstreamAccessStateError(status, message, body) {
+		return false
+	}
+	if isOpenAIContextWindowError(message, body) {
+		return true
+	}
+	if hit, _, _ := detectOpenAICyberPolicy(body); hit {
+		return true
+	}
+	if isOpenAITransientProcessingError(status, message, body) || isOpenAIRequestScopedCapacityShed(message, body) {
+		return false
+	}
+	if isOpenAIExplicitCredentialFailure(body) {
+		return false
+	}
+	for _, code := range upstreamErrorStringValues(body, "error.code", "response.error.code", "detail.code", "code") {
+		switch strings.ToLower(strings.TrimSpace(code)) {
+		case "rate_limit_exceeded", "rate_limit_error", "too_many_requests", "server_is_overloaded", "slow_down", "invalid_api_key", "invalid_token":
+			return false
+		}
+	}
+	for _, value := range upstreamErrorStringValues(body, "error.type", "response.error.type", "detail.type", "type") {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "authentication_error", "authentication_failed", "unauthorized_error":
+			return false
+		case "invalid_request_error", "request_error", "validation_error", "invalid_argument", "bad_request":
+			return true
+		}
+	}
+	return false
+}
+
+// 明确的请求错误码不能被 message 中回显的余额字样覆盖，避免坏请求误停供应侧账号。
+func hasOpenAIExplicitRequestErrorCode(body []byte) bool {
+	for _, code := range upstreamErrorStringValues(body, "error.code", "response.error.code", "detail.code", "code") {
+		switch strings.ToLower(strings.TrimSpace(code)) {
+		case "invalid_parameter", "missing_required_parameter", "invalid_argument", "invalid_value", "unsupported_parameter", "context_length_exceeded", "context_too_large":
+			return true
+		}
+	}
+	return false
+}
+
+func isOpenAIExplicitTransient4xx(status int, body []byte) bool {
+	return (status == http.StatusBadRequest || status == http.StatusForbidden) &&
+		isOpenAIExplicitUpstreamError(body) && !isOpenAIRequestError(status, "", body) &&
+		!isUpstreamInsufficientBalanceError(status, body) &&
+		!isOpenAIHTTPUpstreamAccessStateError(status, "", body)
+}
+
+func openAIRequestErrorClientStatus(status int) int {
+	if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+		return status
+	}
+	return http.StatusBadRequest
+}
+
+const openAIUpstreamInsufficientBalanceMessage = "上游账号余额不足，请充值后手动恢复调度"
+const openAIUpstreamInsufficientBalanceReason = GatewayFailureReason("openai_upstream_insufficient_balance")
+
+func isOpenAIUpstreamBalanceStopped(account *Account) bool {
+	return account != nil && account.Status == StatusError && account.ErrorMessage == openAIUpstreamInsufficientBalanceMessage
 }
 
 // 对象字段可能混有用户回显，不能将整个 JSON 对象转成字符串参与错误分类。

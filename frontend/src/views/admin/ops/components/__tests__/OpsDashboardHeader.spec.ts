@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import OpsDashboardHeader from '../OpsDashboardHeader.vue'
 import type { OpsDashboardOverview } from '@/api/admin/ops'
+import { opsAPI } from '@/api/admin/ops'
 
 vi.mock('@/api', () => ({ adminAPI: { groups: { getAll: vi.fn().mockResolvedValue([]) } } }))
 vi.mock('@/api/admin/ops', () => ({ opsAPI: { getRealtimeTrafficSummary: vi.fn().mockResolvedValue({ enabled: true, summary: null }) } }))
@@ -20,6 +21,17 @@ function mountHeader(value = overview) {
 }
 
 describe('OpsDashboardHeader output TPS', () => {
+
+  it('手动和自动刷新完成后均同步实时指标，而非依赖倒计时曾显示零', async () => {
+    const wrapper = mountHeader()
+    await flushPromises()
+    const calls = vi.mocked(opsAPI.getRealtimeTrafficSummary).mock.calls.length
+    await wrapper.setProps({ loading: true })
+    await wrapper.setProps({ loading: false, lastUpdated: new Date(Date.now() + 1000) })
+    await flushPromises()
+    expect(opsAPI.getRealtimeTrafficSummary).toHaveBeenCalledTimes(calls + 1)
+    wrapper.unmount()
+  })
 
   it('shows per-request P50, slower-tail percentiles and sample count separately from traffic TPS', async () => {
     const wrapper = mountHeader({ ...overview, output_tps: { p5: 2.35, p10: 3.7, p50: 55, avg: 277.75, sample_count: 4 } })

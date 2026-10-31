@@ -150,16 +150,19 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		return err
 	}
 
+	modelFailureHandled := false
 	if classifyUpstreamTransportError(err).Persistent {
 		s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
 	} else if account != nil && account.Platform == PlatformOpenAI && c != nil {
 		// 网络瞬断也先避开当前账号，但只冷却本次实际发送的模型，不整号摘除。
 		s.coolOpenAIAccountModelAfterFailure(ctx, account, c.GetString(OpsUpstreamModelKey))
+		modelFailureHandled = strings.TrimSpace(c.GetString(OpsUpstreamModelKey)) != ""
 	}
 
 	return &UpstreamFailoverError{
-		StatusCode:   http.StatusBadGateway,
-		ResponseBody: openAITransportFailoverBody,
+		StatusCode:                http.StatusBadGateway,
+		ResponseBody:              openAITransportFailoverBody,
+		OpenAIModelFailureHandled: modelFailureHandled,
 	}
 }
 

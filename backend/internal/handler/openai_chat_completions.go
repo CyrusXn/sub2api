@@ -383,7 +383,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches && !failoverErr.ExhaustBeforeFirstOutput && !service.IsOpenAIIdentityRoutingActive(c.Request.Context()) {
+					if switchCount >= maxAccountSwitches && account.Platform != service.PlatformOpenAI && !failoverErr.ExhaustBeforeFirstOutput && !service.IsOpenAIIdentityRoutingActive(c.Request.Context()) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

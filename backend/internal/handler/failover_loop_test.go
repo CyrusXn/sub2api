@@ -83,6 +83,25 @@ func TestHandleFailoverError_OpenAISwitchesImmediately(t *testing.T) {
 	}
 }
 
+func TestHandleFailoverError_OpenAIExhaustsGroupWithoutSwitchBudgetOrRetryLoop(t *testing.T) {
+	fs := NewFailoverState(1, false)
+	for accountID := int64(1); accountID <= 4; accountID++ {
+		err := &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}
+		action := fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, accountID, service.PlatformOpenAI, 0, err)
+		require.Equal(t, FailoverContinue, action)
+		require.Contains(t, fs.FailedAccountIDs, accountID)
+	}
+	require.Equal(t, 4, fs.SwitchCount, "OpenAI 必须遍历完当前请求的已选账号")
+	require.Equal(t, FailoverExhausted, fs.HandleSelectionExhausted(context.Background()), "OpenAI 池耗尽后不得清空排除集重试")
+}
+
+func TestHandleFailoverError_OtherPlatformKeepsSwitchBudget(t *testing.T) {
+	fs := NewFailoverState(1, false)
+	err := &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}
+	require.Equal(t, FailoverContinue, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, service.PlatformAnthropic, 0, err))
+	require.Equal(t, FailoverExhausted, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 2, service.PlatformAnthropic, 0, err))
+}
+
 func TestSameAccountRetryAllowedUsesDeadlineInsteadOfPoolCount(t *testing.T) {
 	err := &service.UpstreamFailoverError{
 		RetryableOnSameAccount:   true,

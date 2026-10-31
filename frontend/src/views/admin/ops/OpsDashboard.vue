@@ -157,7 +157,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useDebounceFn, useIntervalFn } from '@vueuse/core'
+import { useDebounceFn } from '@vueuse/core'
+import { useAutoRefresh } from '@/composables/useAutoRefresh'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -412,32 +413,17 @@ applyRouteQueryToState()
 // Auto refresh settings
 const showAlertEvents = ref(true)
 const showOpenAITokenStats = ref(false)
-const autoRefreshEnabled = ref(false)
-const autoRefreshIntervalMs = ref(30000) // default 30 seconds
-const autoRefreshCountdown = ref(0)
+const dashboardAutoRefresh = useAutoRefresh({
+  intervals: [15, 30, 60],
+  defaultInterval: 30,
+  onRefresh: () => fetchData(),
+  shouldPause: () => !opsEnabled.value || loading.value,
+})
+const autoRefreshEnabled = dashboardAutoRefresh.enabled
+const autoRefreshCountdown = dashboardAutoRefresh.countdown
 
 // Used to trigger child component refreshes in a single shared cadence.
 const dashboardRefreshToken = ref(0)
-
-// Countdown timer (drives auto refresh; updates every second)
-const { pause: pauseCountdown, resume: resumeCountdown } = useIntervalFn(
-  () => {
-    if (!autoRefreshEnabled.value) return
-    if (!opsEnabled.value) return
-    if (loading.value) return
-
-    if (autoRefreshCountdown.value <= 0) {
-      // Fetch immediately when the countdown reaches 0.
-      // fetchData() will reset the countdown to the full interval.
-      fetchData()
-      return
-    }
-
-    autoRefreshCountdown.value -= 1
-  },
-  1000,
-  { immediate: false }
-)
 
 // Load ops dashboard presentation settings from backend.
 async function loadDashboardAdvancedSettings() {
@@ -445,16 +431,13 @@ async function loadDashboardAdvancedSettings() {
     const settings = await opsAPI.getAdvancedSettings()
     showAlertEvents.value = settings.display_alert_events
     showOpenAITokenStats.value = settings.display_openai_token_stats
-    autoRefreshEnabled.value = settings.auto_refresh_enabled
-    autoRefreshIntervalMs.value = settings.auto_refresh_interval_seconds * 1000
-    autoRefreshCountdown.value = settings.auto_refresh_interval_seconds
+    dashboardAutoRefresh.setInterval(settings.auto_refresh_interval_seconds)
+    dashboardAutoRefresh.setEnabled(settings.auto_refresh_enabled)
   } catch (err) {
     console.error('[OpsDashboard] Failed to load dashboard advanced settings', err)
     showAlertEvents.value = true
     showOpenAITokenStats.value = false
-    autoRefreshEnabled.value = false
-    autoRefreshIntervalMs.value = 30000
-    autoRefreshCountdown.value = 0
+    dashboardAutoRefresh.setEnabled(false)
   }
 }
 
@@ -767,11 +750,6 @@ async function fetchData() {
     // Trigger child component refreshes using the same cadence as the header.
     dashboardRefreshToken.value += 1
 
-    // Reset auto refresh countdown after successful fetch
-    if (autoRefreshEnabled.value) {
-      autoRefreshCountdown.value = Math.floor(autoRefreshIntervalMs.value / 1000)
-    }
-
     // Defer non-core visual panels to reduce initial blocking.
     void refreshDeferredPanels(fetchSeq, dashboardFetchController.signal)
   } catch (err) {
@@ -783,6 +761,7 @@ async function fetchData() {
     if (fetchSeq === dashboardFetchSeq) {
       loading.value = false
       hasLoadedOnce.value = true
+      if (autoRefreshEnabled.value) dashboardAutoRefresh.resetCountdown()
     }
   }
 }
@@ -841,11 +820,6 @@ onMounted(async () => {
   if (opsEnabled.value) {
     await fetchData()
   }
-
-  // Start auto refresh if enabled
-  if (autoRefreshEnabled.value) {
-    resumeCountdown()
-  }
 })
 
 async function loadThresholds() {
@@ -861,18 +835,7 @@ async function loadThresholds() {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   abortDashboardFetch()
-  pauseCountdown()
-})
-
-// Watch auto refresh settings changes
-watch(autoRefreshEnabled, (enabled) => {
-  if (enabled) {
-    autoRefreshCountdown.value = Math.floor(autoRefreshIntervalMs.value / 1000)
-    resumeCountdown()
-  } else {
-    pauseCountdown()
-    autoRefreshCountdown.value = 0
-  }
+  dashboardAutoRefresh.stop()
 })
 
 // Reload auto refresh settings after settings dialog is closed

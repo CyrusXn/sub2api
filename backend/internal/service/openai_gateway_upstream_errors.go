@@ -140,13 +140,6 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 		(!gjson.ValidBytes(upstreamBody) && isOpenAICapacityShedMessage(string(upstreamBody))) {
 		return true
 	}
-	if upstreamStatusCode != http.StatusBadRequest && upstreamStatusCode != http.StatusServiceUnavailable {
-		return false
-	}
-	if upstreamStatusCode != http.StatusBadRequest {
-		return false
-	}
-
 	match := func(text string) bool {
 		lower := strings.ToLower(strings.TrimSpace(text))
 		if lower == "" {
@@ -271,6 +264,9 @@ func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
 		if strings.Contains(lower, "context length") && hasExceeded {
 			return true
 		}
+		if strings.Contains(lower, "context limit") && hasExceeded {
+			return true
+		}
 		return strings.Contains(lower, "token limit") &&
 			strings.Contains(lower, "context") &&
 			hasExceeded
@@ -326,6 +322,9 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 		return true
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
+		return true
+	}
+	if isUpstreamInsufficientBalanceError(statusCode, upstreamBody) || isOpenAIExplicitUpstreamError(upstreamBody) || isOpenAIExplicitCredentialFailure(upstreamBody) {
 		return true
 	}
 	// A missing model is account/provider availability, not a malformed client
@@ -398,6 +397,26 @@ func newOpenAIUpstreamFailoverError(
 		RetryableOnSameAccount: retryableOnSameAccount || requestScopedCapacity,
 		RequestScopedTransient: requestScopedCapacity,
 	}
+	if isOpenAIRequestError(statusCode, upstreamMsg, responseBody) {
+		failoverErr.RetryableOnSameAccount = false
+		failoverErr.RequestScopedTransient = false
+		failoverErr.Scope = GatewayFailureScopeRequest
+		failoverErr.NextAccountAction = NextAccountStop
+		failoverErr.ClientStatusCode = openAIRequestErrorClientStatus(statusCode)
+		failoverErr.ClientMessage = upstreamMsg
+		return failoverErr
+	}
+	if isUpstreamInsufficientBalanceError(statusCode, responseBody) {
+		failoverErr.RetryableOnSameAccount = false
+		failoverErr.RequestScopedTransient = false
+		failoverErr.Stage = GatewayFailureStageAccountAuth
+		failoverErr.Scope = GatewayFailureScopeAccount
+		failoverErr.Reason = openAIUpstreamInsufficientBalanceReason
+		failoverErr.NextAccountAction = NextAccountRetry
+		failoverErr.ClientStatusCode = http.StatusBadGateway
+		failoverErr.ClientMessage = "Upstream account has insufficient balance, please contact administrator"
+		return failoverErr
+	}
 	if requestScopedCapacity {
 		failoverErr.SameAccountRetryDelay = openAIRequestScopedRetryDelay(responseHeaders, responseBody)
 	}
@@ -436,8 +455,9 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverError(
 	upstreamMsg string,
 	shouldDisable bool,
 	retryableOnSameAccount bool,
+	modelFailureHandled ...bool,
 ) *UpstreamFailoverError {
-	return s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, responseHeaders, responseHeaders, responseBody, upstreamMsg, shouldDisable, retryableOnSameAccount)
+	return s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, responseHeaders, responseHeaders, responseBody, upstreamMsg, shouldDisable, retryableOnSameAccount, modelFailureHandled...)
 }
 
 func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHeaders(
@@ -449,6 +469,7 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 	upstreamMsg string,
 	shouldDisable bool,
 	retryableOnSameAccount bool,
+	modelFailureHandled ...bool,
 ) *UpstreamFailoverError {
 	oauth429Retry := s.shouldRetryOpenAIOAuth429OnSameAccountWithResponse(account, statusCode, shouldDisable, classificationHeaders, responseBody)
 	failoverErr := newOpenAIUpstreamFailoverError(
@@ -458,6 +479,8 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 		upstreamMsg,
 		retryableOnSameAccount || oauth429Retry,
 	)
+	// 只有调用方明确完成本次模型状态处理才跳过回报兜底；空响应等错误仍需计数。
+	failoverErr.OpenAIModelFailureHandled = len(modelFailureHandled) > 0 && modelFailureHandled[0]
 	if oauth429Retry {
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
@@ -646,10 +669,6 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		upstreamDetail = truncateString(string(body), maxBytes)
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
-	if isUpstreamInsufficientBalanceError(resp.StatusCode, body) {
-		writeOpenAIBalanceError(c, resp.StatusCode)
-		return nil, fmt.Errorf("upstream rejected request: insufficient balance")
-	}
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
 
 	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -695,6 +714,18 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	// Check custom error codes
+	// 请求错误仍沿用管理员文案规则和运维记录，只跳过账号状态处罚。
+	if isOpenAIRequestError(resp.StatusCode, upstreamMsg, body) {
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID: opsUpstreamProxyID(account), ProxyName: opsUpstreamProxyName(account),
+			Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+			UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+			Kind: "http_error", Message: upstreamMsg, Detail: upstreamDetail,
+		})
+		MarkResponseCommitted(c)
+		writeOpenAIUpstreamClientError(c, openAIRequestErrorClientStatus(resp.StatusCode), body, upstreamMsg)
+		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
+	}
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			ProxyID:            opsUpstreamProxyID(account),
@@ -745,11 +776,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		Detail:             upstreamDetail,
 	})
 	if shouldDisable && allowsOpenAINextAccount(resp.StatusCode, upstreamMsg, body) {
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           body,
-			RetryableOnSameAccount: false,
-		}
+		return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, body, upstreamMsg, shouldDisable, false, reqModel != "")
 	}
 
 	MarkResponseCommitted(c)
@@ -880,12 +907,6 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 
-	if isUpstreamInsufficientBalanceError(resp.StatusCode, body) {
-		MarkResponseCommitted(c)
-		writeError(c, upstreamBalanceClientStatus(resp.StatusCode), "invalid_request_error", "Insufficient account balance")
-		return nil, fmt.Errorf("upstream rejected request: insufficient balance")
-	}
-
 	// Apply error passthrough rules
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
 		c, account.Platform, resp.StatusCode, body,
@@ -904,6 +925,17 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 
 	// Check custom error codes — if the account does not handle this status,
 	// return a generic error without exposing upstream details.
+	if isOpenAIRequestError(resp.StatusCode, upstreamMsg, body) {
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID: opsUpstreamProxyID(account), ProxyName: opsUpstreamProxyName(account),
+			Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+			UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+			Kind: "http_error", Message: upstreamMsg, Detail: upstreamDetail,
+		})
+		MarkResponseCommitted(c)
+		writeError(c, openAIRequestErrorClientStatus(resp.StatusCode), "invalid_request_error", upstreamMsg)
+		return nil, fmt.Errorf("upstream rejected client request: %s", upstreamMsg)
+	}
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			ProxyID:            opsUpstreamProxyID(account),
@@ -950,11 +982,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		Detail:             upstreamDetail,
 	})
 	if shouldDisable && allowsOpenAINextAccount(resp.StatusCode, upstreamMsg, body) {
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           body,
-			RetryableOnSameAccount: false,
-		}
+		return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, body, upstreamMsg, shouldDisable, false, modelForCooldown != "")
 	}
 
 	MarkResponseCommitted(c)

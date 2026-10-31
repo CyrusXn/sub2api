@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -106,7 +105,7 @@ func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing
 	require.Equal(t, int64(256), gjson.GetBytes(upstream.lastBody, "dimensions").Int())
 }
 
-func TestForwardEmbeddings_AccessStateStopsWithoutFailover(t *testing.T) {
+func TestForwardEmbeddings_AccessStateAllowsNextAccountBeforeOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	reqBody := []byte(`{"model":"text-embedding-3-small","input":"hello"}`)
@@ -138,14 +137,16 @@ func TestForwardEmbeddings_AccessStateStopsWithoutFailover(t *testing.T) {
 	require.Nil(t, result)
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Contains(t, rec.Body.String(), "deactivated_workspace")
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusForbidden, failoverErr.StatusCode)
+	require.True(t, failoverErr.ShouldRetryNextAccount())
+	require.Contains(t, string(failoverErr.ResponseBody), "deactivated_workspace")
+	require.Empty(t, rec.Body.String())
 	require.Empty(t, rec.Header().Get("x-request-id"), "上游请求标识继续遵循响应头过滤")
-	require.True(t, c.Writer.Written())
+	require.False(t, c.Writer.Written())
 }
 
-func TestForwardEmbeddings_NonAccessFailoverKeepsLegacyShape(t *testing.T) {
+func TestForwardEmbeddings_NonAccessFailoverPreservesClassificationHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	reqBody := []byte(`{"model":"text-embedding-3-small","input":"hello"}`)
@@ -179,6 +180,6 @@ func TestForwardEmbeddings_NonAccessFailoverKeepsLegacyShape(t *testing.T) {
 	require.Empty(t, failoverErr.Reason)
 	require.Zero(t, failoverErr.ClientStatusCode)
 	require.Empty(t, failoverErr.ClientMessage)
-	require.Nil(t, failoverErr.ResponseHeaders)
+	require.Equal(t, "application/json", failoverErr.ResponseHeaders.Get("Content-Type"))
 	require.False(t, c.Writer.Written())
 }

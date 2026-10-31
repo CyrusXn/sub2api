@@ -81,7 +81,7 @@ func TestOpenAIIdentityRoutingHTTP(t *testing.T) {
 					require.Equal(t, []int64{2, 3, 5}, upstream.accountIDs, "跳过原账号与重复目标，且不受普通换号次数截断")
 					require.Equal(t, []string{"Bearer test-only-2", "Bearer test-only-3", "Bearer test-only-5"}, upstream.headers)
 				} else {
-					require.Equal(t, []int64{1}, upstream.accountIDs, "保留普通问题的原账号选择与换号上限")
+					require.Equal(t, []int64{1, 4, 3, 5, 2}, upstream.accountIDs, "普通问题不使用身份映射，故障仍按倍率和优先级去重切号")
 					require.False(t, service.IsOpenAIIdentityRoutingActive(c.Request.Context()))
 				}
 				require.Equal(t, http.StatusBadGateway, c.Writer.Status())

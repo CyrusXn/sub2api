@@ -978,20 +978,14 @@ func (h *GroupHandler) GetStats(c *gin.Context) {
 	if h.rejectUnsupportedSimpleModeOperation(c, "stats") {
 		return
 	}
-	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	_, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid group ID")
 		return
 	}
 
-	// Return mock data for now
-	response.Success(c, gin.H{
-		"total_api_keys":  0,
-		"active_api_keys": 0,
-		"total_requests":  0,
-		"total_cost":      0.0,
-	})
-	_ = groupID // TODO: implement actual stats
+	// 不用模拟零值冒充已接入的分组统计。
+	response.Error(c, 501, "分组统计接口尚未提供，请使用分组用量汇总")
 }
 
 // GetUsageSummary returns today's, yesterday's, and cumulative cost for all groups.

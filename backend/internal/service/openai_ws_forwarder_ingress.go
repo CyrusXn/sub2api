@@ -883,7 +883,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				return nil, errOpenAIWSSessionPreempted
 			}
 			canonicalModel := canonicalOpenAIAccountSchedulingModel(account, ingressSessionOriginalModel)
-			s.handleOpenAIWSDialTransientFailure(ctx, account, canonicalModel, acquireErr)
 			dialStatus, dialClass, dialCloseStatus, dialCloseReason, dialRespServer, dialRespVia, dialRespCFRay, dialRespReqID := summarizeOpenAIWSDialError(acquireErr)
 			logOpenAIWSModeInfo(
 				"ingress_ws_upstream_acquire_fail account_id=%d turn=%d reason=%s dial_status=%d dial_class=%s dial_close_status=%s dial_close_reason=%s dial_resp_server=%s dial_resp_via=%s dial_resp_cf_ray=%s dial_resp_x_request_id=%s cause=%s preferred_conn_id=%s force_preferred_conn=%v ws_host=%s ws_path=%s proxy_enabled=%v",
@@ -906,10 +905,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				account.ProxyID != nil && account.Proxy != nil,
 			)
 			var dialErr *openAIWSDialError
-			if errors.As(acquireErr, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
-				s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(acquireErr.Error()), canonicalModel)
-				return nil, s.newOpenAIWSRateLimitFailoverError(account, dialErr.ResponseHeaders, nil, acquireErr.Error())
+			if failoverErr, ok := s.openAIWSHandshakeFailoverError(ctx, account, canonicalModel, acquireErr); ok {
+				return nil, failoverErr
 			}
+			if errors.As(acquireErr, &dialErr) && dialErr != nil && isOpenAIRequestError(dialErr.StatusCode, extractUpstreamErrorMessage(dialErr.ResponseBody), dialErr.ResponseBody) {
+				return nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "upstream rejected the request", acquireErr)
+			}
+			s.handleOpenAIWSDialTransientFailure(ctx, account, canonicalModel, acquireErr)
 			if errors.Is(acquireErr, errOpenAIWSPreferredConnUnavailable) {
 				return nil, NewOpenAIWSClientCloseError(
 					coderws.StatusPolicyViolation,
@@ -963,6 +965,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		turnStart := time.Now()
 		wroteDownstream := false
+		failureAccountSideEffectsApplied := false
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
 				"write_upstream",
@@ -1035,10 +1038,21 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if eventType == "error" || eventType == "response.failed" {
 				markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
+				message := extractOpenAISSEErrorMessage(upstreamMessage)
+				code, errType, errMessage := parseOpenAIWSErrorEventFields(upstreamMessage)
+				// 仅明确限流的裸 error 留给专门分支；数字 429 和 response.failed 不能漏切号。
+				if !wroteDownstream && (eventType != "error" || !isOpenAIWSRateLimitSignal(upstreamMessage, code, errType, errMessage)) &&
+					((eventType == "error" && openAIStreamErrorEventShouldFailover(upstreamMessage, message)) ||
+						(eventType == "response.failed" && openAIStreamFailedEventShouldFailover(upstreamMessage, message))) {
+					lease.MarkBroken()
+					return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, false, "", upstreamMessage, message, mappedModel, lease.HandshakeHeaders())
+				}
 			}
 			if eventType == "error" {
-				s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(upstreamMessage)
+				if !failureAccountSideEffectsApplied && !isOpenAIWSRateLimitSignal(upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw) {
+					failureAccountSideEffectsApplied = s.handleOpenAIWSFailureAccountSideEffects(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
+				}
 				statusCode := openAIWSRejectedFieldRetryHTTPStatus(upstreamMessage)
 				if !wroteDownstream && statusCode == http.StatusBadRequest && rejectedFieldRetryState != nil {
 					retryBody, retryReason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(
@@ -1063,7 +1077,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						}
 					}
 				}
-				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
+				modelFailureHandled := failureAccountSideEffectsApplied
+				if !failureAccountSideEffectsApplied {
+					modelFailureHandled = s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
+					failureAccountSideEffectsApplied = modelFailureHandled
+				}
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				if fallbackReason == openAIWSFallbackReasonInvalidEncryptedContent {
 					// 记录被上游拒绝的密文摘要；错误照旧透传，下一轮进场时按摘要预剥离。
@@ -1133,9 +1151,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						false,
 					)
 				}
-				if !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw) {
+				if !wroteDownstream && isOpenAIWSRateLimitSignal(upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw) {
 					lease.MarkBroken()
-					return nil, s.newOpenAIWSRateLimitFailoverError(account, lease.HandshakeHeaders(), upstreamMessage, errMsgRaw)
+					return nil, s.newOpenAIWSRateLimitFailoverError(account, lease.HandshakeHeaders(), upstreamMessage, errMsgRaw, modelFailureHandled)
 				}
 			}
 			isTokenEvent := isOpenAIWSTokenEvent(eventType)
@@ -1202,7 +1220,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 			}
 			if isTerminalEvent {
-				terminalEvent := s.handleOpenAIWSTerminalTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
+				terminalEvent := normalizeOpenAIWSTerminalEvent(eventType)
+				// 上游可能用 error 和 response.failed 描述同次故障，每轮只处罚一次。
+				if terminalEvent == "response.failed" && !failureAccountSideEffectsApplied {
+					failureAccountSideEffectsApplied = s.handleOpenAIWSFailureAccountSideEffects(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
+				}
 				// 客户端已断连时，上游连接的 session 状态不可信，标记 broken 避免回池复用。
 				if clientDisconnected {
 					lease.MarkBroken()

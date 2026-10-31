@@ -452,6 +452,17 @@ func TestAccountTestService_OpenAI429BodyOnlyPersistsRateLimitAndClearsStaleErro
 	require.Empty(t, repo.updatedExtra)
 }
 
+func TestAccountTestService_OpenAI429PreservesUpstreamBalanceStop(t *testing.T) {
+	repo := &openAIAccountTestRepo{}
+	svc := &AccountTestService{accountRepo: repo}
+	account := &Account{ID: 78, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusError, ErrorMessage: openAIUpstreamInsufficientBalanceMessage, Schedulable: false}
+	svc.reconcileOpenAI429State(context.Background(), account, nil, []byte(`{"error":{"resets_at":1777283883}}`))
+	require.Zero(t, repo.clearedErrorID)
+	require.Equal(t, StatusError, account.Status)
+	require.Equal(t, openAIUpstreamInsufficientBalanceMessage, account.ErrorMessage)
+	require.False(t, account.Schedulable)
+}
+
 func TestAccountTestService_OpenAI429SyncsObservedPlanType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()

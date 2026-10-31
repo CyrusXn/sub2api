@@ -11,15 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenAIModelTransient_FirstFailureCreatesShortBlock(t *testing.T) {
+func TestOpenAIModelTransient_FirstFailureCreatesOneSecondBlock(t *testing.T) {
 	state := newOpenAIAccountModelTransientState(128)
 	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
 
 	decision := state.recordFailure(35, "gpt-5.5", now)
 
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
+	assert.Equal(t, time.Second, decision.Cooldown)
 	assert.True(t, state.isBlocked(35, "gpt-5.5", now))
+	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(time.Second)))
 }
 
 func TestOpenAIModelTransient_SecondFailureCreatesShortModelBlock(t *testing.T) {
@@ -30,12 +31,12 @@ func TestOpenAIModelTransient_SecondFailureCreatesShortModelBlock(t *testing.T) 
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(time.Second))
 
 	assert.Equal(t, 2, decision.FailureStreak)
-	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
-	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
-	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(openAIModelTransientShortCooldown+2*time.Second)))
+	assert.Equal(t, 2*time.Second, decision.Cooldown)
+	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(time.Second)))
+	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(3*time.Second)))
 }
 
-func TestOpenAIModelTransient_ThirdFailureCreatesFortyFiveSecondModelBlock(t *testing.T) {
+func TestOpenAIModelTransient_ThirdFailureCreatesThreeSecondModelBlock(t *testing.T) {
 	state := newOpenAIAccountModelTransientState(128)
 	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
 	state.recordFailure(35, "gpt-5.5", now)
@@ -44,9 +45,27 @@ func TestOpenAIModelTransient_ThirdFailureCreatesFortyFiveSecondModelBlock(t *te
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(2*time.Second))
 
 	assert.Equal(t, 3, decision.FailureStreak)
-	assert.Equal(t, 45*time.Second, decision.Cooldown)
-	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(40*time.Second)))
-	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(48*time.Second)))
+	assert.Equal(t, 3*time.Second, decision.Cooldown)
+	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(3*time.Second)))
+	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(5*time.Second)))
+}
+
+func TestOpenAIModelTransient_CooldownGraduallyIncreasesAndExpires(t *testing.T) {
+	state := newOpenAIAccountModelTransientState(128)
+	now := time.Date(2026, 10, 30, 5, 0, 0, 0, time.UTC)
+	for i, seconds := range []int{1, 2, 3, 4, 5, 5, 5, 5, 5, 5} {
+		failedAt := now.Add(time.Duration(i) * 10 * time.Second)
+		decision := state.recordFailure(35, "gpt-5.5", failedAt)
+		require.Equal(t, i+1, decision.FailureStreak)
+		require.Equal(t, time.Duration(seconds)*time.Second, decision.Cooldown)
+		require.Equal(t, seconds > 0, state.isBlocked(35, "gpt-5.5", failedAt))
+		require.False(t, state.isBlocked(35, "gpt-5.6-luna", failedAt))
+		require.False(t, state.isBlocked(47, "gpt-5.5", failedAt))
+		if seconds > 0 {
+			require.True(t, state.isBlocked(35, "gpt-5.5", decision.BlockUntil.Add(-time.Nanosecond)))
+			require.False(t, state.isBlocked(35, "gpt-5.5", decision.BlockUntil))
+		}
+	}
 }
 
 func TestOpenAIModelTransient_BlockIsIsolatedByModel(t *testing.T) {
@@ -55,7 +74,7 @@ func TestOpenAIModelTransient_BlockIsIsolatedByModel(t *testing.T) {
 	state.recordFailure(35, "gpt-5.6-terra", now)
 	state.recordFailure(35, "GPT-5.6-TERRA", now.Add(time.Second))
 
-	assert.True(t, state.isBlocked(35, "gpt-5.6-terra", now.Add(2*time.Second)))
+	assert.True(t, state.isBlocked(35, "gpt-5.6-terra", now.Add(time.Second)))
 	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
 	assert.False(t, state.isBlocked(47, "gpt-5.6-terra", now.Add(2*time.Second)))
 }
@@ -65,14 +84,14 @@ func TestOpenAIModelTransient_SuccessClearsStreakAndBlock(t *testing.T) {
 	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
 	state.recordFailure(35, "gpt-5.5", now)
 	state.recordFailure(35, "gpt-5.5", now.Add(time.Second))
-	require.True(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
+	require.True(t, state.isBlocked(35, "gpt-5.5", now.Add(time.Second)))
 
 	state.recordSuccess(35, "gpt-5.5")
 
 	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(3*time.Second))
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
+	assert.Equal(t, time.Second, decision.Cooldown)
 }
 
 func TestOpenAIModelTransient_StaleStreakExpires(t *testing.T) {
@@ -83,7 +102,7 @@ func TestOpenAIModelTransient_StaleStreakExpires(t *testing.T) {
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(openAIModelTransientStreakTTL+time.Second))
 
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
+	assert.Equal(t, time.Second, decision.Cooldown)
 }
 
 // A streak must not depend on how often the gateway is called. Sparse traffic
@@ -93,7 +112,7 @@ func TestOpenAIModelTransient_StreakSurvivesSparseTraffic(t *testing.T) {
 	state := newOpenAIAccountModelTransientState(128)
 	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
 	gap := 5 * time.Minute
-	require.Greater(t, gap, openAIModelTransientLongCooldown,
+	require.Greater(t, gap, 5*time.Second,
 		"the gap must exceed every cooldown, otherwise this passes for the wrong reason")
 
 	first := state.recordFailure(35, "gpt-5.5", now)
@@ -101,11 +120,11 @@ func TestOpenAIModelTransient_StreakSurvivesSparseTraffic(t *testing.T) {
 	third := state.recordFailure(35, "gpt-5.5", now.Add(2*gap))
 
 	assert.Equal(t, 1, first.FailureStreak)
-	assert.Equal(t, openAIModelTransientShortCooldown, first.Cooldown)
+	assert.Equal(t, time.Second, first.Cooldown)
 	assert.Equal(t, 2, second.FailureStreak)
-	assert.Equal(t, openAIModelTransientShortCooldown, second.Cooldown)
+	assert.Equal(t, 2*time.Second, second.Cooldown)
 	assert.Equal(t, 3, third.FailureStreak)
-	assert.Equal(t, openAIModelTransientLongCooldown, third.Cooldown)
+	assert.Equal(t, 3*time.Second, third.Cooldown)
 	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(2*gap+time.Second)))
 }
 
@@ -122,8 +141,8 @@ func TestOpenAIModelTransient_SuccessResetsStreakAcrossSparseTraffic(t *testing.
 	decision := state.recordFailure(35, "gpt-5.5", now.Add(gap))
 
 	assert.Equal(t, 1, decision.FailureStreak)
-	assert.Equal(t, openAIModelTransientShortCooldown, decision.Cooldown)
-	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(gap+time.Second)))
+	assert.Equal(t, time.Second, decision.Cooldown)
+	assert.False(t, state.isBlocked(35, "gpt-5.5", now.Add(gap+time.Second)))
 }
 
 func TestOpenAIModelTransient_IgnoresInvalidKeys(t *testing.T) {

@@ -300,8 +300,14 @@ const (
 // CheckErrorPolicy 检查自定义错误码和临时不可调度规则。
 // 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
-	if account.Platform == PlatformOpenAI && isUpstreamInsufficientBalanceError(statusCode, responseBody) {
+	if account.Platform == PlatformOpenAI && isOpenAIRequestError(statusCode, "", responseBody) {
 		return ErrorPolicySkipped
+	}
+	if account.Platform == PlatformOpenAI && isUpstreamInsufficientBalanceError(statusCode, responseBody) {
+		return ErrorPolicyMatched
+	}
+	if account.Platform == PlatformOpenAI && isOpenAIExplicitTransient4xx(statusCode, responseBody) {
+		return ErrorPolicyNone
 	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	if account.IsCustomErrorCodesEnabled() {
@@ -334,7 +340,15 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
+	if account.Platform == PlatformOpenAI && isOpenAIRequestError(statusCode, "", responseBody) {
+		return false
+	}
 	if account.Platform == PlatformOpenAI && isUpstreamInsufficientBalanceError(statusCode, responseBody) {
+		// 上游账号余额是本站的供应侧故障，不能让用户换号重放后继续撞同一欠费账号。
+		s.handleAuthError(ctx, account, openAIUpstreamInsufficientBalanceMessage)
+		return true
+	}
+	if account.Platform == PlatformOpenAI && isOpenAIExplicitTransient4xx(statusCode, responseBody) {
 		return false
 	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
@@ -2225,12 +2239,20 @@ func (s *RateLimitService) ResetOpenAI403Counter(ctx context.Context, accountID 
 
 // RecoverAccountState 按需恢复账号的可恢复运行时状态。
 func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID int64, options AccountRecoveryOptions) (*SuccessfulTestRecoveryResult, error) {
+	return s.recoverAccountState(ctx, accountID, options, true)
+}
+
+func (s *RateLimitService) recoverAccountState(ctx context.Context, accountID int64, options AccountRecoveryOptions, manual bool) (*SuccessfulTestRecoveryResult, error) {
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
 
 	result := &SuccessfulTestRecoveryResult{}
+	// 测通其他模型不证明供应侧已经充值，只有人工恢复能解除欠费停用。
+	if !manual && isOpenAIUpstreamBalanceStopped(account) {
+		return result, nil
+	}
 	if account.Status == StatusError {
 		if err := s.accountRepo.ClearError(ctx, accountID); err != nil {
 			return nil, err
@@ -2262,7 +2284,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 // RecoverAccountAfterSuccessfulTest 将一次成功测试视为正常请求，
 // 按需恢复 error / rate-limit / overload / temp-unsched / model-rate-limit 等运行时状态。
 func (s *RateLimitService) RecoverAccountAfterSuccessfulTest(ctx context.Context, accountID int64) (*SuccessfulTestRecoveryResult, error) {
-	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{})
+	return s.recoverAccountState(ctx, accountID, AccountRecoveryOptions{}, false)
 }
 
 func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID int64) error {
@@ -2930,6 +2952,11 @@ func truncateTempUnschedMessage(body []byte, maxBytes int) string {
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleStreamTimeout(ctx context.Context, account *Account, model string) bool {
 	if account == nil {
+		return false
+	}
+	// OpenAI 超时由网关按账号＋模型短暂冷却，不能再经全局计数升级为整号停用。
+	// 独立的、管理员明确启用的 API Key 健康熔断仍由原观察入口处理。
+	if account.Platform == PlatformOpenAI {
 		return false
 	}
 

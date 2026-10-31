@@ -935,8 +935,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			// 上方已拦截输出/取消，避免将已经交付的工具调用重放到另一个账号。
 			if retryable && account.Platform == PlatformOpenAI && s.accountRepo != nil && ctx.Err() == nil {
 				s.coolOpenAIAccountModelAfterFailure(ctx, account, upstreamModel)
-				return nil, newOpenAIUpstreamFailoverError(http.StatusBadGateway, nil,
+				failoverErr := newOpenAIUpstreamFailoverError(http.StatusBadGateway, nil,
 					[]byte(`{"error":{"type":"server_error","message":"Upstream connection failed"}}`), "", false)
+				failoverErr.OpenAIModelFailureHandled = strings.TrimSpace(upstreamModel) != ""
+				return nil, failoverErr
 			}
 			if retryable && attempt < maxAttempts {
 				backoff := s.openAIWSRetryBackoff(attempt)
@@ -1214,6 +1216,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					upstreamMsg,
 					shouldDisable,
 					!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+					strings.TrimSpace(upstreamModel) != "",
 				)
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
@@ -1274,6 +1277,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 						return nil, s.newOpenAIAccountFailoverError(
 							account, compactResp.StatusCode, compactResp.Header, compactBody, signal.message, shouldDisable,
 							!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(compactResp.StatusCode) || isOpenAITransientProcessingError(compactResp.StatusCode, signal.message, compactBody)),
+							strings.TrimSpace(upstreamModel) != "",
 						)
 					}
 					return s.handleErrorResponse(ctx, compactResp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))

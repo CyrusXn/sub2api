@@ -220,22 +220,30 @@ describe('admin AccountsView lite account list', () => {
     wrapper.unmount()
   })
 
-  it('keeps lite=1 on automatic ETag refreshes', async () => {
+  it('倒计时到零重新加载当前列表并保留 lite=1，不再丢弃未比较字段', async () => {
     vi.useFakeTimers()
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
     localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
     const wrapper = mountView()
     await flushPromises()
 
-    await vi.advanceTimersByTimeAsync(6000)
+    listAccounts.mockResolvedValue({ items: [{ ...listRow, name: '最新账号', current_rpm: 9 }], total: 1, page: 1, page_size: 20, pages: 1 })
+    await wrapper.get('[title="admin.accounts.autoRefresh"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(listAccounts).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
     await flushPromises()
 
-    expect(listWithEtag).toHaveBeenCalledWith(
+    expect(listAccounts).toHaveBeenCalledTimes(2)
+    expect(listAccounts).toHaveBeenLastCalledWith(
       1,
       20,
       expect.objectContaining({ lite: '1' }),
-      expect.objectContaining({ etag: null })
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+    expect(listWithEtag).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-account-name]').attributes('data-account-name')).toBe('最新账号')
+    expect(getBatchTodayStats).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 

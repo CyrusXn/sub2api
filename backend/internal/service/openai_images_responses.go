@@ -999,6 +999,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 		upstreamMsg,
 		shouldDisable,
 		false,
+		modelForCooldown != "",
 	)
 	shouldFailover := shouldDisable || (account.IsOpenAIOAuthLike() && resp.StatusCode == http.StatusTooManyRequests && failoverErr.RetryableOnSameAccount)
 	kind := "http_error"
@@ -1924,6 +1925,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				upstreamMsg,
 				shouldDisable,
 				!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+				strings.TrimSpace(upstreamModel) != "",
 			)
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
@@ -2113,6 +2115,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 			message,
 			shouldDisable,
 			!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode),
+			strings.TrimSpace(requestedModel) != "",
 		)
 	}
 	var upstreamErr *OpenAIImagesUpstreamError
@@ -2186,5 +2189,6 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		upstreamErr.clientMessage(),
 		shouldDisable,
 		!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(upstreamErr.StatusCode),
+		strings.TrimSpace(requestedModel) != "",
 	)
 }

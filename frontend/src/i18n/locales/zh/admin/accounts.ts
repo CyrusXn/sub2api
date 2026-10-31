@@ -2,19 +2,6 @@ export default {
     accounts: {
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
-      mock: {
-        title: 'Mock账号',
-        description: 'OpenAI OAuth 模拟账号',
-        allPlans: '全部套餐',
-        search: '搜索名称、邮箱或平台',
-        refresh: '重新随机',
-        oauth: 'OAuth',
-        allStatuses: '全部状态',
-        resultCount: '共 {count} 条模拟账号',
-        pageSummary: '第 {page} / {pages} 页',
-        previous: '上一页',
-        next: '下一页'
-      },
       createAccount: '添加账号',
       autoRefresh: '自动刷新',
       enableAutoRefresh: '启用自动刷新',

@@ -86,7 +86,8 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
-			events := make([][]byte, 0, len(tt.upstreamEvents))
+			// 本测试验证已有语义输出后的错误下发；首输出前错误另有切号用例覆盖。
+			events := [][]byte{[]byte(`{"type":"response.output_text.delta","delta":"hello"}`)}
 			for _, event := range tt.upstreamEvents {
 				events = append(events, append([]byte(nil), event...))
 			}
@@ -155,7 +156,7 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 			require.NoError(t, err)
 
 			var frames []string
-			for len(frames) < len(tt.upstreamEvents) {
+			for len(frames) < len(events) {
 				readCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				_, message, readErr := clientConn.Read(readCtx)
 				cancel()
@@ -185,28 +186,28 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 	}
 }
 
-func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn(t *testing.T) {
+func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyWithoutFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
 		name          string
 		upstreamEvent []byte
-		wantFailover  bool
-		wantClientMsg bool
+		wantEventType string
 		wantInput     int
 		wantOutput    int
 	}{
 		{
-			name:          "error_before_rate_limit_failover",
+			// 安全拒绝即使包装成限流也必须直接返回，不能通过换号绕过。
+			name:          "error_wrapped_as_rate_limit_is_not_retried",
 			upstreamEvent: []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"cyber_policy","message":"rate limit exceeded by cyber policy"},"usage":{"input_tokens":5,"output_tokens":1}}`),
-			wantFailover:  true,
+			wantEventType: "error",
 			wantInput:     5,
 			wantOutput:    1,
 		},
 		{
 			name:          "response_failed_terminal",
 			upstreamEvent: []byte(`{"type":"response.failed","response":{"id":"resp_cyber","status":"failed","error":{"code":"cyber_policy","message":"blocked by cyber policy"},"usage":{"input_tokens":9,"output_tokens":2}}}`),
-			wantClientMsg: true,
+			wantEventType: "response.failed",
 			wantInput:     9,
 			wantOutput:    2,
 		},
@@ -280,13 +281,14 @@ func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn(t *
 			cancelWrite()
 			require.NoError(t, err)
 
-			if tt.wantClientMsg {
-				readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
-				_, message, readErr := clientConn.Read(readCtx)
-				cancelRead()
-				require.NoError(t, readErr)
-				require.Equal(t, "response.failed", gjson.GetBytes(message, "type").String())
-			}
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, message, readErr := clientConn.Read(readCtx)
+			cancelRead()
+			require.NoError(t, readErr)
+			require.Equal(t, tt.wantEventType, gjson.GetBytes(message, "type").String())
+			require.JSONEq(t, string(tt.upstreamEvent), string(message), "安全拒绝事件不得被改写")
+			hit, _, _ := detectOpenAICyberPolicy(message)
+			require.True(t, hit, "安全拒绝必须保留给客户端")
 
 			select {
 			case mark := <-markCh:
@@ -302,7 +304,7 @@ func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn(t *
 			select {
 			case serverErr := <-serverErrCh:
 				var failoverErr *UpstreamFailoverError
-				require.Equal(t, tt.wantFailover, errors.As(serverErr, &failoverErr))
+				require.False(t, errors.As(serverErr, &failoverErr), "安全拒绝不能切号")
 			case <-time.After(5 * time.Second):
 				t.Fatal("waiting for ingress websocket shutdown timed out")
 			}

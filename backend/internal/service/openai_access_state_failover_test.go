@@ -77,8 +77,8 @@ func TestOpenAIUpstreamAccessStateClassification(t *testing.T) {
 			if !tt.want {
 				return
 			}
-			require.False(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusForbidden, "", body))
-			require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusForbidden, body))
+			require.True(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusForbidden, "", body))
+			require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusForbidden, body))
 
 			err := newOpenAIUpstreamFailoverError(http.StatusForbidden, nil, body, "", true)
 			require.True(t, err.IsCredentialFailure())
@@ -134,7 +134,7 @@ func TestOpenAIStreamEchoedAccessStateMessageDoesNotDisableOrFailover(t *testing
 
 	require.False(t, isOpenAIUpstreamAccessStateError(message, payload))
 	require.False(t, openAIStreamFailedEventShouldFailover(payload, message))
-	status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, nil)
+	status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, nil)
 	require.Equal(t, http.StatusBadRequest, status)
 	require.False(t, disabled)
 	require.Zero(t, repo.setErrorCalls)
@@ -148,7 +148,7 @@ func TestOpenAIHTTPAccessStateTrustsStructuredCode(t *testing.T) {
 	body := []byte(`{"error":{"code":"organization_deactivated","message":"request rejected"}}`)
 
 	require.True(t, isOpenAIHTTPUpstreamAccessStateError(http.StatusBadRequest, "", body))
-	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusBadRequest, "", body))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusBadRequest, "", body))
 	require.True(t, svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusBadRequest, nil, body))
 	require.Equal(t, 1, repo.setErrorCalls)
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
@@ -211,7 +211,7 @@ func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T)
 		status       int
 		wantFailover bool
 	}{
-		{"unauthorized", `{"type":"error","error":{"type":"authentication_error","code":"invalid_api_key","message":"unauthorized"}}`, http.StatusUnauthorized, false},
+		{"unauthorized", `{"type":"error","error":{"type":"authentication_error","code":"invalid_api_key","message":"unauthorized"}}`, http.StatusUnauthorized, true},
 		{"forbidden", `{"type":"response.failed","response":{"error":{"type":"permission_error","message":"forbidden"}}}`, http.StatusForbidden, false},
 		{"rate_limit", `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`, http.StatusTooManyRequests, true},
 		{"overload_529", `{"type":"error","error":{"status_code":529,"code":"overloaded","message":"overloaded"}}`, 529, true},
@@ -308,17 +308,17 @@ func TestOpenAIStream403FailoverRequiresStructuredAccountCredentialSignal(t *tes
 		{
 			name:    "structured access state",
 			payload: `{"type":"response.failed","response":{"error":{"code":"workspace_suspended","message":"workspace is suspended"}}}`,
-			want:    false,
+			want:    true,
 		},
 		{
 			name:    "explicit credential auth code",
 			payload: `{"type":"error","error":{"type":"permission_error","code":"invalid_api_key","status_code":403,"message":"credential rejected"}}`,
-			want:    false,
+			want:    true,
 		},
 		{
 			name:    "explicit authentication type",
 			payload: `{"type":"error","error":{"type":"authentication_error","status_code":403,"message":"credential rejected"}}`,
-			want:    false,
+			want:    true,
 		},
 	}
 
@@ -340,7 +340,7 @@ func TestOpenAIStream403PostOutputAccountSideEffectsIgnoreRequestPermissionError
 	account := &Account{ID: 918, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	payload := []byte(`{"type":"error","error":{"type":"permission_error","code":"forbidden","status_code":403,"message":"access denied for this request"}}`)
 
-	status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "access denied for this request", nil)
+	status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "access denied for this request", nil)
 
 	require.Equal(t, http.StatusForbidden, status)
 	require.False(t, disabled)
@@ -355,7 +355,7 @@ func TestOpenAIStream403ExplicitCredentialAuthAppliesAccountSideEffects(t *testi
 	account := &Account{ID: 917, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	payload := []byte(`{"type":"error","error":{"type":"permission_error","code":"invalid_api_key","status_code":403,"message":"credential rejected"}}`)
 
-	status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "credential rejected", nil)
+	status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "credential rejected", nil)
 
 	require.Equal(t, http.StatusForbidden, status)
 	require.True(t, disabled)
@@ -395,7 +395,7 @@ func TestOpenAIStreamAccessStateAppliesAccountHealthBeforeFailover(t *testing.T)
 	account := &Account{ID: 919, Platform: PlatformOpenAI, Type: AccountTypeSetupToken}
 	payload := []byte(`{"type":"response.failed","response":{"error":{"code":"workspace_suspended","message":"workspace is suspended"}}}`)
 
-	status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "workspace is suspended", nil)
+	status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "workspace is suspended", nil)
 
 	require.Equal(t, http.StatusForbidden, status)
 	require.True(t, disabled)
@@ -471,7 +471,7 @@ func TestOpenAIStreamOAuthLike429GetsDeadlineWithoutImmediateRuntimeBlock(t *tes
 			svc := &OpenAIGatewayService{}
 			account := &Account{ID: 920, Platform: PlatformOpenAI, Type: accountType}
 			payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`)
-			status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "slow down", nil)
+			status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "slow down", nil)
 			err := svc.newOpenAIAccountFailoverError(account, status, nil, payload, "slow down", disabled, false)
 
 			require.Equal(t, http.StatusTooManyRequests, status)

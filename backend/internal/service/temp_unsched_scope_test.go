@@ -238,7 +238,7 @@ func TestOpenAIFailoverSideEffects_401FollowsTempUnschedScope(t *testing.T) {
 				body = tempUnschedScope401Body
 			}
 
-			require.False(t, gateway.shouldFailoverOpenAIUpstreamResponse(account, http.StatusUnauthorized, "unauthorized", body))
+			require.Equal(t, isOpenAIExplicitCredentialFailure(body), gateway.shouldFailoverOpenAIUpstreamResponse(account, http.StatusUnauthorized, "unauthorized", body))
 			gateway.handleFailoverSideEffects(context.Background(), &http.Response{
 				StatusCode: http.StatusUnauthorized,
 				Header:     http.Header{},

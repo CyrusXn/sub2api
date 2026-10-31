@@ -334,16 +334,11 @@ watch(
   { immediate: true }
 )
 
-// Realtime traffic refresh follows the parent (OpsDashboard) refresh cadence.
+// 跟随父级数据刷新完成同步实时指标，手动和倒计时刷新保持一致。
 watch(
-  () => [props.autoRefreshEnabled, props.autoRefreshCountdown, props.loading] as const,
-  ([enabled, countdown, loading]) => {
-    if (!enabled) return
-    if (loading) return
-    // Treat countdown reset (or reaching 0) as a refresh boundary.
-    if (countdown === 0) {
-      loadRealtimeTrafficSummary()
-    }
+  () => props.lastUpdated,
+  () => {
+    void loadRealtimeTrafficSummary()
   }
 )
 

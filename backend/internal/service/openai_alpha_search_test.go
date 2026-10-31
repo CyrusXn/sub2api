@@ -318,7 +318,7 @@ func TestForwardAlphaSearchReturnsFailoverBeforeWriting(t *testing.T) {
 	require.Empty(t, failoverErr.Reason)
 	require.Zero(t, failoverErr.ClientStatusCode)
 	require.Empty(t, failoverErr.ClientMessage)
-	require.Nil(t, failoverErr.ResponseHeaders)
+	require.Equal(t, "application/json", failoverErr.ResponseHeaders.Get("Content-Type"))
 	require.Equal(t, openAIPlatformAlphaSearchURL, upstream.lastReq.URL.String())
 	require.False(t, c.Writer.Written())
 	require.Empty(t, recorder.Body.String())
@@ -365,7 +365,7 @@ func TestForwardAlphaSearchSetupToken429CarriesSameAccountRetryWindow(t *testing
 	require.False(t, c.Writer.Written())
 }
 
-func TestForwardAlphaSearchAccessStateStopsWithoutFailover(t *testing.T) {
+func TestForwardAlphaSearchAccessStateFailsOverBeforeOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
 	recorder := httptest.NewRecorder()
@@ -395,15 +395,16 @@ func TestForwardAlphaSearchAccessStateStopsWithoutFailover(t *testing.T) {
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body)
 
 	require.Nil(t, result)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusForbidden, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "deactivated_workspace")
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.True(t, failover.ShouldRetryNextAccount())
+	require.Empty(t, recorder.Body.String())
 	require.Empty(t, recorder.Header().Get("x-request-id"), "上游请求标识继续遵循响应头过滤")
 	require.Equal(t, chatgptCodexAlphaSearchURL, upstream.lastReq.URL.String())
-	require.True(t, c.Writer.Written())
+	require.False(t, c.Writer.Written())
 }
 
-func TestForwardAlphaSearchBalanceRejectNeverFailsOver(t *testing.T) {
+func TestForwardAlphaSearchUpstreamBalanceStopsAndFailsOver(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, pat := range []bool{false, true} {
 		for _, status := range []int{403, 404, 405, 429, 502} {
@@ -426,17 +427,18 @@ func TestForwardAlphaSearchBalanceRejectNeverFailsOver(t *testing.T) {
 				}
 				result, err := svc.ForwardAlphaSearch(context.Background(), c, account, body)
 				require.Nil(t, result)
-				require.NoError(t, err, "已回写的余额拒绝不能变成切号错误")
-				require.True(t, c.Writer.Written())
-				require.Equal(t, upstreamBalanceClientStatus(status), rec.Code)
-				require.Equal(t, "insufficient_balance", gjson.Get(rec.Body.String(), "error.code").String())
-				require.Zero(t, repo.setErrorCalls)
+				var failover *UpstreamFailoverError
+				require.ErrorAs(t, err, &failover)
+				require.True(t, failover.ShouldRetryNextAccount())
+				require.Equal(t, GatewayFailureScopeAccount, failover.Scope)
+				require.False(t, c.Writer.Written())
+				require.Equal(t, 1, repo.setErrorCalls)
 			})
 		}
 	}
 }
 
-func TestForwardAlphaSearchPATFallbackAccessStateStopsWithoutFailover(t *testing.T) {
+func TestForwardAlphaSearchPATFallbackAccessStateFailsOverBeforeOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
 	recorder := httptest.NewRecorder()
@@ -467,12 +469,13 @@ func TestForwardAlphaSearchPATFallbackAccessStateStopsWithoutFailover(t *testing
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body)
 
 	require.Nil(t, result)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusForbidden, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "account_disabled")
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.True(t, failover.ShouldRetryNextAccount())
+	require.Empty(t, recorder.Body.String())
 	require.Empty(t, recorder.Header().Get("x-request-id"), "上游请求标识继续遵循响应头过滤")
 	require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
-	require.True(t, c.Writer.Written())
+	require.False(t, c.Writer.Written())
 }
 
 func TestForwardAlphaSearchUnauthorizedDoesNotMarkAccountError(t *testing.T) {

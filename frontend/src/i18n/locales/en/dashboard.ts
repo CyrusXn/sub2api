@@ -442,7 +442,7 @@ export default {
     firstToken: 'First Token',
     duration: 'Duration',
     latency: 'Latency',
-    latencyFirstToken: 'First',
+    latencyFirstToken: 'Packet',
     firstPacketHint: 'First packet (including placeholders): browser-measured receive latency when reported, otherwise server write latency. Older records may only have semantic first-token latency. Not used for health assessment.',
     firstPacketExport: 'First packet (ms; legacy first token)',
     latencyDuration: 'Total',

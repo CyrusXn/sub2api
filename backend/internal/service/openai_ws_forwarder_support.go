@@ -267,6 +267,9 @@ func openAIWSPayloadTransientStatus(payload []byte) int {
 	if len(payload) == 0 {
 		return 0
 	}
+	if isOpenAIRequestError(http.StatusBadGateway, "", payload) || isUpstreamInsufficientBalanceError(http.StatusBadGateway, payload) {
+		return 0
+	}
 	status := int(gjson.GetBytes(payload, "response.error.status_code").Int())
 	if status == 0 {
 		status = int(gjson.GetBytes(payload, "response.error.status").Int())
@@ -321,6 +324,15 @@ func (s *OpenAIGatewayService) handleOpenAIWSErrorEventTransientFailure(ctx cont
 	if eventType != "error" {
 		return
 	}
+	if isUpstreamInsufficientBalanceError(http.StatusBadGateway, payload) {
+		s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusForbidden, headers, payload, canonicalModel)
+		return
+	}
+	code, errType, message := parseOpenAIWSErrorEventFields(payload)
+	if isOpenAIWSRateLimitError(code, errType, message) {
+		// 限流事件统一由紧随其后的 persistOpenAIWSRateLimitSignal 记账，避免包装成 5xx 时重复冷却。
+		return
+	}
 	status := openAIWSPayloadTransientStatus(payload)
 	if status != 0 {
 		if status == http.StatusTooManyRequests {
@@ -336,12 +348,19 @@ func (s *OpenAIGatewayService) handleOpenAIWSErrorEventTransientFailure(ctx cont
 func (s *OpenAIGatewayService) handleOpenAIWSFailureAccountSideEffects(ctx context.Context, account *Account, canonicalModel string, headers http.Header, payload []byte) bool {
 	message := extractOpenAISSEErrorMessage(payload)
 	status := openAIStreamFailureStatus(payload, message)
+	if isOpenAIRequestError(status, message, payload) {
+		return false
+	}
+	if isUpstreamInsufficientBalanceError(status, payload) {
+		s.handleOpenAIAccountUpstreamError(ctx, account, status, headers, payload, canonicalModel)
+		return true
+	}
 	switch status {
 	case http.StatusUnauthorized, http.StatusNotFound, http.StatusTooManyRequests, 529:
 		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
 		return true
 	case http.StatusForbidden:
-		if !openAIStream403AccountFailure(payload, message) {
+		if !isOpenAIExplicitUpstreamError(payload) && !openAIStream403AccountFailure(payload, message) {
 			return false
 		}
 		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
@@ -358,10 +377,29 @@ func (s *OpenAIGatewayService) handleOpenAIWSFailureAccountSideEffects(ctx conte
 
 func (s *OpenAIGatewayService) handleOpenAIWSDialTransientFailure(ctx context.Context, account *Account, canonicalModel string, err error) {
 	var dialErr *openAIWSDialError
-	if !errors.As(err, &dialErr) || dialErr == nil || !shouldCooldownOpenAITransientUpstreamError(dialErr.StatusCode, dialErr.ResponseBody) {
+	if !errors.As(err, &dialErr) || dialErr == nil || isOpenAIRequestError(dialErr.StatusCode, "", dialErr.ResponseBody) ||
+		(!shouldCooldownOpenAITransientUpstreamError(dialErr.StatusCode, dialErr.ResponseBody) && !isUpstreamInsufficientBalanceError(dialErr.StatusCode, dialErr.ResponseBody)) {
 		return
 	}
 	s.handleOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody, canonicalModel)
+}
+
+// WS 握手与 HTTP 使用同一错误类型判定，不能将包装的 429/5xx 请求错误变成切号信号。
+func (s *OpenAIGatewayService) openAIWSHandshakeFailoverError(ctx context.Context, account *Account, canonicalModel string, err error) (*UpstreamFailoverError, bool) {
+	var dialErr *openAIWSDialError
+	if !errors.As(err, &dialErr) || dialErr == nil {
+		return nil, false
+	}
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(dialErr.ResponseBody)))
+	if isOpenAIRequestError(dialErr.StatusCode, message, dialErr.ResponseBody) ||
+		!s.shouldFailoverOpenAIUpstreamResponse(account, dialErr.StatusCode, message, dialErr.ResponseBody) {
+		return nil, false
+	}
+	// 握手错误仍是 HTTP 响应，429 必须保留其配额重置头，不能套用连接内事件的头过滤。
+	modelKnown := strings.TrimSpace(canonicalModel) != ""
+	disabled := s.handleOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody, canonicalModel)
+	return s.newOpenAIAccountFailoverError(account, dialErr.StatusCode, dialErr.ResponseHeaders,
+		dialErr.ResponseBody, message, disabled, false, modelKnown), true
 }
 
 func isOpenAIWSTokenEvent(eventType string) bool {
@@ -666,12 +704,19 @@ func isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw string) bool {
 	return false
 }
 
-func (s *OpenAIGatewayService) persistOpenAIWSRateLimitSignal(ctx context.Context, account *Account, headers http.Header, responseBody []byte, codeRaw, errTypeRaw, msgRaw string, canonicalModel ...string) {
+// 限流关键词也可能包装请求错误或上游欠费，专用限流分支不能覆盖这些更明确的语义。
+func isOpenAIWSRateLimitSignal(payload []byte, codeRaw, errTypeRaw, msgRaw string) bool {
+	return isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw) &&
+		!isOpenAIRequestError(http.StatusTooManyRequests, msgRaw, payload) &&
+		!isUpstreamInsufficientBalanceError(http.StatusTooManyRequests, payload)
+}
+
+func (s *OpenAIGatewayService) persistOpenAIWSRateLimitSignal(ctx context.Context, account *Account, headers http.Header, responseBody []byte, codeRaw, errTypeRaw, msgRaw string, canonicalModel ...string) bool {
 	if s == nil || s.rateLimitService == nil || account == nil || account.Platform != PlatformOpenAI {
-		return
+		return false
 	}
-	if !isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw) {
-		return
+	if !isOpenAIWSRateLimitSignal(responseBody, codeRaw, errTypeRaw, msgRaw) {
+		return false
 	}
 	model := firstNonEmpty(canonicalModel...)
 	if model == "" {
@@ -684,6 +729,7 @@ func (s *OpenAIGatewayService) persistOpenAIWSRateLimitSignal(ctx context.Contex
 		headers = openAIWSSemantic429Headers(account, model, headers)
 	}
 	s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, headers, responseBody, model)
+	return model != ""
 }
 
 func openAIWSSemantic429Headers(account *Account, model string, headers http.Header) http.Header {
@@ -693,7 +739,7 @@ func openAIWSSemantic429Headers(account *Account, model string, headers http.Hea
 	return nil
 }
 
-func (s *OpenAIGatewayService) newOpenAIWSRateLimitFailoverError(account *Account, headers http.Header, responseBody []byte, message string) *UpstreamFailoverError {
+func (s *OpenAIGatewayService) newOpenAIWSRateLimitFailoverError(account *Account, headers http.Header, responseBody []byte, message string, modelFailureHandled ...bool) *UpstreamFailoverError {
 	return s.newOpenAIAccountFailoverError(
 		account,
 		http.StatusTooManyRequests,
@@ -702,6 +748,7 @@ func (s *OpenAIGatewayService) newOpenAIWSRateLimitFailoverError(account *Accoun
 		strings.TrimSpace(message),
 		false,
 		false,
+		modelFailureHandled...,
 	)
 }
 

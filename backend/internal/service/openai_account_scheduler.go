@@ -2554,10 +2554,12 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 		var failoverErr *UpstreamFailoverError
 		// 空响应等未经过 HTTP 错误处理的故障也要冷却；请求或供应商级错误不归因到账号。
 		if errors.As(observedErr[0], &failoverErr) && failoverErr != nil &&
+			!failoverErr.OpenAIModelFailureHandled &&
 			failoverErr.Scope != GatewayFailureScopeRequest && failoverErr.Scope != GatewayFailureScopeProvider &&
 			(failoverErr.StatusCode == 429 || failoverErr.StatusCode >= 500) &&
 			!s.getOpenAIAccountModelTransientState().isBlocked(accountID, normalizeOpenAIAccountModelTransientModel(model), time.Now()) {
 			s.coolOpenAIAccountModelAfterFailure(context.Background(), account, model, failoverErr.StatusCode >= 500 && !failoverErr.RequestScopedTransient)
+			failoverErr.OpenAIModelFailureHandled = true
 		}
 	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())

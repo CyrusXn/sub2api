@@ -528,6 +528,7 @@ import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import { useTableLoader } from '@/composables/useTableLoader'
+import { useAutoRefresh } from '@/composables/useAutoRefresh'
 import { useAdminTablePreference } from '@/composables/useAdminTablePreference'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
@@ -563,7 +564,6 @@ import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
-import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -806,13 +806,19 @@ const showAutoRefreshDropdown = ref(false)
 const autoRefreshDropdownRef = ref<HTMLElement | null>(null)
 const AUTO_REFRESH_STORAGE_KEY = 'account-auto-refresh'
 const autoRefreshIntervals = [5, 10, 15, 30] as const
-const autoRefreshEnabled = ref(false)
-const autoRefreshIntervalSeconds = ref<(typeof autoRefreshIntervals)[number]>(30)
-const autoRefreshCountdown = ref(0)
-const autoRefreshETag = ref<string | null>(null)
-const autoRefreshFetching = ref(false)
-const AUTO_REFRESH_SILENT_WINDOW_MS = 15000
-const autoRefreshSilentUntil = ref(0)
+const accountAutoRefresh = useAutoRefresh({
+  storageKey: AUTO_REFRESH_STORAGE_KEY,
+  intervals: autoRefreshIntervals,
+  onRefresh: () => handleManualRefresh(),
+  shouldPause: () => loading.value,
+})
+const {
+  enabled: autoRefreshEnabled,
+  intervalSeconds: autoRefreshIntervalSeconds,
+  countdown: autoRefreshCountdown,
+  setEnabled: setAutoRefreshEnabled,
+  setInterval: setAutoRefreshInterval,
+} = accountAutoRefresh
 const hasPendingListSync = ref(false)
 const todayStatsByAccountId = ref<Record<string, WindowStats>>({})
 const todayStatsLoading = ref(false)
@@ -1125,59 +1131,9 @@ const saveColumnsToStorage = () => {
   }
 }
 
-const loadSavedAutoRefresh = () => {
-  try {
-    const saved = localStorage.getItem(AUTO_REFRESH_STORAGE_KEY)
-    if (!saved) return
-    const parsed = JSON.parse(saved) as { enabled?: boolean; interval_seconds?: number }
-    autoRefreshEnabled.value = parsed.enabled === true
-    const interval = Number(parsed.interval_seconds)
-    if (autoRefreshIntervals.includes(interval as any)) {
-      autoRefreshIntervalSeconds.value = interval as any
-    }
-  } catch (e) {
-    console.error('Failed to load saved auto refresh settings:', e)
-  }
-}
-
-const saveAutoRefreshToStorage = () => {
-  try {
-    localStorage.setItem(
-      AUTO_REFRESH_STORAGE_KEY,
-      JSON.stringify({
-        enabled: autoRefreshEnabled.value,
-        interval_seconds: autoRefreshIntervalSeconds.value
-      })
-    )
-  } catch (e) {
-    console.error('Failed to save auto refresh settings:', e)
-  }
-}
-
 if (typeof window !== 'undefined') {
   loadSavedColumns()
   migrateAccountColumnOrder()
-  loadSavedAutoRefresh()
-}
-
-const setAutoRefreshEnabled = (enabled: boolean) => {
-  autoRefreshEnabled.value = enabled
-  saveAutoRefreshToStorage()
-  if (enabled) {
-    autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
-    resumeAutoRefresh()
-  } else {
-    pauseAutoRefresh()
-    autoRefreshCountdown.value = 0
-  }
-}
-
-const setAutoRefreshInterval = (seconds: (typeof autoRefreshIntervals)[number]) => {
-  autoRefreshIntervalSeconds.value = seconds
-  saveAutoRefreshToStorage()
-  if (autoRefreshEnabled.value) {
-    autoRefreshCountdown.value = seconds
-  }
 }
 
 const toggleColumn = (key: string) => {
@@ -1287,7 +1243,6 @@ useSwipeSelect(accountTableRef, {
 }, swipeVirtualContext)
 
 const resetAutoRefreshCache = () => {
-  autoRefreshETag.value = null
   upstreamBillingRateETag.value = null
 }
 
@@ -1687,29 +1642,8 @@ const isAnyModalOpen = computed(() => {
   )
 })
 
-const enterAutoRefreshSilentWindow = () => {
-  autoRefreshSilentUntil.value = Date.now() + AUTO_REFRESH_SILENT_WINDOW_MS
-  autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
-}
-
-const inAutoRefreshSilentWindow = () => {
-  return Date.now() < autoRefreshSilentUntil.value
-}
-
-const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
-  return (
-    current.updated_at !== next.updated_at ||
-    current.current_concurrency !== next.current_concurrency ||
-    current.current_window_cost !== next.current_window_cost ||
-    current.active_sessions !== next.active_sessions ||
-    current.schedulable !== next.schedulable ||
-    current.status !== next.status ||
-    current.rate_limit_reset_at !== next.rate_limit_reset_at ||
-    current.overload_until !== next.overload_until ||
-    current.temp_unschedulable_until !== next.temp_unschedulable_until ||
-    buildOpenAIUsageRefreshKey(current) !== buildOpenAIUsageRefreshKey(next) ||
-    buildGrokUsageRefreshKey(current) !== buildGrokUsageRefreshKey(next)
-  )
+const resetAutoRefreshCountdown = () => {
+  if (autoRefreshEnabled.value) accountAutoRefresh.resetCountdown()
 }
 
 const syncAccountRefs = (nextAccount: Account) => {
@@ -1720,83 +1654,22 @@ const syncAccountRefs = (nextAccount: Account) => {
   if (menu.acc?.id === nextAccount.id) menu.acc = nextAccount
 }
 
-const mergeAccountsIncrementally = (nextRows: Account[]) => {
-  const currentRows = accounts.value
-  const currentByID = new Map(currentRows.map(row => [row.id, row]))
-  let changed = nextRows.length !== currentRows.length
-  const mergedRows = nextRows.map((nextRow) => {
-    const currentRow = currentByID.get(nextRow.id)
-    if (!currentRow) {
-      changed = true
-      return nextRow
+let pageRefreshPromise: Promise<void> | null = null
+const handleManualRefresh = () => {
+  if (pageRefreshPromise) return pageRefreshPromise
+  // 两种入口共用完整刷新链路，倍率和余额探测完成前不重入下一轮。
+  pageRefreshPromise = (async () => {
+    try {
+      await loadUpstreamBillingProbeGlobalState()
+      await load({ refreshUpstreamBilling: false })
+      usageManualRefreshToken.value += 1
+      await refreshVisibleUpstreamBillingRates({ force: true })
+    } finally {
+      pageRefreshPromise = null
+      if (autoRefreshEnabled.value) accountAutoRefresh.resetCountdown()
     }
-    if (shouldReplaceAutoRefreshRow(currentRow, nextRow)) {
-      changed = true
-      syncAccountRefs(nextRow)
-      return nextRow
-    }
-    return currentRow
-  })
-  if (!changed) {
-    for (let i = 0; i < mergedRows.length; i += 1) {
-      if (mergedRows[i].id !== currentRows[i]?.id) {
-        changed = true
-        break
-      }
-    }
-  }
-  if (changed) {
-    accounts.value = mergedRows
-  }
-}
-
-const refreshAccountsIncrementally = async () => {
-  if (autoRefreshFetching.value) return
-  syncAccountListDerivedParams()
-  autoRefreshFetching.value = true
-  try {
-    const result = await adminAPI.accounts.listWithEtag(
-      pagination.page,
-      pagination.page_size,
-      toRaw(params) as {
-        platform?: string
-        type?: string
-        status?: string
-        privacy_mode?: string
-        group?: string
-        search?: string
-        sort_by?: string
-        sort_order?: AccountSortOrder
-
-      },
-      { etag: autoRefreshETag.value }
-    )
-
-    if (result.etag) {
-      autoRefreshETag.value = result.etag
-    }
-    if (!result.notModified && result.data) {
-      pagination.total = result.data.total || 0
-      pagination.pages = result.data.pages || 0
-      mergeAccountsIncrementally(result.data.items || [])
-      hasPendingListSync.value = false
-    }
-    upstreamBillingNow.value = Date.now()
-
-    await refreshTodayStatsBatch()
-    await refreshVisibleUpstreamBillingRates()
-  } catch (error) {
-    console.error('Auto refresh failed:', error)
-  } finally {
-    autoRefreshFetching.value = false
-  }
-}
-
-const handleManualRefresh = async () => {
-  await loadUpstreamBillingProbeGlobalState()
-  await load({ forceUpstreamBillingRefresh: true })
-  // Force usage cells to refetch /usage on explicit user refresh.
-  usageManualRefreshToken.value += 1
+  })()
+  return pageRefreshPromise
 }
 
 const loadUpstreamBillingProbeGlobalState = async () => {
@@ -1862,33 +1735,6 @@ const syncPendingListChanges = async () => {
   // Keep behavior consistent with manual refresh.
   usageManualRefreshToken.value += 1
 }
-
-const { pause: pauseAutoRefresh, resume: resumeAutoRefresh } = useIntervalFn(
-  async () => {
-    if (!autoRefreshEnabled.value) return
-    if (document.hidden) return
-    if (loading.value || autoRefreshFetching.value) return
-    if (isAnyModalOpen.value) return
-    if (menu.show || showAccountToolsDropdown.value || showAutoRefreshDropdown.value) return
-    if (inAutoRefreshSilentWindow()) {
-      autoRefreshCountdown.value = Math.max(
-        0,
-        Math.ceil((autoRefreshSilentUntil.value - Date.now()) / 1000)
-      )
-      return
-    }
-
-    if (autoRefreshCountdown.value <= 0) {
-      autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
-      await refreshAccountsIncrementally()
-      return
-    }
-
-    autoRefreshCountdown.value -= 1
-  },
-  1000,
-  { immediate: false }
-)
 
 const GROK_QUOTA_SIGNAL_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const GROK_QUOTA_SIGNAL_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
@@ -2580,7 +2426,7 @@ const handleProbeUpstreamBilling = async (account: Account) => {
 }
 const handleAccountUpdated = (updatedAccount: Account) => {
   patchAccountInList(updatedAccount)
-  enterAutoRefreshSilentWindow()
+  resetAutoRefreshCountdown()
 }
 const formatExportTimestamp = () => {
   const now = new Date()
@@ -2684,7 +2530,7 @@ const handleRefresh = async (a: Account) => {
   try {
     const result = await adminAPI.accounts.refreshCredentials(a.id)
     patchAccountInList(result.account)
-    enterAutoRefreshSilentWindow()
+    resetAutoRefreshCountdown()
     if (result.warning) appStore.showWarning(result.message)
   } catch (error) {
     console.error('Failed to refresh credentials:', error)
@@ -2694,7 +2540,7 @@ const handleRecoverState = async (a: Account) => {
   try {
     const updated = await adminAPI.accounts.recoverState(a.id)
     patchAccountInList(updated)
-    enterAutoRefreshSilentWindow()
+    resetAutoRefreshCountdown()
     appStore.showSuccess(t('admin.accounts.recoverStateSuccess'))
   } catch (error: any) {
     console.error('Failed to recover account state:', error)
@@ -2705,7 +2551,7 @@ const handleResetQuota = async (a: Account) => {
   try {
     const updated = await adminAPI.accounts.resetAccountQuota(a.id)
     patchAccountInList(updated)
-    enterAutoRefreshSilentWindow()
+    resetAutoRefreshCountdown()
     appStore.showSuccess(t('common.success'))
   } catch (error) {
     console.error('Failed to reset quota:', error)
@@ -2737,7 +2583,7 @@ const handleSetPrivacy = async (a: Account) => {
   try {
     const updated = await adminAPI.accounts.setPrivacy(a.id)
     patchAccountInList(updated)
-    enterAutoRefreshSilentWindow()
+    resetAutoRefreshCountdown()
     const result = privacyResultMessageKey(updated)
     if (result.type === 'success') {
       appStore.showSuccess(t(result.key))
@@ -2785,7 +2631,7 @@ const handleToggleSchedulable = async (a: Account) => {
   try {
     const updated = await adminAPI.accounts.setSchedulable(a.id, nextSchedulable)
     updateSchedulableInList([a.id], updated?.schedulable ?? nextSchedulable)
-    enterAutoRefreshSilentWindow()
+    resetAutoRefreshCountdown()
   } catch (error) {
     console.error('Failed to toggle schedulable:', error)
     appStore.showError(t('admin.accounts.failedToToggleSchedulable'))
@@ -2798,7 +2644,7 @@ const handleTempUnschedReset = async (updated: Account) => {
   showTempUnsched.value = false
   tempUnschedAcc.value = null
   patchAccountInList(updated)
-  enterAutoRefreshSilentWindow()
+  resetAutoRefreshCountdown()
 }
 const formatExpiresAt = (value: number | null) => {
   if (!value) return '-'
@@ -2918,10 +2764,7 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside)
 
   if (autoRefreshEnabled.value) {
-    autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
-    resumeAutoRefresh()
-  } else {
-    pauseAutoRefresh()
+    accountAutoRefresh.start()
   }
 })
 

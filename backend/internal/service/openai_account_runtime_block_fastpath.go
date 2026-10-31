@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -94,8 +93,23 @@ func isOpenAIAccount(account *Account) bool {
 // handleOpenAIAccountUpstreamError expects canonicalModel to be the model used
 // for scheduling after applying account mapping exactly once.
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, canonicalModel ...string) bool {
-	if isUpstreamInsufficientBalanceError(statusCode, responseBody) {
+	if isOpenAIRequestError(statusCode, "", responseBody) && !(isOpenAIImagesSelfBuiltRequest(ctx) && isOpenAIImageCapabilityLossError(statusCode, responseBody)) {
 		return false
+	}
+	if isUpstreamInsufficientBalanceError(statusCode, responseBody) && account != nil && account.Platform == PlatformOpenAI {
+		stateCtx, cancel := openAIAccountStateContext(ctx)
+		defer cancel()
+		if s != nil && s.rateLimitService != nil {
+			s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
+		} else if s != nil && s.accountRepo != nil {
+			if err := s.accountRepo.SetError(stateCtx, account.ID, openAIUpstreamInsufficientBalanceMessage); err != nil {
+				slog.Warn("openai_upstream_balance_stop_failed", "account_id", account.ID, "error", err)
+			}
+		}
+		if s != nil {
+			s.BlockAccountScheduling(account, time.Time{}, "upstream_insufficient_balance")
+		}
+		return true
 	}
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(statusCode, responseBody) {
 		return false
@@ -163,6 +177,11 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	if s.rateLimitService != nil && len(canonicalModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, canonicalModel[0], statusCode, responseBody) {
 		return true
 	}
+	// 兼容上游将服务故障包装成 400/403，不能误入通用 403 的分钟级或永久账号处罚。
+	if account.Platform == PlatformOpenAI && isOpenAIExplicitTransient4xx(statusCode, responseBody) {
+		s.coolOpenAIAccountModelAfterFailure(stateCtx, account, firstNonEmpty(canonicalModel...))
+		return false
+	}
 	// Isolate a custom temporary-unschedulable match to the known upstream
 	// model before entering the generic account error path. This keeps the
 	// account available to other models and avoids the account runtime blocker.
@@ -201,18 +220,10 @@ func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Co
 	if decision.FailureStreak == 0 {
 		return
 	}
-	slog.Warn("openai_model_transient_state", "account_id", account.ID,
-		"model", openAIAccountModelTransientModel(canonicalModel), "failure_streak", decision.FailureStreak,
-		"cooldown_ms", decision.Cooldown.Milliseconds(), "block_scope", "account_model")
-	// 复用模型限流的共享快照，使客户端重连落到另一实例时也避开故障账号。
-	// 本地冷却先行，持久化失败仍保留本实例保护；不能缩短已知的更长冷却。
-	if s.accountRepo == nil {
-		return
-	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 	streak := decision.AccountFailureStreak
-	if eligible {
+	if s.accountRepo != nil && eligible {
 		if cache, ok := s.cache.(OpenAIModelFailureStreakCache); ok {
 			if count, err := cache.RecordOpenAIModelResult(stateCtx, account.ID, openAIAccountModelTransientModel(canonicalModel), false, openAIModelTransientStreakTTL); err == nil {
 				streak = count
@@ -221,15 +232,13 @@ func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Co
 			}
 		}
 	}
-	if eligible && streak >= openAIModelFailureDisableThreshold {
-		message := fmt.Sprintf("模型 %s 连续 %d 次上游故障，已停止账号调度；请检查上游后清除错误或测试恢复", canonicalModel, streak)
-		if err := s.accountRepo.SetError(stateCtx, account.ID, message); err == nil {
-			account.Status, account.ErrorMessage, account.Schedulable = StatusError, message, false
-			s.BlockAccountScheduling(account, time.Time{}, "openai_consecutive_failures")
-			return
-		} else {
-			slog.Warn("openai_model_failure_disable_failed", "account_id", account.ID, "error", err)
-		}
+	// 共享计数仅供观测；瞬时上游故障无论累计多少次，都不能永久停用整个账号。
+	slog.Warn("openai_model_transient_state", "account_id", account.ID,
+		"model", openAIAccountModelTransientModel(canonicalModel), "failure_streak", decision.FailureStreak,
+		"account_failure_streak", streak, "cooldown_ms", decision.Cooldown.Milliseconds(), "block_scope", "account_model")
+	// 本地冷却先行；共享快照不能缩短真实限流或模型不可用的更长冷却。
+	if s.accountRepo == nil {
+		return
 	}
 	if existing := account.modelRateLimitResetAt(canonicalModel); existing != nil && existing.After(decision.BlockUntil) {
 		return
@@ -240,6 +249,9 @@ func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Co
 }
 
 func shouldCooldownOpenAITransientUpstreamError(statusCode int, responseBody []byte) bool {
+	if isOpenAIExplicitTransient4xx(statusCode, responseBody) {
+		return true
+	}
 	switch statusCode {
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 521, 522, 523, 524:
 		return true

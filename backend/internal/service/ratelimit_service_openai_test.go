@@ -354,7 +354,7 @@ func TestNormalizedCodexLimits_OnlyPrimaryData(t *testing.T) {
 	}
 }
 
-func TestRateLimitService_HandleUpstreamError_403PreservesOriginalUpstreamMessage(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_403RequestTypeDoesNotDisableAccount(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -371,10 +371,9 @@ func TestRateLimitService_HandleUpstreamError_403PreservesOriginalUpstreamMessag
 		[]byte(`{"error":{"message":"workspace forbidden by policy","type":"invalid_request_error"}}`),
 	)
 
-	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.setErrorCalls)
-	require.Contains(t, repo.lastErrorMsg, "workspace forbidden by policy")
-	require.NotContains(t, repo.lastErrorMsg, "account may be suspended or lack permissions")
+	require.False(t, shouldDisable)
+	require.Zero(t, repo.setErrorCalls)
+	require.Empty(t, repo.lastErrorMsg)
 }
 
 func TestRateLimitService_HandleUpstreamError_403FallsBackToRawBody(t *testing.T) {

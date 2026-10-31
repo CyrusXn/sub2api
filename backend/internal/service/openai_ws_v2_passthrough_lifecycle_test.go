@@ -386,9 +386,8 @@ func TestPassthroughLifecycle_NonCyberFailureKeepsAccountSideEffects(t *testing.
 	clientConn := dialPassthroughLifecycleClient(t, server)
 	defer func() { _ = clientConn.CloseNow() }()
 
-	event, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "response.failed", gjson.GetBytes(event, "type").String())
+	_, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+	require.Error(t, err, "首输出前账号故障应交回 handler 切号，不能提前下发致命错误")
 	select {
 	case mark := <-markSeen:
 		require.Nil(t, mark)
@@ -397,9 +396,11 @@ func TestPassthroughLifecycle_NonCyberFailureKeepsAccountSideEffects(t *testing.
 	}
 	require.Equal(t, 1, repo.setErrorCalls, "non-cyber credential failure must retain account failure side effects")
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
-	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
 	select {
-	case <-serverErr:
+	case err := <-serverErr:
+		var failoverErr *UpstreamFailoverError
+		require.ErrorAs(t, err, &failoverErr)
+		require.True(t, failoverErr.ShouldRetryNextAccount())
 	case <-time.After(3 * time.Second):
 		t.Fatal("non-cyber passthrough test did not exit")
 	}

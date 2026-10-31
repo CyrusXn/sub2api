@@ -125,6 +125,7 @@ const ProbeDataTableStub = {
       <div v-for="row in data" :key="row.id">
         <div data-test="account-rate"><slot name="cell-rate_multiplier" :row="row" /></div>
         <slot name="cell-upstream_billing_rate" :row="row" />
+        <slot name="cell-upstream_balance" :row="row" />
       </div>
     </div>
   `
@@ -203,7 +204,7 @@ const createDeferred = <T,>() => {
   return { promise, resolve }
 }
 
-const mountAccountsForSortAndProbe = () => mount(AccountsView, {
+const mountAccountsForSortAndProbe = (stubs: Record<string, any> = {}) => mount(AccountsView, {
   global: {
     stubs: {
       AppLayout: { template: '<div><slot /></div>' },
@@ -233,7 +234,8 @@ const mountAccountsForSortAndProbe = () => mount(AccountsView, {
       AccountTodayStatsCell: true,
       AccountGroupsCell: true,
       AccountUsageCell: true,
-      Icon: true
+      Icon: true,
+      ...stubs,
     }
   }
 })
@@ -816,6 +818,40 @@ describe('admin AccountsView bulk edit scope', () => {
       expect.any(Error)
     )
     consoleError.mockRestore()
+  })
+
+  it('倒计时结束强刷当前页倍率和余额，即使快照未过期或单账号自动探测已关闭', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
+    const future = new Date(Date.now() + 60_000).toISOString()
+    const account = dueProbeAccount(9, { extra: {
+      upstream_billing_probe_enabled: false,
+      upstream_billing_probe: { ...expiredProbeSnapshot(), fresh_until: future, next_probe_at: future },
+    } })
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    probeUpstreamBilling.mockResolvedValue({ account_id: 9, snapshot: {
+      ...expiredProbeSnapshot(), fresh_until: future, next_probe_at: future,
+      received_at: new Date().toISOString(),
+      data: { ...expiredProbeSnapshot().data, group_rate_multiplier: 0.25, resolved_rate_multiplier: 0.25, effective_rate_multiplier: 0.25 },
+      synced_rate_multiplier: 0.25,
+      balance: { status: 'ok', amount: 123.45, unit: 'USD' },
+    } })
+    const wrapper = mountAccountsForSortAndProbe({ DataTable: ProbeDataTableStub })
+    try {
+      await flushPromises()
+      expect(probeUpstreamBilling).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(5000)
+      await flushPromises()
+      expect(listAccounts).toHaveBeenCalledTimes(2)
+      expect(probeUpstreamBilling).toHaveBeenCalledTimes(1)
+      expect(probeUpstreamBilling).toHaveBeenCalledWith(9)
+      expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.25x')
+      expect(wrapper.get('[data-test="upstream-account-balance"]').text()).toBe('123.45 USD')
+      expect(listWithEtag).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
   })
 
   it('forces a fresh upstream billing probe for visible accounts on manual refresh', async () => {

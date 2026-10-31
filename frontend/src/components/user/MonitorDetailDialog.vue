@@ -7,7 +7,7 @@
   >
     <div v-if="passiveItem" class="space-y-4">
       <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('channelStatus.passive.rules') }}</p>
-      <MonitorTimeline :buckets="passiveItem.timeline" :countdown-seconds="60" />
+      <MonitorTimeline :buckets="passiveItem.timeline" :countdown-seconds="countdownSeconds" />
       <div class="grid grid-cols-3 gap-3 text-sm">
         <div v-for="window in (['7d', '15d', '30d'] as const)" :key="window">
           {{ t(`channelStatus.windowTab.${window}`) }}：{{ formatPercent(passiveItem[`availability_${window}`] ?? 0) }}
@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -88,7 +88,10 @@ const props = defineProps<{
   monitorId: number | null
   title: string
   passiveItem?: UserMonitorView | null
+  countdownSeconds?: number
 }>()
+
+const countdownSeconds = computed(() => props.countdownSeconds ?? 60)
 
 defineEmits<{
   (e: 'close'): void

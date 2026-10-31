@@ -900,11 +900,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			statusCode,
 			truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen),
 		)
-		s.handleOpenAIWSDialTransientFailure(ctx, account, capturedSessionModel, dialErr)
-		if statusCode == http.StatusTooManyRequests {
-			s.persistOpenAIWSRateLimitSignal(ctx, account, handshakeHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()), capturedSessionModel)
-			return s.newOpenAIWSRateLimitFailoverError(account, handshakeHeaders, nil, err.Error())
+		var upstreamDialErr *openAIWSDialError
+		if failoverErr, ok := s.openAIWSHandshakeFailoverError(ctx, account, capturedSessionModel, dialErr); ok {
+			return failoverErr
 		}
+		if errors.As(dialErr, &upstreamDialErr) && upstreamDialErr != nil && isOpenAIRequestError(statusCode, extractUpstreamErrorMessage(upstreamDialErr.ResponseBody), upstreamDialErr.ResponseBody) {
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "upstream rejected the request", dialErr)
+		}
+		s.handleOpenAIWSDialTransientFailure(ctx, account, capturedSessionModel, dialErr)
 		return s.mapOpenAIWSPassthroughDialError(err, statusCode, handshakeHeaders)
 	}
 	defer func() {
@@ -1287,17 +1290,27 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return nil
 				}
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(payload)
-				isPreOutputRateLimit := eventType == "error" && !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw)
+				isRateLimitSignal := isOpenAIWSRateLimitSignal(payload, errCodeRaw, errTypeRaw, errMsgRaw)
+				if (eventType == "error" || eventType == "response.failed") && !wroteDownstream && completedTurns.Load() == 0 {
+					message := extractOpenAISSEErrorMessage(payload)
+					// 仅明确限流的裸 error 走专门分支，数字 429 和 response.failed 走统一切号。
+					if (eventType != "error" || !isRateLimitSignal) &&
+						((eventType == "error" && openAIStreamErrorEventShouldFailover(payload, message)) ||
+							(eventType == "response.failed" && openAIStreamFailedEventShouldFailover(payload, message))) {
+						return s.newOpenAIStreamFailoverErrorWithModel(c, account, true, "", payload, message, capturedSessionModel, handshakeHeaders)
+					}
+				}
+				isPreOutputRateLimit := eventType == "error" && !wroteDownstream && isRateLimitSignal
 				if (eventType == "error" || eventType == "response.failed") && !failureAccountSideEffectsApplied && !isPreOutputRateLimit {
 					failureAccountSideEffectsApplied = s.handleOpenAIWSFailureAccountSideEffects(ctx, account, capturedSessionModel, handshakeHeaders, payload)
 				}
 				if eventType != "error" {
 					return nil
 				}
-				if wroteDownstream || !isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw) {
+				if wroteDownstream || !isRateLimitSignal {
 					return nil
 				}
-				s.persistOpenAIWSRateLimitSignal(ctx, account, handshakeHeaders, payload, errCodeRaw, errTypeRaw, errMsgRaw, capturedSessionModel)
+				modelFailureHandled := s.persistOpenAIWSRateLimitSignal(ctx, account, handshakeHeaders, payload, errCodeRaw, errTypeRaw, errMsgRaw, capturedSessionModel)
 				logOpenAIWSV2Passthrough(
 					"relay_rate_limit_failover account_id=%d err_code=%s err_type=%s err_message=%s",
 					account.ID,
@@ -1312,7 +1325,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						errors.New("later passthrough turn was rate limited before output"),
 					)
 				}
-				return s.newOpenAIWSRateLimitFailoverError(account, handshakeHeaders, payload, errMsgRaw)
+				return s.newOpenAIWSRateLimitFailoverError(account, handshakeHeaders, payload, errMsgRaw, modelFailureHandled)
 			},
 			OnTrace: func(event openaiwsv2.RelayTraceEvent) {
 				logOpenAIWSV2Passthrough(

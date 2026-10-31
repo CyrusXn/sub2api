@@ -18,9 +18,15 @@ import (
 
 type openAIImagesBalanceRepo struct {
 	AccountRepository
-	scope  string
-	reason string
-	until  time.Time
+	scope   string
+	reason  string
+	until   time.Time
+	stopped bool
+}
+
+func (r *openAIImagesBalanceRepo) SetError(context.Context, int64, string) error {
+	r.stopped = true
+	return nil
 }
 
 func (r *openAIImagesBalanceRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, resetAt time.Time, reason ...string) error {
@@ -79,11 +85,9 @@ func TestForwardOpenAIImagesAPIKey_ClassifiesWrappedBalanceBeforeTransientFailov
 			require.Equal(t, OpenAIImagesInsufficientBalanceReason, failoverErr.Reason)
 			require.True(t, failoverErr.ShouldRetryNextAccount())
 			require.Equal(t, OpenAIImagesInsufficientBalanceCode, string(failoverErr.Reason)[len("openai_images_"):])
-			require.Equal(t, openAIImageGenerationRateLimitKey, repo.scope)
-			require.Equal(t, openAIImagesBalanceRateLimitReason, repo.reason)
-			require.WithinDuration(t, time.Now().Add(openAIImagesBalanceCooldown), repo.until, 2*time.Second)
-			require.True(t, account.isRateLimitActiveForKey(openAIImageGenerationRateLimitKey))
-			require.False(t, account.isModelRateLimitedWithContext(context.Background(), "gpt-5.5"), "text requests must remain schedulable")
+			require.True(t, repo.stopped, "图片上游明确欠费也应停用供应侧账号")
+			require.Empty(t, repo.scope, "欠费不再用五分钟模型冷却反复试探")
+			require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 		})
 	}
 }

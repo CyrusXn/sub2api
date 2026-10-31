@@ -225,6 +225,18 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			}
 			return nil, &agentIdentityTaskRecoveredError{}
 		}
+		var businessDialErr *openAIWSDialError
+		if errors.As(err, &businessDialErr) && businessDialErr != nil {
+			message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(businessDialErr.ResponseBody)))
+			if isOpenAIRequestError(businessDialErr.StatusCode, message, businessDialErr.ResponseBody) {
+				MarkResponseCommitted(c)
+				writeOpenAIUpstreamClientError(c, openAIRequestErrorClientStatus(businessDialErr.StatusCode), businessDialErr.ResponseBody, message)
+				return nil, fmt.Errorf("upstream rejected client request: status=%d", businessDialErr.StatusCode)
+			}
+			if failoverErr, ok := s.openAIWSHandshakeFailoverError(ctx, account, mappedModel, err); ok {
+				return nil, failoverErr
+			}
+		}
 		s.handleOpenAIWSDialTransientFailure(ctx, account, mappedModel, err)
 		dialStatus, dialClass, dialCloseStatus, dialCloseReason, dialRespServer, dialRespVia, dialRespCFRay, dialRespReqID := summarizeOpenAIWSDialError(err)
 		logOpenAIWSModeInfo(
@@ -248,10 +260,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			wsPath,
 			account.ProxyID != nil && account.Proxy != nil,
 		)
-		var dialErr *openAIWSDialError
-		if errors.As(err, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
-			s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()), mappedModel)
-		}
 		return nil, wrapOpenAIWSFallback(classifyOpenAIWSAcquireError(err), err)
 	}
 	// cleanExit 标记正常终端事件退出，此时上游不会再发送帧，连接可安全归还复用。
@@ -654,6 +662,32 @@ readLoop:
 
 		if eventType == "error" || eventType == "response.failed" {
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
+			failureMessage := extractOpenAISSEErrorMessage(message)
+			if !wroteDownstream && !clientDisconnected {
+				shouldFailover := openAIStreamFailedEventShouldFailover(message, failureMessage)
+				if eventType == "error" {
+					shouldFailover = openAIStreamErrorEventShouldFailover(message, failureMessage)
+				}
+				fallbackReason, canFallback := classifyOpenAIWSErrorEvent(message)
+				recoverableWSProtocolFailure := canFallback && (fallbackReason == "upgrade_required" ||
+					fallbackReason == "ws_unsupported" ||
+					fallbackReason == "ws_connection_limit_reached" ||
+					fallbackReason == "invalid_encrypted_content" || fallbackReason == "previous_response_not_found")
+				if shouldFailover && !recoverableWSProtocolFailure {
+					// 正文交付前统一交回同组切号，不能将 failed 当作成功结束或回退同一账号。
+					return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, false, lease.HandshakeHeaders().Get("x-request-id"), message, failureMessage, mappedModel, lease.HandshakeHeaders())
+				}
+				if cyber, _, _ := detectOpenAICyberPolicy(message); !cyber && !recoverableWSProtocolFailure && isOpenAIRequestError(openAIStreamFailureStatus(message, failureMessage), failureMessage, message) {
+					MarkResponseCommitted(c)
+					if reqStream {
+						emitStreamMessage(downstreamMessage, true)
+						flushStreamWriter(true)
+					} else {
+						writeOpenAIUpstreamClientError(c, openAIRequestErrorClientStatus(openAIStreamFailureStatus(message, failureMessage)), openAIStreamFailedEventPassthroughBody(message, failureMessage), failureMessage)
+					}
+					return nil, fmt.Errorf("upstream rejected client request: %s", failureMessage)
+				}
+			}
 		}
 
 		if eventType == "error" {

@@ -87,7 +87,7 @@ func TestForwardAsChatCompletions_ResponseFailed_PassthroughRule(t *testing.T) {
 	require.Contains(t, errMsg, "context window")
 }
 
-func TestResponsesStreamAccessStateStopsWithoutFailover(t *testing.T) {
+func TestResponsesStreamAccessStateAllowsNextAccountBeforeOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	stream := "event: response.failed\n" +
 		`data: {"type":"response.failed","response":{"status":"failed","error":{"code":"account_disabled","message":"Your account is disabled"}}}` + "\n\n"
@@ -126,10 +126,10 @@ func TestResponsesStreamAccessStateStopsWithoutFailover(t *testing.T) {
 
 			var failoverErr *UpstreamFailoverError
 			require.Error(t, err)
-			require.False(t, errors.As(err, &failoverErr), "权限错误不能重放到其他账号")
-			require.True(t, c.Writer.Written())
-			require.Equal(t, http.StatusTeapot, rec.Code)
-			require.Contains(t, rec.Body.String(), "account is disabled")
+			require.ErrorAs(t, err, &failoverErr, "明确的上游停用属于账号故障，应先尝试同组其他账号")
+			require.True(t, failoverErr.ShouldRetryNextAccount())
+			require.False(t, c.Writer.Written())
+			require.Empty(t, rec.Body.String())
 		})
 	}
 }

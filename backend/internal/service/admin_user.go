@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -704,14 +705,8 @@ func (s *adminServiceImpl) GetUserRPMStatus(ctx context.Context, userID int64) (
 }
 
 func (s *adminServiceImpl) GetUserUsageStats(ctx context.Context, userID int64, period string) (any, error) {
-	// Return mock data for now
-	return map[string]any{
-		"period":          period,
-		"total_requests":  0,
-		"total_cost":      0.0,
-		"total_tokens":    0,
-		"avg_duration_ms": 0,
-	}, nil
+	// 尚未接入真实统计时明确不可用，避免固定零值被误认为真实用量。
+	return nil, infraerrors.New(http.StatusNotImplemented, "USER_USAGE_STATS_UNAVAILABLE", "用户用量统计接口尚未提供，请使用用量记录查询")
 }
 
 // GetUserBalanceHistory returns paginated balance/concurrency change records for a user.

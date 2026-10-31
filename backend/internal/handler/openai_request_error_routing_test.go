@@ -24,7 +24,8 @@ import (
 
 type requestErrorRoutingRepo struct {
 	openAIWSFailoverHandlerAccountRepoStub
-	accountErrors []int64
+	accountErrors  []int64
+	modelCooldowns []int64
 }
 
 func (r *requestErrorRoutingRepo) ListModelAvailabilityCandidates(context.Context, *int64, []string, bool) ([]service.Account, error) {
@@ -33,10 +34,17 @@ func (r *requestErrorRoutingRepo) ListModelAvailabilityCandidates(context.Contex
 
 func (r *requestErrorRoutingRepo) SetError(_ context.Context, id int64, _ string) error {
 	r.accountErrors = append(r.accountErrors, id)
+	for i := range r.accounts {
+		if r.accounts[i].ID == id {
+			r.accounts[i].Status = service.StatusError
+			r.accounts[i].Schedulable = false
+		}
+	}
 	return nil
 }
 
 func (r *requestErrorRoutingRepo) SetModelRateLimit(_ context.Context, id int64, model string, until time.Time, _ ...string) error {
+	r.modelCooldowns = append(r.modelCooldowns, id)
 	for i := range r.accounts {
 		if r.accounts[i].ID == id {
 			if r.accounts[i].Extra == nil {
@@ -50,17 +58,18 @@ func (r *requestErrorRoutingRepo) SetModelRateLimit(_ context.Context, id int64,
 
 type requestErrorRoutingUpstream struct {
 	service.HTTPUpstream
-	calls       []int64
-	status      int
-	body        string
-	allAccounts bool
-	sse         bool
+	calls        []int64
+	status       int
+	body         string
+	allAccounts  bool
+	failBeforeID int64
+	sse          bool
 }
 
 func (u *requestErrorRoutingUpstream) Do(_ *http.Request, _ string, id int64, _ int) (*http.Response, error) {
 	u.calls = append(u.calls, id)
 	status, body := http.StatusOK, `{"id":"resp_ok","object":"response","model":"gpt-5.2","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
-	if (id == 9910 || u.allAccounts) && u.status != 0 {
+	if (id == 9910 || u.allAccounts || id < u.failBeforeID) && u.status != 0 {
 		status, body = u.status, u.body
 	}
 	contentType := "application/json"
@@ -77,12 +86,16 @@ func (u *requestErrorRoutingUpstream) DoWithTLS(req *http.Request, proxy string,
 
 func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
-		for _, scenario := range []string{"unsupported_then_valid", "only_second_supports", "balance", "sse_balance", "404_then_valid", "all_404", "sse_404_then_valid", "sse_all_404", "401", "402", "403", "405", "413", "422", "429", "502", "503", "sse_402", "sse_405", "sse_413", "sse_422"} {
+		for _, scenario := range []string{"six_last_ok", "six_all_fail", "upstream_auth", "unsupported_then_valid", "only_second_supports", "balance", "balance_400", "sse_balance", "context_limit", "sse_context_limit", "request_502", "sse_request_502", "upstream_403", "all_502", "all_503", "404_then_valid", "all_404", "sse_404_then_valid", "sse_all_404", "401", "402", "403", "405", "413", "422", "429", "502", "503", "sse_402", "sse_405", "sse_413", "sse_422"} {
 			t.Run(fmt.Sprintf("passthrough=%t/%s", passthrough, scenario), func(t *testing.T) {
 				gin.SetMode(gin.TestMode)
 				groupID := int64(4203)
 				repo := &requestErrorRoutingRepo{}
-				for i := 0; i < 2; i++ {
+				accountCount := 2
+				if strings.HasPrefix(scenario, "six_") {
+					accountCount = 6
+				}
+				for i := 0; i < accountCount; i++ {
 					models := []string{"gpt-5.2", "gpt-6-luna"}
 					if scenario == "only_second_supports" && i == 0 {
 						models = models[:1]
@@ -97,10 +110,30 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 				cfg := &config.Config{RunMode: config.RunModeSimple}
 				cfg.Default.RateMultiplier = 1
 				cfg.Gateway.MaxAccountSwitches = 3
+				if accountCount == 6 {
+					cfg.Gateway.MaxAccountSwitches = 1
+				}
 				upstream := &requestErrorRoutingUpstream{}
 				switch scenario {
+				case "six_last_ok", "six_all_fail":
+					upstream.status, upstream.body, upstream.failBeforeID = 502, `{"error":{"type":"upstream_error","message":"temporary upstream failure"}}`, 9915
+					upstream.allAccounts = scenario == "six_all_fail"
+				case "upstream_auth":
+					upstream.status, upstream.body = 401, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"credential rejected"}}`
 				case "balance":
 					upstream.status, upstream.body = 403, `{"error":{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}}`
+				case "balance_400":
+					upstream.status, upstream.body = 400, `{"error":{"type":"invalid_request_error","code":"insufficient_balance","message":"Insufficient account balance"}}`
+				case "upstream_403":
+					upstream.status, upstream.body = 403, `{"error":{"type":"upstream_error","message":"upstream service unavailable"}}`
+				case "all_502", "all_503":
+					_, _ = fmt.Sscan(strings.TrimPrefix(scenario, "all_"), &upstream.status)
+					upstream.allAccounts = true
+					upstream.body = `{"error":{"type":"upstream_error","message":"temporary upstream failure"}}`
+				case "context_limit", "sse_context_limit":
+					upstream.status, upstream.body = 400, `{"error":{"type":"invalid_request_error","param":"input","message":"The request exceeds the context limit."}}`
+				case "request_502", "sse_request_502":
+					upstream.status, upstream.body = 502, `{"error":{"type":"invalid_request_error","param":"tools","message":"bad request parameter"}}`
 				case "sse_balance":
 					upstream.sse = true
 					upstream.body = `{"type":"response.failed","response":{"error":{"code":"insufficient_balance","message":"Insufficient account balance"}}}`
@@ -121,6 +154,10 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					upstream.sse = true
 					upstream.body = `{"type":"response.failed","response":{"error":{"code":"model_not_found","message":"Model gpt-6-luna is not supported"}}}`
 				}
+				if scenario == "sse_context_limit" || scenario == "sse_request_502" {
+					upstream.sse = true
+					upstream.body = fmt.Sprintf(`{"type":"response.failed","response":{"error":{"status_code":%d,"type":"invalid_request_error","message":%q}}}`, upstream.status, gjson.Get(upstream.body, "error.message").String())
+				}
 				billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 				t.Cleanup(billing.Stop)
 				rl := service.NewRateLimitService(repo, nil, cfg, nil, nil)
@@ -132,15 +169,37 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1703})
 					h.Responses(c)
 				})
+				site := httptest.NewServer(router)
+				t.Cleanup(site.Close)
 				request := func(model string) *httptest.ResponseRecorder {
 					payload, _ := json.Marshal(map[string]any{"model": model, "input": "hello", "stream": false})
-					req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(payload)))
+					req, err := http.NewRequest(http.MethodPost, site.URL+"/v1/responses", strings.NewReader(string(payload)))
+					require.NoError(t, err)
 					req.Header.Set("Content-Type", "application/json")
 					rec := httptest.NewRecorder()
-					router.ServeHTTP(rec, req)
+					resp, err := site.Client().Do(req)
+					require.NoError(t, err)
+					defer resp.Body.Close()
+					body, err := io.ReadAll(resp.Body)
+					require.NoError(t, err)
+					rec.Code = resp.StatusCode
+					_, _ = rec.Body.Write(body)
 					return rec
 				}
 				switch scenario {
+				case "six_last_ok", "six_all_fail":
+					rec := request("gpt-5.2")
+					if scenario == "six_last_ok" {
+						require.Equal(t, 200, rec.Code, rec.Body.String())
+					} else {
+						require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
+					}
+					require.Equal(t, []int64{9910, 9911, 9912, 9913, 9914, 9915}, upstream.calls, "配置切换上限不能提前终止同组去重遍历")
+					require.Empty(t, repo.accountErrors)
+				case "upstream_auth":
+					rec := request("gpt-5.2")
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9910, 9911}, upstream.calls, "供应侧明确认证失败要切下一账号")
 				case "unsupported_then_valid":
 					for _, model := range []string{"claude-sonnet-4-6", "gpt-definitely-missing"} {
 						rec := request(model)
@@ -155,15 +214,37 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					rec := request("gpt-6-luna")
 					require.Equal(t, 200, rec.Code, rec.Body.String())
 					require.Equal(t, []int64{9911}, upstream.calls)
-				case "balance", "sse_balance":
+				case "balance", "balance_400", "sse_balance":
 					rec := request("gpt-5.2")
-					require.Equal(t, 403, rec.Code, rec.Body.String())
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9910, 9911}, upstream.calls)
+					require.Equal(t, []int64{9910}, repo.accountErrors)
+					require.Empty(t, repo.modelCooldowns, "上游欠费为持久停用，不混入模型瞬时故障")
+					upstream.status, upstream.sse, upstream.calls = 0, false, nil
+					rec = request("gpt-6-luna")
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9911}, upstream.calls, "未人工恢复的欠费账号不能因换模型再次进入调度")
+				case "context_limit", "sse_context_limit", "request_502", "sse_request_502":
+					rec := request("gpt-5.2")
+					require.Equal(t, 400, rec.Code, rec.Body.String())
 					require.Equal(t, []int64{9910}, upstream.calls)
+					require.Empty(t, repo.accountErrors)
+					require.Empty(t, repo.modelCooldowns)
+					upstream.status, upstream.sse, upstream.calls = 0, false, nil
+					rec = request("gpt-5.2")
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9910}, upstream.calls, "用户请求错误不能影响账号下一次正常请求")
 				case "all_404", "sse_all_404":
 					rec := request("gpt-6-luna")
 					require.Equal(t, 404, rec.Code, rec.Body.String())
 					require.Equal(t, "model_not_found", gjson.GetBytes(rec.Body.Bytes(), "error.code").String())
 					require.Equal(t, []int64{9910, 9911}, upstream.calls, "每个账号只尝试一次，不能循环")
+				case "all_502", "all_503":
+					rec := request("gpt-5.2")
+					require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
+					require.Equal(t, []int64{9910, 9911}, upstream.calls, "同分组故障全部遍历后才结束，不能回到 A")
+					require.Empty(t, repo.accountErrors, "瞬时故障耗尽也不能永久关号")
+					require.ElementsMatch(t, []int64{9910, 9911}, repo.modelCooldowns)
 				case "404_then_valid", "sse_404_then_valid":
 					rec := request("gpt-6-luna")
 					require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -188,7 +269,7 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					require.Equal(t, 200, rec.Code, rec.Body.String())
 					require.Equal(t, []int64{9910, 9911}, upstream.calls)
 				}
-				if scenario != "401" && scenario != "402" && scenario != "403" {
+				if scenario != "401" && scenario != "402" && scenario != "403" && scenario != "upstream_auth" && scenario != "upstream_403" && scenario != "balance" && scenario != "balance_400" && scenario != "sse_balance" {
 					require.Empty(t, repo.accountErrors)
 				}
 			})

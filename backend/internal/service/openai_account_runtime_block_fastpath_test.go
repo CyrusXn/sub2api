@@ -205,7 +205,7 @@ func TestOpenAIStream429_SparkQuotaUsesQuotaHeaders(t *testing.T) {
 	headers.Set("x-codex-secondary-window-minutes", "300")
 	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
 
-	status, shouldDisable := svc.handleOpenAIStreamTerminalAccountSideEffects(
+	status, shouldDisable, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(
 		nil, account, payload, "quota exhausted", headers, "gpt-5.3-codex-spark",
 	)
 
@@ -328,7 +328,7 @@ func TestOpenAIStream429IgnoresSuccessfulQuotaSnapshotHeaders(t *testing.T) {
 	headers.Set("x-codex-primary-window-minutes", "10080")
 	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`)
 
-	status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "slow down", headers)
+	status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "slow down", headers)
 
 	require.Equal(t, http.StatusTooManyRequests, status)
 	require.False(t, disabled)

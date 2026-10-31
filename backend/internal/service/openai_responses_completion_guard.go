@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -62,11 +63,16 @@ func (s *OpenAIGatewayService) newOpenAIResponsesCompletionFailover(c *gin.Conte
 	return err
 }
 
-func (s *OpenAIGatewayService) writeOpenAIResponsesReadFailure(c *gin.Context, account *Account, passthrough bool, resp *http.Response, responseID, model string, createdAt int64, cause error) error {
+func (s *OpenAIGatewayService) writeOpenAIResponsesReadFailure(ctx context.Context, c *gin.Context, account *Account, passthrough bool, resp *http.Response, responseID, model, canonicalModel string, createdAt int64, cause error) error {
 	code, message := classifyOpenAIUpstreamStreamReadError(cause)
 	payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "code": code, "message": message}})
 	s.recordOpenAIStreamUpstreamError(c, account, passthrough, resp.Header.Get("x-request-id"), "stream_read_error", payload, message)
 	MarkOpsStreamFailure(c, "upstream_error", code, message, http.StatusBadGateway)
+	// 正文后不能重放，但上游断流仍须冷却实际发送的模型；客户端取消不归因到账号。
+	if account != nil && account.Platform == PlatformOpenAI && (ctx == nil || ctx.Err() == nil) &&
+		(c.Request == nil || c.Request.Context().Err() == nil) {
+		s.coolOpenAIAccountModelAfterFailure(ctx, account, canonicalModel)
+	}
 	// 读取可能在上一帧的空行之前中断，先封帧，避免失败事件被并入上一条 data。
 	if _, err := c.Writer.WriteString("\n\n" + buildOpenAIResponseFailedSSE(responseID, model, createdAt, payload, message)); err != nil {
 		return err

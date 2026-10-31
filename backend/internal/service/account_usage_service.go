@@ -352,13 +352,6 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 	}
 	accountID := account.ID
 
-	// Dedicated UI load-test accounts must remain fully interactive without ever
-	// contacting Anthropic with synthetic credentials. Reuse the same persisted
-	// passive snapshot that the account table loads on mount.
-	if account.IsSyntheticUITest() && account.IsAnthropicOAuthOrSetupToken() {
-		return s.getPassiveUsageForAccount(ctx, account)
-	}
-
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
 		// Usage can come from a stored snapshot even when a probe fails. Neither
 		// that nor a working access token proves a rejected refresh token recovered.
@@ -621,28 +614,8 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 
 	// 添加窗口统计
 	s.addWindowStats(ctx, account, info)
-	if account.IsSyntheticUITest() {
-		applySyntheticWindowStats(info, account.Extra)
-	}
 
 	return info, nil
-}
-
-func applySyntheticWindowStats(info *UsageInfo, extra map[string]any) {
-	if info == nil || info.FiveHour == nil || len(extra) == 0 {
-		return
-	}
-	raw, ok := extra["synthetic_window_stats"].(map[string]any)
-	if !ok {
-		return
-	}
-	info.FiveHour.WindowStats = &WindowStats{
-		Requests:     int64(parseExtraInt(raw["requests"])),
-		Tokens:       int64(parseExtraInt(raw["tokens"])),
-		Cost:         parseExtraFloat64(raw["cost"]),
-		StandardCost: parseExtraFloat64(raw["standard_cost"]),
-		UserCost:     parseExtraFloat64(raw["user_cost"]),
-	}
 }
 
 // buildPassiveUsageWindow 从 Extra 中的被动采样数据（utilization 为 0-1 小数、reset 为 Unix 秒）

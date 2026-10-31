@@ -571,18 +571,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/mock-accounts',
-    name: 'AdminMockAccounts',
-    component: () => import('@/views/admin/MockAccountsView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Mock Account Pool',
-      titleKey: 'admin.accounts.mock.title',
-      descriptionKey: 'admin.accounts.mock.description'
-    }
-  },
-  {
     path: '/admin/upstream-sites',
     name: 'AdminUpstreamSites',
     component: () => import('@/views/admin/UpstreamSitesView.vue'),

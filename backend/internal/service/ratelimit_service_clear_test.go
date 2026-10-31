@@ -200,6 +200,18 @@ func TestRateLimitService_ClearRateLimit_WithoutTempUnschedCache(t *testing.T) {
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 }
 
+func TestRateLimitService_SuccessfulTestPreservesUpstreamBalanceStop(t *testing.T) {
+	repo := &rateLimitClearRepoStub{getByIDAccount: &Account{ID: 42, Status: StatusError, ErrorMessage: openAIUpstreamInsufficientBalanceMessage, Schedulable: false}}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	result, err := svc.RecoverAccountAfterSuccessfulTest(context.Background(), 42)
+	require.NoError(t, err)
+	require.False(t, result.ClearedError)
+	require.Zero(t, repo.clearErrorCalls)
+	_, err = svc.RecoverAccountState(context.Background(), 42, AccountRecoveryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.clearErrorCalls, "显式人工恢复入口仍然有效")
+}
+
 func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLimitRelatedState(t *testing.T) {
 	now := time.Now()
 	repo := &rateLimitClearRepoStub{

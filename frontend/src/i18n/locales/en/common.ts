@@ -186,7 +186,6 @@ export default {
     modelFactory: 'Model Plaza',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
-    mockAccounts: 'Mock Accounts',
     upstreamSites: 'Upstream Site Accounts',
     balanceCenter: 'Balance Center',
     businessHistory: '经营历史',

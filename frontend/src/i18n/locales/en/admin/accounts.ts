@@ -2,19 +2,6 @@ export default {
     accounts: {
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
-      mock: {
-        title: 'Mock Account Pool',
-        description: 'OpenAI OAuth mock accounts',
-        allPlans: 'All Plans',
-        search: 'Search name, email, or platform',
-        refresh: 'Regenerate',
-        oauth: 'OAuth',
-        allStatuses: 'All Statuses',
-        resultCount: '{count} mock accounts',
-        pageSummary: 'Page {page} / {pages}',
-        previous: 'Previous',
-        next: 'Next'
-      },
       createAccount: 'Create Account',
       autoRefresh: 'Auto Refresh',
       enableAutoRefresh: 'Enable auto refresh',

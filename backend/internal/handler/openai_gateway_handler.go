@@ -972,7 +972,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches && !failoverErr.ExhaustBeforeFirstOutput && !service.IsOpenAIIdentityRoutingActive(c.Request.Context()) {
+					// OpenAI 按本轮排除集遍历同组候选，不能被普通换号预算提前截断。
+					if switchCount >= maxAccountSwitches && account.Platform != service.PlatformOpenAI && !failoverErr.ExhaustBeforeFirstOutput && !service.IsOpenAIIdentityRoutingActive(c.Request.Context()) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1541,7 +1542,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches && !service.IsOpenAIIdentityRoutingActive(c.Request.Context()) {
+					if switchCount >= maxAccountSwitches && account.Platform != service.PlatformOpenAI && !service.IsOpenAIIdentityRoutingActive(c.Request.Context()) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -2819,7 +2820,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		h.gatewayService.RecordOpenAIAccountSwitch()
 		failedAccountIDs[account.ID] = struct{}{}
 		lastFailoverErr = failoverErr
-		if switchCount >= maxAccountSwitches {
+		if switchCount >= maxAccountSwitches && account.Platform != service.PlatformOpenAI && !service.IsOpenAIIdentityRoutingActive(c.Request.Context()) {
 			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
 			return false
 		}

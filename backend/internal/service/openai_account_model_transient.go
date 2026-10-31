@@ -20,12 +20,11 @@ const (
 	// attempt plus a failover before reaching a healthy account. Low-traffic
 	// deployments were hit hardest, which is the opposite of what a breaker
 	// should do.
-	openAIModelTransientStreakTTL      = 30 * time.Minute
-	openAIModelTransientShortCooldown  = 10 * time.Second
-	openAIModelTransientLongCooldown   = 45 * time.Second
-	openAIModelTransientDefaultMax     = 4096
-	openAIModelTransientMaxModelBytes  = 512
-	openAIModelFailureDisableThreshold = 3
+	openAIModelTransientStreakTTL     = 30 * time.Minute
+	openAIModelTransientShortCooldown = time.Second
+	openAIModelTransientLongCooldown  = 5 * time.Second
+	openAIModelTransientDefaultMax    = 4096
+	openAIModelTransientMaxModelBytes = 512
 )
 
 // OpenAIModelFailureStreakCache 在多个 API 实例间共享连续故障计数，真实成功才清零。
@@ -121,17 +120,10 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 	entry.lastFailure = now
 	entry.lastTouched = now
 
-	// 首次故障就短暂避开该账号，防止下一次客户端重连再次命中。
-	cooldown := openAIModelTransientShortCooldown
-	switch {
-	case entry.failureStreak >= 3:
-		cooldown = openAIModelTransientLongCooldown
-	}
-	if cooldown > 0 {
-		entry.blockUntil = now.Add(cooldown)
-	} else {
-		entry.blockUntil = time.Time{}
-	}
+	// 短暂抖动只逐秒避让当前账号＋模型，最多 5 秒，不能升级为整账号停用。
+	// 同次故障由错误对象上的已处理标记去重，不依赖冷却期限。
+	cooldown := min(time.Duration(entry.failureStreak)*openAIModelTransientShortCooldown, openAIModelTransientLongCooldown)
+	entry.blockUntil = now.Add(cooldown)
 	s.entries[key] = entry
 	return openAIAccountModelTransientDecision{
 		FailureStreak:        entry.failureStreak,

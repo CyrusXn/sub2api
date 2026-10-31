@@ -1,12 +1,12 @@
 import { ref, onBeforeUnmount, type Ref } from 'vue'
 
 export interface UseAutoRefreshOptions {
-  storageKey: string
+  storageKey?: string
   intervals?: readonly number[]
   defaultInterval?: number
   defaultEnabled?: boolean
   onRefresh: () => Promise<void> | void
-  /** Skip tick when this returns true (e.g. modal open, document hidden). */
+  /** 仅暂缓请求，不冻结倒计时；页面正在加载时避免重复请求。 */
   shouldPause?: () => boolean
 }
 
@@ -25,9 +25,12 @@ export function useAutoRefresh(options: UseAutoRefreshOptions) {
   const fetching = ref(false)
 
   let timerId: number | undefined
+  let nextRefreshAt = 0
+  let disposed = false
 
   function loadFromStorage() {
     try {
+      if (!storageKey) return
       const saved = localStorage.getItem(storageKey)
       if (!saved) return
       const parsed = JSON.parse(saved) as { enabled?: boolean; interval_seconds?: number }
@@ -39,6 +42,7 @@ export function useAutoRefresh(options: UseAutoRefreshOptions) {
 
   function saveToStorage() {
     try {
+      if (!storageKey) return
       localStorage.setItem(storageKey, JSON.stringify({
         enabled: enabled.value,
         interval_seconds: intervalSeconds.value,
@@ -47,22 +51,30 @@ export function useAutoRefresh(options: UseAutoRefreshOptions) {
   }
 
   async function tick() {
-    if (!enabled.value) return
-    if (shouldPause?.()) return
-    if (fetching.value) return
-
-    if (countdown.value <= 1) {
-      countdown.value = intervalSeconds.value
-      fetching.value = true
-      try { await onRefresh() } finally { fetching.value = false }
-      return
+    if (!enabled.value || fetching.value || timerId === undefined) return
+    // 按实际截止时间计时，后台标签页节流后也能立即补刷。
+    countdown.value = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000))
+    if (countdown.value > 0 || shouldPause?.()) return
+    fetching.value = true
+    try {
+      await onRefresh()
+    } catch (error) {
+      console.error('自动刷新页面数据失败：', error)
+    } finally {
+      fetching.value = false
+      if (enabled.value && !disposed) resetCountdown()
     }
-    countdown.value -= 1
+  }
+
+  function handleVisibilityChange() {
+    if (!document.hidden) void tick()
   }
 
   function start() {
-    if (timerId !== undefined) return
-    timerId = setInterval(tick, 1000) as unknown as number
+    if (disposed || timerId !== undefined) return
+    resetCountdown()
+    timerId = setInterval(() => { void tick() }, 1000) as unknown as number
+    document.addEventListener('visibilitychange', handleVisibilityChange)
   }
 
   function stop() {
@@ -70,13 +82,14 @@ export function useAutoRefresh(options: UseAutoRefreshOptions) {
       clearInterval(timerId)
       timerId = undefined
     }
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 
   function setEnabled(value: boolean) {
     enabled.value = value
     saveToStorage()
     if (value) {
-      countdown.value = intervalSeconds.value
+      resetCountdown()
       start()
     } else {
       stop()
@@ -85,18 +98,23 @@ export function useAutoRefresh(options: UseAutoRefreshOptions) {
   }
 
   function setInterval_(seconds: number) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return
     intervalSeconds.value = seconds
     saveToStorage()
-    if (enabled.value) countdown.value = seconds
+    if (enabled.value) resetCountdown()
   }
 
   function resetCountdown() {
+    nextRefreshAt = Date.now() + intervalSeconds.value * 1000
     countdown.value = intervalSeconds.value
   }
 
   loadFromStorage()
 
-  onBeforeUnmount(stop)
+  onBeforeUnmount(() => {
+    disposed = true
+    stop()
+  })
 
   return {
     enabled: enabled as Ref<boolean>,

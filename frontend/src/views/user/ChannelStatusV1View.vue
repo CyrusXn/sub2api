@@ -30,6 +30,7 @@
       :monitor-id="detailTarget?.id ?? null"
       :title="detailTitle"
       :passive-item="detailTarget"
+      :countdown-seconds="countdown"
       @close="closeDetail"
     />
   </AppLayout>
@@ -76,8 +77,8 @@ const autoRefresh = useAutoRefresh({
   intervals: [60] as const,
   defaultInterval: DEFAULT_INTERVAL_SECONDS,
   defaultEnabled: true,
-  onRefresh: () => refresh(true),
-  shouldPause: () => document.hidden || loading.value,
+  onRefresh: () => refresh(),
+  shouldPause: () => loading.value,
 })
 const countdown = autoRefresh.countdown
 
