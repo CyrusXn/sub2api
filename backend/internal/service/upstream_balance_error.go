@@ -40,7 +40,8 @@ func allowsOpenAINextAccount(status int, message string, body []byte) bool {
 		isOpenAIHTTPUpstreamAccessStateError(status, message, body) || isOpenAIExplicitCredentialFailure(body) {
 		return true
 	}
-	if status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
+	// 此处已排除明确的请求错误；裸 403 仍来自供应侧，不能直接中断同组切号。
+	if status == http.StatusForbidden || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
 		return true
 	}
 	if isUpstreamModelNotFoundError(status, body) || (status == http.StatusBadRequest && isOpenAICompatibleModelNotFound400(body)) {
@@ -92,7 +93,7 @@ func isOpenAIRequestError(status int, message string, body []byte) bool {
 		switch strings.ToLower(strings.TrimSpace(value)) {
 		case "authentication_error", "authentication_failed", "unauthorized_error":
 			return false
-		case "invalid_request_error", "request_error", "validation_error", "invalid_argument", "bad_request":
+		case "invalid_request_error", "request_error", "validation_error", "invalid_argument", "bad_request", "safety_error":
 			return true
 		}
 	}
@@ -103,16 +104,17 @@ func isOpenAIRequestError(status int, message string, body []byte) bool {
 func hasOpenAIExplicitRequestErrorCode(body []byte) bool {
 	for _, code := range upstreamErrorStringValues(body, "error.code", "response.error.code", "detail.code", "code") {
 		switch strings.ToLower(strings.TrimSpace(code)) {
-		case "invalid_parameter", "missing_required_parameter", "invalid_argument", "invalid_value", "unsupported_parameter", "context_length_exceeded", "context_too_large":
+		case "invalid_parameter", "missing_required_parameter", "invalid_argument", "invalid_value", "unsupported_parameter", "context_length_exceeded", "context_too_large", "content_policy_violation", "content_filter":
 			return true
 		}
 	}
 	return false
 }
 
-func isOpenAIExplicitTransient4xx(status int, body []byte) bool {
-	return (status == http.StatusBadRequest || status == http.StatusForbidden) &&
-		isOpenAIExplicitUpstreamError(body) && !isOpenAIRequestError(status, "", body) &&
+func isOpenAITransient4xx(status int, body []byte) bool {
+	// 未分类的上游 403 只短暂冷却本模型，不能累计成整账号永久停用。
+	return (status == http.StatusForbidden || status == http.StatusBadRequest && isOpenAIExplicitUpstreamError(body)) &&
+		!isOpenAIRequestError(status, "", body) && !isOpenAIExplicitCredentialFailure(body) &&
 		!isUpstreamInsufficientBalanceError(status, body) &&
 		!isOpenAIHTTPUpstreamAccessStateError(status, "", body)
 }

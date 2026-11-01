@@ -135,6 +135,13 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	// 与普通转发使用相同入站会话键，跨轮只清理已被拒绝的密文。
+	lineageEntryBody := body
+	lineageSessionHash := s.openAIWSLineageSessionHashFromContext(c, body)
+	lineageGroupID := getOpenAIGroupIDFromContext(c)
+	if invalid := s.sessionInvalidEncryptedContentDigests(lineageGroupID, lineageSessionHash); len(invalid) > 0 {
+		body, _ = s.stripSessionInvalidEncryptedContentLogged(body, invalid, "passthrough_invalid_encrypted_lineage_strip", account.ID, 0)
+	}
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
@@ -361,6 +368,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	agentTaskRecoveryTried := false
+	invalidEncryptedContentRecoveryTried := false
 	compactModelFallbackRetried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
 	var resp *http.Response
@@ -401,6 +409,24 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			probeBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
+			if !invalidEncryptedContentRecoveryTried && resp.StatusCode == http.StatusBadRequest &&
+				isOpenAIInvalidEncryptedContentError(extractUpstreamErrorCode(probeBody), extractUpstreamErrorMessage(probeBody)) {
+				var decoded map[string]any
+				if decodeErr := decodeOpenAIJSONUseNumber(body, &decoded); decodeErr != nil {
+					return nil, decodeErr
+				}
+				if trimOpenAIEncryptedReasoningItems(decoded) {
+					retryBody, marshalErr := marshalOpenAIUpstreamJSON(decoded)
+					if marshalErr != nil {
+						return nil, marshalErr
+					}
+					s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, lineageSessionHash, collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody))
+					body = retryBody
+					invalidEncryptedContentRecoveryTried = true
+					rejectedFieldRetryState.remember(body)
+					continue
+				}
+			}
 			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize passthrough rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
@@ -461,6 +487,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if reqStream {
 			result, handleErr := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel, gjson.GetBytes(body, "reasoning.effort").String())
 			if handleErr != nil {
+				if retryBody, retry, recoveryErr := s.recoverOpenAIEncryptedContentStreamError(c, account, handleErr, body, lineageEntryBody, &invalidEncryptedContentRecoveryTried); retry {
+					_ = resp.Body.Close()
+					body = retryBody
+					rejectedFieldRetryState.remember(body)
+					continue
+				} else {
+					handleErr = recoveryErr
+				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
 				); retry {
@@ -488,6 +522,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		} else {
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
+				if retryBody, retry, recoveryErr := s.recoverOpenAIEncryptedContentStreamError(c, account, handleErr, body, lineageEntryBody, &invalidEncryptedContentRecoveryTried); retry {
+					_ = resp.Body.Close()
+					body = retryBody
+					rejectedFieldRetryState.remember(body)
+					continue
+				} else {
+					handleErr = recoveryErr
+				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
 				); retry {
@@ -809,7 +851,7 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 		return true
 	}
 	switch statusCode {
-	case http.StatusTooManyRequests, 529:
+	case http.StatusForbidden, http.StatusTooManyRequests, 529:
 		return true
 	}
 	if account == nil || account.Type != AccountTypeAPIKey {
@@ -1014,11 +1056,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 			Passthrough: true, Kind: "http_error", Message: upstreamMsg, Detail: upstreamDetail,
 		})
 		MarkResponseCommitted(c)
-		if isOpenAIContextWindowError(upstreamMsg, body) {
-			writeOpenAIPassthroughErrorEnvelope(c, openAIRequestErrorClientStatus(resp.StatusCode), resp.Header, upstreamMsg)
-		} else {
-			writeSanitizedOpenAIPassthroughError(c, openAIRequestErrorClientStatus(resp.StatusCode), resp.Header)
-		}
+		writeOpenAIUpstreamClientError(c, openAIRequestErrorClientStatus(resp.StatusCode), body, upstreamMsg)
 		return fmt.Errorf("upstream error: %d (client response sanitized)", resp.StatusCode)
 	}
 	if !cyberHit {
@@ -1679,7 +1717,8 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	}
 	semanticStatus := openAIStreamFailureStatus(payload, message)
 	if semanticStatus == http.StatusForbidden {
-		return openAIStream403AccountFailure(payload, message) || isOpenAIExplicitUpstreamError(payload)
+		// 明确请求错误已在入口排除，其余上游 403 在正文输出前允许切号。
+		return true
 	}
 	// A response.failed event is transported over HTTP 200. Prefer its semantic
 	// rate-limit status over a generic/invalid_request error type so it can enter
@@ -1739,9 +1778,7 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 		return true
 	}
 	switch openAIStreamFailedEventSemanticStatus(payload, message) {
-	case http.StatusForbidden:
-		return openAIStream403AccountFailure(payload, message) || isOpenAIExplicitUpstreamError(payload)
-	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+	case http.StatusForbidden, http.StatusUnauthorized, http.StatusTooManyRequests, 529:
 		return true
 	}
 	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
@@ -2332,6 +2369,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
 				if !outputStarted && !cyberHit {
+					if recoveryErr := newOpenAIEncryptedContentRecoverySignal(dataBytes, failedMessage); recoveryErr != nil {
+						return resultWithUsage(), recoveryErr
+					}
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						return resultWithUsage(), compactErr
 					}
@@ -2685,6 +2725,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 // preserving passthrough payloads, except compact-only model remapping may
 // rewrite model fields back to the original requested model.
 func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
+	// 透传未覆盖模型时同样要保留调度模型，否则切号成功也不会记录模型冷却。
+	if strings.TrimSpace(mappedModel) == "" {
+		mappedModel = canonicalOpenAIAccountSchedulingModel(account, originalModel)
+	}
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
@@ -2692,11 +2736,18 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		if msg == "" {
 			msg = "Upstream compact response failed"
 		}
+		if recoveryErr := newOpenAIEncryptedContentRecoverySignal(terminalPayload, msg); recoveryErr != nil {
+			return nil, recoveryErr
+		}
 		if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
 			return nil, compactErr
 		}
 		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, true, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
 			return nil, failoverErr
+		}
+		if status := openAIStreamFailureStatus(terminalPayload, msg); isOpenAIRequestError(status, msg, terminalPayload) {
+			writeOpenAIUpstreamClientError(c, openAIRequestErrorClientStatus(status), openAIStreamFailedEventPassthroughBody(terminalPayload, msg), sanitizeUpstreamErrorMessage(msg))
+			return nil, fmt.Errorf("upstream request rejected: %d", status)
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg, openAIStreamFailureStatus(terminalPayload, msg))
 	}

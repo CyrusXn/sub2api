@@ -169,7 +169,7 @@ func TestOpenAIHTTPAuthMessagesUseExistingStatusPolicies(t *testing.T) {
 		require.Equal(t, 1, repo.tempCalls)
 	})
 
-	t.Run("403 uses counter cooldown", func(t *testing.T) {
+	t.Run("untyped 403 cools only the requested model", func(t *testing.T) {
 		repo := &openAIAuthPolicyAccountRepo{}
 		counter := &openAIAuthPolicy403Counter{counts: []int64{1}}
 		rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -180,9 +180,11 @@ func TestOpenAIHTTPAuthMessagesUseExistingStatusPolicies(t *testing.T) {
 		body := []byte(`{"error":{"message":"workspace has been suspended"}}`)
 
 		require.False(t, isOpenAIHTTPUpstreamAccessStateError(http.StatusForbidden, "", body))
-		require.True(t, svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusForbidden, nil, body))
+		require.False(t, svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusForbidden, nil, body, "gpt-test"))
 		require.Zero(t, repo.setErrorCalls)
-		require.Equal(t, 1, repo.tempCalls)
+		require.Zero(t, repo.tempCalls)
+		require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-test"))
+		require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-other"))
 	})
 }
 
@@ -212,7 +214,7 @@ func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T)
 		wantFailover bool
 	}{
 		{"unauthorized", `{"type":"error","error":{"type":"authentication_error","code":"invalid_api_key","message":"unauthorized"}}`, http.StatusUnauthorized, true},
-		{"forbidden", `{"type":"response.failed","response":{"error":{"type":"permission_error","message":"forbidden"}}}`, http.StatusForbidden, false},
+		{"forbidden", `{"type":"response.failed","response":{"error":{"type":"permission_error","message":"forbidden"}}}`, http.StatusForbidden, true},
 		{"rate_limit", `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`, http.StatusTooManyRequests, true},
 		{"overload_529", `{"type":"error","error":{"status_code":529,"code":"overloaded","message":"overloaded"}}`, 529, true},
 	}
@@ -254,9 +256,10 @@ func TestOpenAIStreamSemanticStatusHonorsErrorStatusAlias(t *testing.T) {
 			wantFailover: true,
 		},
 		{
-			name:   "response.error.status forbidden without account signal",
-			body:   `{"type":"response.failed","response":{"error":{"code":"server_error","status":403,"message":"request was rejected"}}}`,
-			status: http.StatusForbidden,
+			name:         "response.error.status forbidden without account signal",
+			body:         `{"type":"response.failed","response":{"error":{"code":"server_error","status":403,"message":"request was rejected"}}}`,
+			status:       http.StatusForbidden,
+			wantFailover: true,
 		},
 	}
 	for _, tt := range tests {
@@ -291,7 +294,7 @@ func TestOpenAIStreamBareErrorUsesSemanticFailover(t *testing.T) {
 	require.True(t, openAIStreamErrorEventShouldFailover(payload, "slow down"))
 }
 
-func TestOpenAIStream403FailoverRequiresStructuredAccountCredentialSignal(t *testing.T) {
+func TestOpenAIStream403FailoverUsesErrorTypeBeforeCredentialSignal(t *testing.T) {
 	tests := []struct {
 		name    string
 		payload string
@@ -300,10 +303,11 @@ func TestOpenAIStream403FailoverRequiresStructuredAccountCredentialSignal(t *tes
 		{
 			name:    "ordinary permission error",
 			payload: `{"type":"response.failed","response":{"error":{"type":"permission_error","code":"forbidden","message":"access denied for this request"}}}`,
+			want:    true,
 		},
 		{
 			name:    "explicit 403 request status",
-			payload: `{"type":"error","error":{"type":"permission_error","code":"forbidden","status_code":403,"message":"forbidden content"}}`,
+			payload: `{"type":"error","error":{"type":"invalid_request_error","code":"forbidden","status_code":403,"message":"forbidden content"}}`,
 		},
 		{
 			name:    "structured access state",
@@ -338,7 +342,7 @@ func TestOpenAIStream403PostOutputAccountSideEffectsIgnoreRequestPermissionError
 	rateLimits := &RateLimitService{accountRepo: repo}
 	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
 	account := &Account{ID: 918, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
-	payload := []byte(`{"type":"error","error":{"type":"permission_error","code":"forbidden","status_code":403,"message":"access denied for this request"}}`)
+	payload := []byte(`{"type":"error","error":{"type":"invalid_request_error","code":"forbidden","status_code":403,"message":"access denied for this request"}}`)
 
 	status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "access denied for this request", nil)
 

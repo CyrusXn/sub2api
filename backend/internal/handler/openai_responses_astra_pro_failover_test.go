@@ -33,7 +33,7 @@ const astraProSuccessResponse = `{"id":"resp_astra","model":"gpt-6-astra","statu
 	`"usage":{"input_tokens":1,"output_tokens":2},` +
 	`"reasoning":{"mode":"pro","effort":"max"}}`
 
-// 普通 403 直接结束请求，不换账号且不降级用户选择的模型与推理参数。
+// 上游 403 切换账号，但不能降级用户选择的模型与推理参数。
 const astraProForbiddenResponse = `{"error":{"type":"forbidden_error","code":"forbidden","message":"Forbidden"}}`
 
 // astraProCapturedUpstream records URL/accountID/body per forwarded attempt.
@@ -136,8 +136,8 @@ func assertAstraProAccountSwitch(t *testing.T, accountIDs []int64) {
 	require.ElementsMatch(t, []int64{1, 2}, accountIDs, "both OAuth accounts must be reached")
 }
 
-// 权限拒绝在当前账号结束，不重放到第二个账号，保留用户选择的模型与推理参数。
-func TestOpenAIGatewayHandlerResponses_AstraPro403DoesNotSwitchAccount(t *testing.T) {
+// 上游权限拒绝后尝试同组下一账号，保留用户选择的模型与推理参数。
+func TestOpenAIGatewayHandlerResponses_AstraPro403SwitchesAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstream := newAstraProCapturedUpstream(astra403(), astra200())
@@ -148,11 +148,11 @@ func TestOpenAIGatewayHandlerResponses_AstraPro403DoesNotSwitchAccount(t *testin
 
 	urls, accountIDs, bodies := upstream.snapshot()
 	assertAstraProWire(t, urls, bodies)
-	require.Equal(t, []int64{1}, accountIDs, "权限拒绝不能重放到第二个账号")
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	assertAstraProAccountSwitch(t, accountIDs)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
-// 多账号均拒绝权限时也只调用首个账号，沿用凭据错误对外隐藏策略。
+// 多账号均拒绝权限时每个账号只尝试一次，沿用上游错误对外隐藏策略。
 func TestOpenAIGatewayHandlerResponses_AstraProBoth403NoDowngrade(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -164,7 +164,7 @@ func TestOpenAIGatewayHandlerResponses_AstraProBoth403NoDowngrade(t *testing.T) 
 
 	urls, accountIDs, bodies := upstream.snapshot()
 	assertAstraProWire(t, urls, bodies)
-	require.Equal(t, []int64{1}, accountIDs)
+	assertAstraProAccountSwitch(t, accountIDs)
 	require.NotEqual(t, http.StatusOK, rec.Code, "all-403 must never surface a 200 to the client")
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())

@@ -625,6 +625,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
 				if !outputStarted && !cyberHit {
+					if recoveryErr := newOpenAIEncryptedContentRecoverySignal(dataBytes, failedMessage); recoveryErr != nil {
+						sawFailedEvent = true
+						streamEarlyErr = recoveryErr
+						return
+					}
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						sawFailedEvent = true
 						streamEarlyErr = compactErr
@@ -1827,11 +1832,18 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		if msg == "" {
 			msg = "Upstream compact response failed"
 		}
+		if recoveryErr := newOpenAIEncryptedContentRecoverySignal(terminalPayload, msg); recoveryErr != nil {
+			return nil, recoveryErr
+		}
 		if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
 			return nil, compactErr
 		}
 		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, false, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
 			return nil, failoverErr
+		}
+		if status := openAIStreamFailureStatus(terminalPayload, msg); isOpenAIRequestError(status, msg, terminalPayload) {
+			writeOpenAIUpstreamClientError(c, openAIRequestErrorClientStatus(status), openAIStreamFailedEventPassthroughBody(terminalPayload, msg), sanitizeUpstreamErrorMessage(msg))
+			return nil, fmt.Errorf("upstream request rejected: %d", status)
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg, openAIStreamFailureStatus(terminalPayload, msg))
 	}

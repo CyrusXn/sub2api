@@ -86,7 +86,12 @@ func (u *requestErrorRoutingUpstream) DoWithTLS(req *http.Request, proxy string,
 
 func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
-		for _, scenario := range []string{"six_last_ok", "six_all_fail", "upstream_auth", "unsupported_then_valid", "only_second_supports", "balance", "balance_400", "sse_balance", "context_limit", "sse_context_limit", "request_502", "sse_request_502", "upstream_403", "all_502", "all_503", "404_then_valid", "all_404", "sse_404_then_valid", "sse_all_404", "401", "402", "403", "405", "413", "422", "429", "502", "503", "sse_402", "sse_405", "sse_413", "sse_422"} {
+		for _, scenario := range []string{
+			"six_last_ok", "six_all_fail", "six_403_last_ok", "six_403_all_fail", "upstream_auth", "unsupported_then_valid", "only_second_supports",
+			"balance", "balance_400", "sse_balance", "context_limit", "sse_context_limit", "request_403", "request_502", "sse_request_403", "sse_request_502",
+			"upstream_403", "edge_403", "sse_403", "sse_upstream_403", "all_403", "all_502", "all_503",
+			"404_then_valid", "all_404", "sse_404_then_valid", "sse_all_404", "401", "402", "403", "405", "413", "422", "429", "502", "503", "sse_402", "sse_405", "sse_413", "sse_422",
+		} {
 			t.Run(fmt.Sprintf("passthrough=%t/%s", passthrough, scenario), func(t *testing.T) {
 				gin.SetMode(gin.TestMode)
 				groupID := int64(4203)
@@ -115,9 +120,12 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 				}
 				upstream := &requestErrorRoutingUpstream{}
 				switch scenario {
-				case "six_last_ok", "six_all_fail":
+				case "six_last_ok", "six_all_fail", "six_403_last_ok", "six_403_all_fail":
 					upstream.status, upstream.body, upstream.failBeforeID = 502, `{"error":{"type":"upstream_error","message":"temporary upstream failure"}}`, 9915
-					upstream.allAccounts = scenario == "six_all_fail"
+					if strings.HasPrefix(scenario, "six_403_") {
+						upstream.status, upstream.body = 403, "Forbidden"
+					}
+					upstream.allAccounts = strings.HasSuffix(scenario, "all_fail")
 				case "upstream_auth":
 					upstream.status, upstream.body = 401, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"credential rejected"}}`
 				case "balance":
@@ -126,7 +134,17 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					upstream.status, upstream.body = 400, `{"error":{"type":"invalid_request_error","code":"insufficient_balance","message":"Insufficient account balance"}}`
 				case "upstream_403":
 					upstream.status, upstream.body = 403, `{"error":{"type":"upstream_error","message":"upstream service unavailable"}}`
-				case "all_502", "all_503":
+				case "edge_403":
+					upstream.status, upstream.body = 403, "error code: 1010"
+				case "request_403", "sse_request_403":
+					upstream.status, upstream.body = 403, `{"error":{"type":"invalid_request_error","code":"invalid_parameter","message":"bad request parameter"}}`
+				case "sse_403", "sse_upstream_403":
+					upstream.sse = true
+					upstream.body = `{"type":"response.failed","response":{"error":{"status_code":403,"message":"Forbidden"}}}`
+					if scenario == "sse_upstream_403" {
+						upstream.body = `{"type":"response.failed","response":{"error":{"status_code":403,"type":"upstream_error","message":"Forbidden"}}}`
+					}
+				case "all_403", "all_502", "all_503":
 					_, _ = fmt.Sscan(strings.TrimPrefix(scenario, "all_"), &upstream.status)
 					upstream.allAccounts = true
 					upstream.body = `{"error":{"type":"upstream_error","message":"temporary upstream failure"}}`
@@ -154,7 +172,7 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					upstream.sse = true
 					upstream.body = `{"type":"response.failed","response":{"error":{"code":"model_not_found","message":"Model gpt-6-luna is not supported"}}}`
 				}
-				if scenario == "sse_context_limit" || scenario == "sse_request_502" {
+				if scenario == "sse_context_limit" || scenario == "sse_request_502" || scenario == "sse_request_403" {
 					upstream.sse = true
 					upstream.body = fmt.Sprintf(`{"type":"response.failed","response":{"error":{"status_code":%d,"type":"invalid_request_error","message":%q}}}`, upstream.status, gjson.Get(upstream.body, "error.message").String())
 				}
@@ -187,9 +205,9 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					return rec
 				}
 				switch scenario {
-				case "six_last_ok", "six_all_fail":
+				case "six_last_ok", "six_all_fail", "six_403_last_ok", "six_403_all_fail":
 					rec := request("gpt-5.2")
-					if scenario == "six_last_ok" {
+					if strings.HasSuffix(scenario, "last_ok") {
 						require.Equal(t, 200, rec.Code, rec.Body.String())
 					} else {
 						require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
@@ -234,12 +252,28 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					rec = request("gpt-5.2")
 					require.Equal(t, 200, rec.Code, rec.Body.String())
 					require.Equal(t, []int64{9910}, upstream.calls, "用户请求错误不能影响账号下一次正常请求")
+				case "request_403", "sse_request_403":
+					rec := request("gpt-5.2")
+					require.Equal(t, 403, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9910}, upstream.calls)
+					require.Empty(t, repo.accountErrors)
+					require.Empty(t, repo.modelCooldowns)
+				case "403", "edge_403", "upstream_403", "sse_403", "sse_upstream_403":
+					rec := request("gpt-5.2")
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9910, 9911}, upstream.calls, "上游403应调用同组下一账号")
+					require.Equal(t, []int64{9910}, repo.modelCooldowns)
+					require.Empty(t, repo.accountErrors, "未明确欠费或凭据失效的403不能停用整账号")
+					upstream.status, upstream.sse, upstream.calls = 0, false, nil
+					rec = request("gpt-6-luna")
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9910}, upstream.calls, "403冷却不能影响原账号其他模型")
 				case "all_404", "sse_all_404":
 					rec := request("gpt-6-luna")
 					require.Equal(t, 404, rec.Code, rec.Body.String())
 					require.Equal(t, "model_not_found", gjson.GetBytes(rec.Body.Bytes(), "error.code").String())
 					require.Equal(t, []int64{9910, 9911}, upstream.calls, "每个账号只尝试一次，不能循环")
-				case "all_502", "all_503":
+				case "all_403", "all_502", "all_503":
 					rec := request("gpt-5.2")
 					require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
 					require.Equal(t, []int64{9910, 9911}, upstream.calls, "同分组故障全部遍历后才结束，不能回到 A")
@@ -260,7 +294,7 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					_, _ = fmt.Sscan(strings.TrimPrefix(scenario, "sse_"), &status)
 					require.Equal(t, status, rec.Code, rec.Body.String())
 					require.Equal(t, []int64{9910}, upstream.calls)
-				case "401", "402", "403", "405", "413", "422":
+				case "401", "402", "405", "413", "422":
 					rec := request("gpt-5.2")
 					require.GreaterOrEqual(t, rec.Code, 400, rec.Body.String())
 					require.Equal(t, []int64{9910}, upstream.calls, "普通请求或认证错误不能换号重试")

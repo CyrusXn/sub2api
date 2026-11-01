@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,57 @@ import (
 // 的项，新生成的密文摘要不同，不会被误删。
 
 const openAIWSFallbackReasonInvalidEncryptedContent = "invalid_encrypted_content"
+
+// 只识别上游的密文校验拒绝，普通参数错误不能触发历史改写。
+func isOpenAIInvalidEncryptedContentError(code, message string) bool {
+	code = strings.ToLower(strings.TrimSpace(code))
+	message = strings.ToLower(strings.TrimSpace(message))
+	return code == "invalid_encrypted_content" ||
+		(code == "thinking_signature_invalid" && strings.Contains(message, "encrypted content") &&
+			strings.Contains(message, "could not be verified") && strings.Contains(message, "could not be decrypted or parsed")) ||
+		strings.HasPrefix(message, "encrypted function output content could not be decrypted or decoded")
+}
+
+type openAIEncryptedContentRecoverySignal struct {
+	payload []byte
+	message string
+}
+
+func (e *openAIEncryptedContentRecoverySignal) Error() string { return e.message }
+
+func newOpenAIEncryptedContentRecoverySignal(payload []byte, message string) error {
+	if !isOpenAIInvalidEncryptedContentError(extractUpstreamErrorCode(payload), message) {
+		return nil
+	}
+	return &openAIEncryptedContentRecoverySignal{payload: append([]byte(nil), payload...), message: sanitizeUpstreamErrorMessage(message)}
+}
+
+// 仅上游明确拒绝后调用；与 HTTP 恢复共用一次预算，不能在重试循环中无限剥离。
+func (s *OpenAIGatewayService) recoverOpenAIEncryptedContentStreamError(c *gin.Context, account *Account, err error, body, entryBody []byte, tried *bool) ([]byte, bool, error) {
+	var signal *openAIEncryptedContentRecoverySignal
+	if !errors.As(err, &signal) {
+		return body, false, err
+	}
+	if !*tried {
+		var decoded map[string]any
+		if decodeErr := decodeOpenAIJSONUseNumber(body, &decoded); decodeErr != nil {
+			return body, false, decodeErr
+		}
+		if trimOpenAIEncryptedReasoningItems(decoded) {
+			retryBody, marshalErr := marshalOpenAIUpstreamJSON(decoded)
+			if marshalErr != nil {
+				return body, false, marshalErr
+			}
+			s.markOpenAIWSInvalidEncryptedContentLineage(getOpenAIGroupIDFromContext(c), s.openAIWSLineageSessionHashFromContext(c, entryBody), collectOpenAIEncryptedContentDigestsRaw(entryBody))
+			*tried = true
+			return retryBody, true, nil
+		}
+	}
+	// 不可恢复时保留请求错误语义，不能把同一份坏历史在整个账号池中重放。
+	s.recordOpenAIStreamUpstreamError(c, account, account.IsOpenAIPassthroughEnabled(), "", "http_error", signal.payload, signal.message)
+	writeOpenAIUpstreamClientError(c, 400, openAIStreamFailedEventPassthroughBody(signal.payload, signal.message), signal.message)
+	return body, false, err
+}
 
 // openAIWSIngressSessionHashContextKey 在 gin context 中携带 ingress 会话哈希，
 // 供 HTTP bridge turn 内的 lineage 记录复用同一会话键。

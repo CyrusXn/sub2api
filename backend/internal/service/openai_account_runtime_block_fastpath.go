@@ -178,7 +178,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		return true
 	}
 	// 兼容上游将服务故障包装成 400/403，不能误入通用 403 的分钟级或永久账号处罚。
-	if account.Platform == PlatformOpenAI && isOpenAIExplicitTransient4xx(statusCode, responseBody) {
+	if account.Platform == PlatformOpenAI && isOpenAITransient4xx(statusCode, responseBody) {
 		s.coolOpenAIAccountModelAfterFailure(stateCtx, account, firstNonEmpty(canonicalModel...))
 		return false
 	}
@@ -249,7 +249,7 @@ func (s *OpenAIGatewayService) coolOpenAIAccountModelAfterFailure(ctx context.Co
 }
 
 func shouldCooldownOpenAITransientUpstreamError(statusCode int, responseBody []byte) bool {
-	if isOpenAIExplicitTransient4xx(statusCode, responseBody) {
+	if isOpenAITransient4xx(statusCode, responseBody) {
 		return true
 	}
 	switch statusCode {

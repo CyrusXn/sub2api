@@ -100,7 +100,7 @@ func TestOpenAIStreamExplicitRequestErrorsDoNotSwitchAccounts(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", shape, status), func(t *testing.T) {
 				payload := []byte(fmt.Sprintf(`{"type":"error","error":{"status_code":%d,"type":"invalid_request_error","message":"request rejected"}}`, status))
 				if shape == "response.error" {
-					payload = []byte(fmt.Sprintf(`{"type":"response.failed","response":{"error":{"status_code":%d,"message":"request rejected"}}}`, status))
+					payload = []byte(fmt.Sprintf(`{"type":"response.failed","response":{"error":{"status_code":%d,"type":"invalid_request_error","message":"request rejected"}}}`, status))
 				}
 				require.Equal(t, status, openAIStreamFailureStatus(payload, "request rejected"))
 				require.False(t, openAIStreamFailedEventShouldFailover(payload, "request rejected"))
@@ -225,6 +225,8 @@ func TestOpenAIRequestErrorsNeverPenalizeAccount(t *testing.T) {
 		`{"error":{"code":"context_length_exceeded","message":"Request context is too long: Insufficient account balance"}}`,
 		`{"error":{"type":"invalid_request_error","code":"invalid_parameter","param":"tools","message":"bad request parameter"}}`,
 		`{"error":{"message":"The request exceeds the context limit.","param":"input"}}`,
+		`{"error":{"type":"permission_error","code":"content_policy_violation","message":"request blocked"}}`,
+		`{"error":{"type":"safety_error","message":"request blocked"}}`,
 		`{"type":"response.failed","response":{"error":{"type":"invalid_request_error","message":"The request exceeds the context limit.","param":"input"}}}`,
 	} {
 		for _, status := range []int{400, 403, 429, 502, 503} {
@@ -263,6 +265,83 @@ func TestOpenAIExplicitUpstreamTypeAllowsFailoverDespite403(t *testing.T) {
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(account, 403, body))
 }
 
+func TestOpenAIHTTP403SourceControlsFailover(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  string
+		retry bool
+	}{
+		{"plain_edge_error", "error code: 1010", true},
+		{"empty_body", "", true},
+		{"untyped_json", `{"error":{"message":"Forbidden"}}`, true},
+		{"explicit_upstream", `{"error":{"type":"upstream_error","message":"Forbidden"}}`, true},
+		{"request_403", `{"error":{"type":"invalid_request_error","message":"request rejected"}}`, false},
+		{"context_403", `{"error":{"code":"context_length_exceeded","message":"context limit exceeded"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &errorPolicyRepoStub{}
+			rl := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+			svc := &OpenAIGatewayService{accountRepo: repo, rateLimitService: rl}
+			rl.SetAccountRuntimeBlocker(svc)
+			account := openAIModelNotFoundTempAccount()
+			payload := []byte(tc.body)
+			require.Equal(t, tc.retry, svc.shouldFailoverOpenAIUpstreamResponse(account, 403, "", payload))
+			require.Equal(t, tc.retry, shouldFailoverOpenAIPassthroughResponse(account, 403, payload))
+			failover := newOpenAIUpstreamFailoverError(403, nil, payload, "", true)
+			require.Equal(t, tc.retry, failover.ShouldRetryNextAccount())
+			require.False(t, failover.RetryableOnSameAccount, "403不能重试同一个账号")
+			require.False(t, svc.handleOpenAIAccountUpstreamError(context.Background(), account, 403, nil, payload, "gpt-test"))
+			require.Equal(t, tc.retry, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-test"))
+			require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-other"))
+			require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+			require.Zero(t, repo.setErrCalls)
+			require.Zero(t, repo.tempCalls)
+		})
+	}
+}
+
+func TestOpenAIStream403SourceControlsFailover(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   string
+		retry bool
+	}{
+		{"untyped", `{"status_code":403,"message":"Forbidden"}`, true},
+		{"upstream", `{"status_code":403,"type":"upstream_error","message":"Forbidden"}`, true},
+		{"upstream_permission", `{"status_code":403,"type":"permission_error","message":"Forbidden"}`, true},
+		{"request", `{"status_code":403,"type":"invalid_request_error","message":"request rejected"}`, false},
+		{"context", `{"status_code":403,"code":"context_length_exceeded","message":"context limit exceeded"}`, false},
+		{"content_policy", `{"status_code":403,"type":"permission_error","code":"content_policy_violation","message":"request blocked"}`, false},
+		{"safety", `{"status_code":403,"type":"safety_error","message":"request blocked"}`, false},
+	} {
+		for _, shape := range []string{"error", "response.failed"} {
+			t.Run(tc.name+"/"+shape, func(t *testing.T) {
+				payload := []byte(fmt.Sprintf(`{"type":"error","error":%s}`, tc.err))
+				if shape == "response.failed" {
+					payload = []byte(fmt.Sprintf(`{"type":"response.failed","response":{"error":%s}}`, tc.err))
+				}
+				require.Equal(t, tc.retry, openAIStreamFailedEventShouldFailover(payload, ""))
+				require.Equal(t, tc.retry, openAIStreamErrorEventShouldFailover(payload, ""))
+				repo := &errorPolicyRepoStub{}
+				svc := &OpenAIGatewayService{accountRepo: repo, rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil)}
+				account := openAIModelNotFoundTempAccount()
+				status, disabled, _ := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, "", nil, "gpt-test")
+				expectedStatus := 403
+				if tc.name == "context" {
+					expectedStatus = 400
+				}
+				require.Equal(t, expectedStatus, status)
+				require.False(t, disabled)
+				require.Equal(t, tc.retry, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-test"))
+				require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-other"))
+				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+				require.Zero(t, repo.setErrCalls)
+				require.Zero(t, repo.tempCalls)
+			})
+		}
+	}
+}
+
 func TestOpenAIExplicitUpstream4xxOnlyCoolsRequestedModel(t *testing.T) {
 	for _, status := range []int{400, 403} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -286,6 +365,8 @@ func TestOpenAIExplicitUpstream4xxOnlyCoolsRequestedModel(t *testing.T) {
 
 func TestOpenAIWS403UpstreamTerminalCoolsRequestedModel(t *testing.T) {
 	for _, payload := range []string{
+		`{"type":"error","error":{"status_code":403,"message":"Forbidden"}}`,
+		`{"type":"response.failed","response":{"error":{"status_code":403,"message":"Forbidden"}}}`,
 		`{"type":"error","error":{"type":"upstream_error","status_code":403,"message":"temporary upstream failure"}}`,
 		`{"type":"response.failed","response":{"error":{"type":"upstream_error","status_code":403,"message":"temporary upstream failure"}}}`,
 	} {

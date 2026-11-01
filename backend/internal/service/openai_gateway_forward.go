@@ -749,7 +749,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	lineageEntryBody := body
 	lineageSessionHash := ""
 	if stateStore := s.getOpenAIWSStateStore(); stateStore != nil && stateStore.HasAnySessionInvalidEncryptedContent() {
-		lineageSessionHash = s.GenerateSessionHash(c, body)
+		lineageSessionHash = s.openAIWSLineageSessionHashFromContext(c, body)
 		if invalidDigests := stateStore.GetSessionInvalidEncryptedContentDigests(lineageGroupID, lineageSessionHash); len(invalidDigests) > 0 {
 			strippedBody, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
 				body, invalidDigests, "invalid_encrypted_lineage_strip", account.ID, 0,
@@ -863,7 +863,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			if len(invalidDigests) > 0 {
 				if lineageSessionHash == "" {
-					lineageSessionHash = s.GenerateSessionHash(c, lineageEntryBody)
+					lineageSessionHash = s.openAIWSLineageSessionHashFromContext(c, lineageEntryBody)
 				}
 				s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, lineageSessionHash, invalidDigests)
 			}
@@ -1129,11 +1129,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			respBody = s.redactAgentIdentitySensitiveBody(ctx, account, respBody)
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			invalidEncryptedContentError := upstreamCode == "invalid_encrypted_content" ||
-				(upstreamCode == "thinking_signature_invalid" &&
-					strings.Contains(upstreamMsg, "The encrypted content") &&
-					strings.Contains(upstreamMsg, "could not be verified") &&
-					strings.Contains(upstreamMsg, "could not be decrypted or parsed"))
+			invalidEncryptedContentError := isOpenAIInvalidEncryptedContentError(upstreamCode, upstreamMsg)
 			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
@@ -1147,7 +1143,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					}
 					if len(invalidDigests) > 0 {
 						if lineageSessionHash == "" {
-							lineageSessionHash = s.GenerateSessionHash(c, lineageEntryBody)
+							lineageSessionHash = s.openAIWSLineageSessionHashFromContext(c, lineageEntryBody)
 						}
 						s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, lineageSessionHash, invalidDigests)
 					}
@@ -1245,6 +1241,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
+				if retryBody, retry, recoveryErr := s.recoverOpenAIEncryptedContentStreamError(c, account, err, body, lineageEntryBody, &httpInvalidEncryptedContentRetryTried); retry {
+					_ = resp.Body.Close()
+					body = retryBody
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					rejectedFieldRetryState.remember(body)
+					continue
+				} else {
+					err = recoveryErr
+				}
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
@@ -1293,6 +1299,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
+				if retryBody, retry, recoveryErr := s.recoverOpenAIEncryptedContentStreamError(c, account, err, body, lineageEntryBody, &httpInvalidEncryptedContentRetryTried); retry {
+					_ = resp.Body.Close()
+					body = retryBody
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					rejectedFieldRetryState.remember(body)
+					continue
+				} else {
+					err = recoveryErr
+				}
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,

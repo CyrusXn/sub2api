@@ -306,7 +306,7 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 	if account.Platform == PlatformOpenAI && isUpstreamInsufficientBalanceError(statusCode, responseBody) {
 		return ErrorPolicyMatched
 	}
-	if account.Platform == PlatformOpenAI && isOpenAIExplicitTransient4xx(statusCode, responseBody) {
+	if account.Platform == PlatformOpenAI && isOpenAITransient4xx(statusCode, responseBody) {
 		return ErrorPolicyNone
 	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
@@ -348,7 +348,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		s.handleAuthError(ctx, account, openAIUpstreamInsufficientBalanceMessage)
 		return true
 	}
-	if account.Platform == PlatformOpenAI && isOpenAIExplicitTransient4xx(statusCode, responseBody) {
+	if account.Platform == PlatformOpenAI && isOpenAITransient4xx(statusCode, responseBody) {
 		return false
 	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)

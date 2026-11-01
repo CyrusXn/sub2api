@@ -360,9 +360,6 @@ func (s *OpenAIGatewayService) handleOpenAIWSFailureAccountSideEffects(ctx conte
 		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
 		return true
 	case http.StatusForbidden:
-		if !isOpenAIExplicitUpstreamError(payload) && !openAIStream403AccountFailure(payload, message) {
-			return false
-		}
 		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
 		return true
 	}
@@ -688,7 +685,6 @@ func isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw string) bool {
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
 	msg := strings.ToLower(strings.TrimSpace(msgRaw))
-
 	if strings.Contains(errType, "rate_limit") || strings.Contains(errType, "usage_limit") {
 		return true
 	}
@@ -756,6 +752,9 @@ func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (stri
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
 	msg := strings.ToLower(strings.TrimSpace(msgRaw))
+	if isOpenAIInvalidEncryptedContentError(code, msg) {
+		return "invalid_encrypted_content", true
+	}
 
 	switch code {
 	case "upgrade_required":

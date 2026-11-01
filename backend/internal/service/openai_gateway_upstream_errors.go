@@ -417,6 +417,11 @@ func newOpenAIUpstreamFailoverError(
 		failoverErr.ClientMessage = "Upstream account has insufficient balance, please contact administrator"
 		return failoverErr
 	}
+	// 上游拒绝不能重试同一账号，交由调度器选择尚未尝试的同组账号。
+	if statusCode == http.StatusForbidden {
+		failoverErr.RetryableOnSameAccount = false
+		failoverErr.RequestScopedTransient = false
+	}
 	if requestScopedCapacity {
 		failoverErr.SameAccountRetryDelay = openAIRequestScopedRetryDelay(responseHeaders, responseBody)
 	}
