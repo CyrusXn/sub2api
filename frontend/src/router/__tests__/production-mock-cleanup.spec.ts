@@ -20,8 +20,8 @@ describe('正式包不包含模拟账号入口', () => {
     expect(existsSync(sourcePath('views/admin/MockAccountsView.vue'))).toBe(false)
   })
 
-  it('首包含等待占位时不再标为真实首字', () => {
-    expect(zhDashboard.usage.latencyFirstToken).toBe('首包')
+  it('中文使用记录的延迟标签显示为首字', () => {
+    expect(zhDashboard.usage.latencyFirstToken).toBe('首字')
     expect(enDashboard.usage.latencyFirstToken).toBe('Packet')
   })
 })
