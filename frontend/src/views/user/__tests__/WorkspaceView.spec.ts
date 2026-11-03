@@ -117,6 +117,17 @@ describe('创作工作台', () => {
     expect(view.find('.message.user .first-text-time').exists()).toBe(false)
   })
 
+  it('创作台助手文本会话将模型 Markdown 渲染为安全 HTML', async () => {
+    const { view } = await mountView()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('data: {"choices":[{"delta":{"content":"**重点**\\n\\n- 第一项\\n- 第二项\\n<script>alert(1)</script>"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } }))
+    await view.get('[data-test="submit"]').trigger('click')
+    await flushPromises()
+    const reply = view.get('.message.assistant .markdown-body')
+    expect(reply.find('strong').text()).toBe('重点')
+    expect(reply.findAll('li')).toHaveLength(2)
+    expect(reply.find('script').exists()).toBe(false)
+  })
+
   it('多轮首字各自计时，恢复历史保留计时且不向上游发送显示元数据', async () => {
     const { view } = await mountView()
     let clock = 0

@@ -59,7 +59,8 @@
                   {{ t(message.role === 'user' ? 'workspace.you' : 'workspace.assistant') }}
                   <span v-if="message.role === 'assistant' && message.firstTextMs != null" class="first-text-time">{{ message.firstTextMs < 1000 ? t('keys.testModal.firstTextMs', { milliseconds: Math.round(message.firstTextMs) }) : t('keys.testModal.firstText', { seconds: (message.firstTextMs / 1000).toFixed(2) }) }}</span>
                 </small>
-                <div>{{ message.content }}</div>
+                <div v-if="message.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(message.content)"></div>
+                <div v-else>{{ message.content }}</div>
               </article>
               <div v-if="busy" class="inline-progress"><span class="loader" /> {{ t('workspace.working') }}</div>
             </div>
@@ -102,6 +103,8 @@ import WorkspaceImageStudio from '@/components/workspace/WorkspaceImageStudio.vu
 import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceModels, modelMatchesTab, streamWorkspaceChat, validateWorkspaceReferenceVideoURL, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey, type WorkspaceSelection, type WorkspaceTab } from '@/api/workspace'
 import { KeyTestError, type TestMessage } from '@/api/keyTest'
 import { getWorkspaceTab } from '@/utils/workspaceNavigation'
+import { renderMarkdown } from '@/utils/markdown'
+import '@/styles/announcement-markdown.css'
 
 interface WorkspaceMessage extends TestMessage { firstTextMs?: number }
 interface TabState { prompt: string; output: string; resultPrompt: string; messages: WorkspaceMessage[] }

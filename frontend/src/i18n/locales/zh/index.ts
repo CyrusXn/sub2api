@@ -6,6 +6,7 @@ import dashboard from './dashboard'
 import channelMonitorV2 from './channelMonitorV2'
 import batchImage from './batchImage'
 import workspace from './workspace'
+import modelQuality from './modelQuality'
 import admin from './admin'
 import misc from './misc'
 
@@ -18,6 +19,7 @@ export default {
   ...channelMonitorV2,
   ...batchImage,
   ...workspace,
+  ...modelQuality,
   admin,
   ...misc,
 }

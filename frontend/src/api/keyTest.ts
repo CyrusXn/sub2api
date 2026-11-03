@@ -55,6 +55,9 @@ export async function streamKeyTest(options: {
   signal: AbortSignal
   onText: (text: string) => void
   onRequestID?: (id: string) => void
+  maxTokens?: number
+  toolChoice?: 'none'
+  requireStop?: boolean
 }): Promise<void> {
   // Gemini 按模型原生端点测试；保留其他调用者的 OpenAI 流式契约。
   if (options.protocol === 'gemini') {
@@ -62,10 +65,12 @@ export async function streamKeyTest(options: {
       contents: options.messages.map(message => ({
         role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }]
       })),
-      generationConfig: { maxOutputTokens: 2048 }
+      generationConfig: { maxOutputTokens: options.maxTokens ?? 2048 }
     }, '/v1beta')
     options.signal.throwIfAborted()
     if (!response.ok) throw new KeyTestError('http', response.status)
+    const requestID = response.headers.get('X-Client-Request-ID')
+    if (requestID) options.onRequestID?.(requestID)
     if (!response.headers.get('content-type')?.includes('application/json')) throw new KeyTestError('invalidResponse')
     let payload
     try {
@@ -80,6 +85,7 @@ export async function streamKeyTest(options: {
     if (!payload.candidates.length) throw new KeyTestError('empty')
     const candidate = payload.candidates[0]
     if (!candidate || typeof candidate !== 'object') throw new KeyTestError('invalidResponse')
+    if (options.requireStop && candidate.finishReason !== 'STOP') throw new KeyTestError('incomplete')
     if (candidate.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) throw new KeyTestError('streamError')
     const parts = candidate.content?.parts
     if (!Array.isArray(parts)) throw new KeyTestError('invalidResponse')
@@ -93,7 +99,8 @@ export async function streamKeyTest(options: {
     model: options.model,
     messages: options.messages,
     stream: true,
-    max_tokens: 2048
+    max_tokens: options.maxTokens ?? 2048,
+    ...(options.toolChoice ? { tool_choice: options.toolChoice } : {})
   })
   if (!response.ok) throw new KeyTestError('http', response.status)
   if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body) {
@@ -108,6 +115,7 @@ export async function streamKeyTest(options: {
   let buffer = ''
   let completed = false
   let finished = false
+  let finishReason = ''
   let hasText = false
   const processEvent = (event: string) => {
     const data = event.split(/\r?\n/)
@@ -133,7 +141,7 @@ export async function streamKeyTest(options: {
       options.onText(content)
     }
     // finish_reason 后可能还有用量帧，继续读到 DONE 或正常 EOF，避免提前取消上游。
-    if (choice?.finish_reason != null) finished = true
+    if (choice?.finish_reason != null) { finished = true; finishReason = choice.finish_reason }
   }
 
   try {
@@ -153,6 +161,7 @@ export async function streamKeyTest(options: {
     }
     options.signal.throwIfAborted()
     if (!completed && !finished) throw new KeyTestError('incomplete')
+    if (options.requireStop && finishReason !== 'stop') throw new KeyTestError('incomplete')
     if (!hasText) throw new KeyTestError('empty')
   } finally {
     await reader.cancel().catch(() => {})

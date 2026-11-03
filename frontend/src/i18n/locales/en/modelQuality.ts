@@ -1,0 +1,25 @@
+export default {
+  modelQuality: {
+    title: 'Model Quality', description: 'Same challenge. Real model performance.', eyebrow: 'MODEL QUALITY LAB',
+    intro: 'A pelican, a candy puzzle, or a fresh idea. Let the results speak for themselves.',
+    start: 'Start test', starting: 'Submitting…', key: 'API key', model: 'Model', selectKey: 'Choose an available key', selectModel: 'Choose a text model',
+    billing: 'Normal API usage charges apply. Results are shared with all signed-in users. Do not include private or sensitive information in prompts.',
+    background: 'Tests run in the background for up to 8 minutes. Refreshing never starts a second request.',
+    pelican: 'Pelican', candy: 'Candy', custom: 'Custom',
+    pelicanHint: 'A pelican riding a bicycle: compare drawing and motion understanding through SVG and CSS animation.',
+    candyHint: 'How many candies guarantee a matching apple–peach pair of different shapes? No external tools; see the actual model answer.',
+    reference: 'Reference answer: 21', customHint: 'Describe a scene and its motion to generate a previewable SVG animation in HTML.',
+    promptLabel: 'Custom prompt', placeholder: 'For example: a city floating above the clouds, with flickering lights and flowing waterfalls.',
+    shared: 'Shared test results', sharedHint: 'Everyone sees the same history. Author names are pseudonymized.',
+    allThemes: 'All themes', allStatuses: 'All statuses', refresh: 'Refresh', loading: 'Loading…',
+    running: 'Running', completed: 'Completed', failed: 'Failed', empty: 'No tests yet', emptyHint: 'Choose a challenge above to create the first result.',
+    viewPrompt: 'View generation prompt', answer: 'Model answer', account: 'Upstream account', noAccount: 'Upstream account not linked', unavailableAccount: 'Account removed or unavailable',
+    adminOnly: 'Administrators only', enlarge: 'Enlarge preview', close: 'Close preview',
+    previous: 'Previous', next: 'Next', page: 'Page', noKeys: 'No available API keys. Create a key and assign it to a group first.',
+    keyError: 'Could not load keys or models. Please refresh.', loadError: 'Could not load test history. Please try again.',
+    notDeployed: 'Shared history is not available from the connected service yet. Text generation still uses the standard chat API.',
+    historyUnavailable: 'The answer was generated, but shared history is not available yet. It is shown only on this page.', currentUser: 'Current user',
+    createError: 'Could not submit the test. Check your key or try again later.', busyError: 'A test is already running or the queue is full. Please try later.',
+    runningHint: 'The model is working. Results update automatically.', previewTitle: 'Generated preview',
+  }
+}

@@ -27,6 +27,14 @@ describe('密钥测试网关请求', () => {
     expect(onRequestID).toHaveBeenCalledTimes(1)
     expect(onRequestID).toHaveBeenCalledWith('server-issued-id')
   })
+  it('Gemini 同样回传服务端请求关联 ID', async () => {
+    const response = Response.json({ candidates: [{ content: { parts: [{ text: 'OK' }] }, finishReason: 'STOP' }] })
+    response.headers.set('X-Client-Request-ID', 'gemini-server-id')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+    const onRequestID = vi.fn()
+    await streamKeyTest({ ...options(), protocol: 'gemini', onRequestID })
+    expect(onRequestID).toHaveBeenCalledWith('gemini-server-id')
+  })
   it('空格交付给首包计时，但只有占位的终态不能算成功', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([encoder.encode(
       'data: {"choices":[{"delta":{"content":" "}}]}\n\ndata: [DONE]\n\n'
@@ -148,6 +156,13 @@ describe('密钥测试网关请求', () => {
       encoder.encode('data: {"error":{"message":"stream failed"}}\n\n')
     ])))
     await expect(streamKeyTest(options())).rejects.toMatchObject({ code: 'streamError' })
+  })
+
+  it('智检拒绝被 token 上限截断的生成结果', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([encoder.encode(
+      'data: {"choices":[{"delta":{"content":"<html><svg>"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n'
+    )])))
+    await expect(streamKeyTest({ ...options(), requireStop: true })).rejects.toMatchObject({ code: 'incomplete' })
   })
 
   it.each([

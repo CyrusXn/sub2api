@@ -171,6 +171,18 @@ describe('密钥测试对话', () => {
     expect(JSON.parse(requests[2].init.body as string).messages).toEqual([{ role: 'user', content: testPrompt }])
   })
 
+  it('助手测试回复按 Markdown 渲染并清理危险标签', async () => {
+    const view = await openModal()
+    await send()
+    emitData({ choices: [{ delta: { content: '**重点**\n\n- 一\n- 二\n<script>alert(1)</script>' }, finish_reason: 'stop' }] })
+    stream.close()
+    await flushPromises()
+    const reply = view.get('.markdown-body')
+    expect(reply.find('strong').text()).toBe('重点')
+    expect(reply.findAll('li')).toHaveLength(2)
+    expect(reply.find('script').exists()).toBe(false)
+  })
+
   it('停止保留已输出文字，后续请求不携带半截对话', async () => {
     const view = await openModal()
     await send()

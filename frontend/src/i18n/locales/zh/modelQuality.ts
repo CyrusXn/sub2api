@@ -1,0 +1,25 @@
+export default {
+  modelQuality: {
+    title: '模型智检', description: '用同一道题，看看模型的真实表现', eyebrow: 'MODEL QUALITY LAB',
+    intro: '一只鹈鹕，一道糖果题，或一个新想法。让模型的表现自己说话。',
+    start: '开始检测', starting: '正在提交…', key: '检测密钥', model: '检测模型', selectKey: '选择可用密钥', selectModel: '选择文本模型',
+    billing: '按所选密钥的正常用量计费。结果对所有登录用户共享，请勿在提示词中输入隐私或敏感信息。',
+    background: '后台最多运行 8 分钟，刷新页面不会重复调用模型。',
+    pelican: '鹈鹕', candy: '糖果', custom: '自定义',
+    pelicanHint: '让鹈鹕骑上自行车，用 SVG 和 CSS 动画观察模型的绘图与动作理解。',
+    candyHint: '不同形状的苹果味与桃子味糖果，至少摸出多少个才能保证配对？不使用外部工具，直接查看模型回答。',
+    reference: '参考答案：21', customHint: '描述你想看到的场景与动作，生成一个可预览的 SVG 动画 HTML。',
+    promptLabel: '自定义提示词', placeholder: '例如：一座漂浮在云海中的天空之城，灯光闪烁，瀑布缓缓流动。',
+    shared: '全站检测结果', sharedHint: '所有用户共享同一份记录，作者名称已脱敏。',
+    allThemes: '全部主题', allStatuses: '全部状态', refresh: '刷新', loading: '正在读取…',
+    running: '正在进行', completed: '已完成', failed: '检测失败', empty: '还没有检测记录', emptyHint: '从上方选择一个测试，留下第一份模型表现。',
+    viewPrompt: '查看生成提示词', answer: '模型回答', account: '上游账号', noAccount: '尚未关联上游账号', unavailableAccount: '账号已删除或不可用',
+    adminOnly: '仅管理员可见', enlarge: '放大查看', close: '关闭预览',
+    previous: '上一页', next: '下一页', page: '页', noKeys: '没有可用密钥，请先到 API 密钥页面创建并绑定分组。',
+    keyError: '密钥或模型加载失败，请刷新后重试。', loadError: '检测记录加载失败，请稍后重试。',
+    notDeployed: '共享历史服务尚未更新，暂时无法读取历史记录。文本生成仍可通过标准对话接口使用。',
+    historyUnavailable: '回答已生成，但共享历史服务尚未更新，本次结果暂仅显示在当前页面。', currentUser: '当前用户',
+    createError: '检测提交失败，请检查密钥状态或稍后再试。', busyError: '已有进行中的检测，或队列已满，请稍后再试。',
+    runningHint: '模型正在作答，结果将自动更新。', previewTitle: '生成效果',
+  }
+}

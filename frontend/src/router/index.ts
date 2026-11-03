@@ -226,6 +226,12 @@ const routes: RouteRecordRaw[] = [
     redirect: { path: '/workspace', query: { tab: 'image' } }
   },
   {
+    path: '/model-quality',
+    name: 'ModelQuality',
+    component: () => import('@/views/user/ModelQualityView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'Model Quality', titleKey: 'modelQuality.title', descriptionKey: 'modelQuality.description' }
+  },
+  {
     path: '/workspace',
     name: 'Workspace',
     component: () => import('@/views/user/WorkspaceView.vue'),

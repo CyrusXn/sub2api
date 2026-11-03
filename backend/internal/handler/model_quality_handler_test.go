@@ -1,0 +1,94 @@
+package handler
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+type qualityRepoStub struct {
+	created     int
+	runs        []service.ModelQualityRun
+	createError error
+	createdRun  *service.ModelQualityRun
+}
+
+func (r *qualityRepoStub) Create(_ context.Context, run *service.ModelQualityRun) error {
+	r.created++
+	run.ID = 17
+	r.createdRun = run
+	return r.createError
+}
+func (r *qualityRepoStub) List(context.Context, int, string, string) ([]service.ModelQualityRun, int64, error) {
+	return append([]service.ModelQualityRun(nil), r.runs...), int64(len(r.runs)), nil
+}
+
+type qualityKeyStub struct{ key *service.APIKey }
+
+func (s qualityKeyStub) GetByID(context.Context, int64) (*service.APIKey, error) { return s.key, nil }
+func qualityContext(method, path, body, role string) (*gin.Context, *httptest.ResponseRecorder) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(method, path, strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 12})
+	c.Set(string(middleware.ContextKeyUserRole), role)
+	return c, recorder
+}
+func TestModelQualityHandlerSharedListPrivacy(t *testing.T) {
+	repo := &qualityRepoStub{runs: []service.ModelQualityRun{{UserID: 99, Author: "private@example.com", AccountID: 7, AccountName: "私有账号", Model: "gpt-test"}}}
+	h := &ModelQualityHandler{service: service.NewModelQualityService(repo)}
+	for _, admin := range []bool{false, true} {
+		role := service.RoleUser
+		if admin {
+			role = service.RoleAdmin
+		}
+		c, w := qualityContext("GET", "/model-quality?admin=true", "", role)
+		h.List(c)
+		require.Equal(t, 200, w.Code)
+		require.Contains(t, w.Body.String(), "gpt-test")
+		require.NotContains(t, w.Body.String(), "private@example.com")
+		require.NotContains(t, w.Body.String(), "user_id")
+		if admin {
+			require.Contains(t, w.Body.String(), "私有账号")
+		} else {
+			require.NotContains(t, w.Body.String(), "account")
+		}
+	}
+}
+func TestModelQualityHandlerRejectsOtherUsersKeys(t *testing.T) {
+	repo := &qualityRepoStub{}
+	h := &ModelQualityHandler{service: service.NewModelQualityService(repo), keys: qualityKeyStub{&service.APIKey{UserID: 99}}}
+	c, w := qualityContext("POST", "/model-quality", `{"api_key_id":2,"model":"gpt-test","theme":"candy","content":"answer","status":"completed"}`, service.RoleAdmin)
+	h.Create(c)
+	require.Equal(t, 403, w.Code)
+	require.Zero(t, repo.created)
+}
+func TestModelQualityListRejectsInvalidFilters(t *testing.T) {
+	h := &ModelQualityHandler{}
+	for _, query := range []string{"page=-1", "theme=other", "status=other"} {
+		c, w := qualityContext("GET", "/?"+query, "", service.RoleUser)
+		h.List(c)
+		require.Equal(t, 400, w.Code)
+	}
+}
+
+func TestModelQualityCreatePersistsCompletedChatAnswer(t *testing.T) {
+	groupID := int64(2)
+	repo := &qualityRepoStub{}
+	h := &ModelQualityHandler{service: service.NewModelQualityService(repo), keys: qualityKeyStub{&service.APIKey{ID: 2, UserID: 12, Status: service.StatusActive, Key: "test-only", GroupID: &groupID, Group: &service.Group{ID: 2, Name: "测试分组"}}}}
+	c, w := qualityContext("POST", "/model-quality", `{"api_key_id":2,"model":"gpt-test","theme":"candy","content":"模型回答 28 个","status":"completed","request_id":"req-1"}`, service.RoleUser)
+	h.Create(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, service.ModelQualityCandyPrompt, repo.createdRun.Prompt)
+	require.Equal(t, "模型回答 28 个", repo.createdRun.Content)
+	require.Equal(t, "req-1", repo.createdRun.RequestID)
+	require.Equal(t, "completed", repo.createdRun.Status)
+}

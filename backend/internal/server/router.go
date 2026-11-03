@@ -92,7 +92,6 @@ func SetupRouter(
 
 	// 注册路由
 	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, balanceNotifyService, opsService, settingService, compositeResolver, cfg, redisClient)
-
 	return r
 }
 

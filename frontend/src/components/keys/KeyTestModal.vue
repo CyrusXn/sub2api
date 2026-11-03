@@ -42,7 +42,8 @@
               <span v-if="turn.firstTextMs !== null" class="rounded bg-primary-100 px-2 py-0.5 font-mono text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">{{ turn.firstTextMs < 1000 ? t('keys.testModal.firstTextMs', { milliseconds: Math.round(turn.firstTextMs) }) : t('keys.testModal.firstText', { seconds: (turn.firstTextMs / 1000).toFixed(2) }) }}</span>
               <span v-else>{{ t('keys.testModal.noFirstText') }}</span>
             </div>
-            <p class="whitespace-pre-wrap break-words text-sm text-gray-900 dark:text-gray-100">{{ turn.reply || (turn.status === 'running' ? t('keys.testModal.waiting') : '—') }}</p>
+            <div v-if="turn.reply" class="markdown-body text-sm text-gray-900 dark:text-gray-100" v-html="renderMarkdown(turn.reply)"></div>
+            <p v-else class="whitespace-pre-wrap break-words text-sm text-gray-900 dark:text-gray-100">{{ turn.status === 'running' ? t('keys.testModal.waiting') : '—' }}</p>
             <p class="mt-2 text-xs" :class="turn.status === 'success' ? 'text-green-600 dark:text-green-400' : turn.status === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-500'">{{ turn.error || t(`keys.testModal.${turn.status}`) }}</p>
           </div>
         </div>
@@ -59,6 +60,8 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import { fetchKeyTestModels, KeyTestError, streamKeyTest } from '@/api/keyTest'
 import { compareTestModelIds } from '@/utils/testModelDefaults'
+import { renderMarkdown } from '@/utils/markdown'
+import '@/styles/announcement-markdown.css'
 import type { ApiKey } from '@/types'
 
 const props = defineProps<{ apiKey: ApiKey; baseUrl: string }>()
