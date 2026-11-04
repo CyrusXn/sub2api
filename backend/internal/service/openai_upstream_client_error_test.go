@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -392,4 +393,34 @@ func TestWriteOpenAIUpstreamClientError_PayloadShape(t *testing.T) {
 			require.NotContains(t, body, "secret123", "原始 body 里的敏感串不得泄漏")
 		})
 	}
+}
+
+func TestWriteOpenAIUpstreamClientErrorForAccount_HidesConfiguredSecrets(t *testing.T) {
+	account := &Account{Credentials: map[string]any{"base_url": "https://private-upstream.example/v1", "api_key": "sk-private-test-key"}}
+	for _, field := range []string{"message", "type", "code", "param"} {
+		for _, secret := range []string{"private-upstream.example", "sk-private-test-key"} {
+			t.Run(field+"/"+secret, func(t *testing.T) {
+				c, rec := newOpenAIUpstreamErrorTestContext(t)
+				payload := gin.H{"type": "invalid_request_error", "code": "invalid_parameter", "param": "input"}
+				payload[field] = secret
+				body, err := json.Marshal(gin.H{"error": payload})
+				require.NoError(t, err)
+				message := "Invalid input"
+				if field == "message" {
+					message = secret
+				}
+				writeOpenAIUpstreamClientErrorForAccount(c, http.StatusBadRequest, body, message, account)
+				require.Equal(t, http.StatusBadRequest, rec.Code)
+				require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+				require.Equal(t, "Upstream request failed", gjson.Get(rec.Body.String(), "error.message").String())
+				require.False(t, gjson.Get(rec.Body.String(), "error.code").Exists())
+				require.False(t, gjson.Get(rec.Body.String(), "error.param").Exists())
+				require.NotContains(t, rec.Body.String(), secret)
+			})
+		}
+	}
+	c, rec := newOpenAIUpstreamErrorTestContext(t)
+	writeOpenAIUpstreamClientErrorForAccount(c, http.StatusBadRequest, []byte(openAIInvalidFunctionParametersBody), "Invalid schema", account)
+	require.Equal(t, "invalid_function_parameters", gjson.Get(rec.Body.String(), "error.code").String())
+	require.Equal(t, "input[8].tools[1].tools[2].parameters", gjson.Get(rec.Body.String(), "error.param").String())
 }

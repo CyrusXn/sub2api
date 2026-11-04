@@ -1299,6 +1299,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 		responseBody   string
 		retryAfter     string
 		wantStatus     int
+		wantType       string
 		wantMessage    string
 		wantRetryAfter string
 	}{
@@ -1309,6 +1310,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			responseBody:   `<!DOCTYPE html><title>secret-upstream.example denied the request</title>`,
 			retryAfter:     "17",
 			wantStatus:     http.StatusBadGateway,
+			wantType:       "upstream_error",
 			wantMessage:    "Upstream access denied",
 			wantRetryAfter: "17",
 		},
@@ -1318,6 +1320,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			contentType:  "application/json",
 			responseBody: `{"error":{"message":"invalid secret-upstream.example token","type":"authentication_error","code":"invalid_api_key","param":"api_key"},"rate_limit":{"remaining":0}}`,
 			wantStatus:   http.StatusBadGateway,
+			wantType:     "upstream_error",
 			wantMessage:  "Upstream authentication failed",
 		},
 		// 瞬时 5xx（500/502/503/504/520-524）对 API-key 账号已改走多账号
@@ -1329,6 +1332,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			contentType:  "text/html; charset=UTF-8",
 			responseBody: `<!DOCTYPE html><title>secret-upstream.example | 530: Origin DNS error</title>`,
 			wantStatus:   530,
+			wantType:     "upstream_error",
 			wantMessage:  "Upstream service temporarily unavailable",
 		},
 		{
@@ -1337,6 +1341,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			contentType:  "application/json",
 			responseBody: `{"error":{"message":"secret-upstream.example internal failure"}}`,
 			wantStatus:   http.StatusNotImplemented,
+			wantType:     "upstream_error",
 			wantMessage:  "Upstream service temporarily unavailable",
 		},
 		{
@@ -1345,6 +1350,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			contentType:  "text/plain",
 			responseBody: `proxy secret-upstream.example rejected the request`,
 			wantStatus:   http.StatusBadRequest,
+			wantType:     "upstream_error",
 			wantMessage:  "Upstream request failed",
 		},
 		{
@@ -1354,6 +1360,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			responseBody: `{"error":{"message":"secret-upstream.example invalid parameter","type":"invalid_request_error","code":"upstream_secret_code","param":"private_field","internal_token":"sk-upstream-secret"},"rate_limit":{"remaining":0,"reset":"internal-window"},"debug":{"admin":"root"},"redirect":"https://secret-upstream.example/admin"}`,
 			retryAfter:   "not-a-valid-delay",
 			wantStatus:   http.StatusBadRequest,
+			wantType:     "invalid_request_error",
 			wantMessage:  "Upstream request failed",
 		},
 	}
@@ -1423,7 +1430,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			} {
 				require.Empty(t, rec.Header().Values(key), "sensitive upstream header %s must be dropped", key)
 			}
-			require.Equal(t, "upstream_error", gjson.Get(rec.Body.String(), "error.type").String())
+			require.Equal(t, tt.wantType, gjson.Get(rec.Body.String(), "error.type").String())
 			require.Equal(t, tt.wantMessage, gjson.Get(rec.Body.String(), "error.message").String())
 			require.False(t, gjson.Get(rec.Body.String(), "error.code").Exists())
 			require.False(t, gjson.Get(rec.Body.String(), "error.param").Exists())
@@ -1860,12 +1867,13 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeConfigured5xxRetriesSame
 	require.False(t, c.Writer.Written())
 }
 
-func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsDoNotSwitchAccounts(t *testing.T) {
+func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsRespectFailoverPolicy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
-		name        string
-		statusCode  int
-		credentials map[string]any
+		name         string
+		statusCode   int
+		credentials  map[string]any
+		wantFailover bool
 	}{
 		{
 			name:       "configured_401",
@@ -1875,9 +1883,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsDoNotSwitchAcc
 			},
 		},
 		{
-			name:        "default_403",
-			statusCode:  http.StatusForbidden,
-			credentials: map[string]any{},
+			name:         "default_403",
+			statusCode:   http.StatusForbidden,
+			credentials:  map[string]any{},
+			wantFailover: true,
 		},
 	}
 
@@ -1915,9 +1924,20 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsDoNotSwitchAcc
 
 			var failoverErr *UpstreamFailoverError
 			require.Error(t, err)
-			require.NotErrorAs(t, err, &failoverErr)
-			require.GreaterOrEqual(t, rec.Code, 400)
-			require.True(t, c.Writer.Written(), "认证拒绝应直接结束当前请求")
+			if tt.wantFailover {
+				require.ErrorAs(t, err, &failoverErr)
+				require.Equal(t, tt.statusCode, failoverErr.StatusCode)
+				require.True(t, failoverErr.ShouldRetryNextAccount())
+				require.False(t, failoverErr.RetryableOnSameAccount, "上游 403 应切换账号，不能重试原账号")
+				require.False(t, c.Writer.Written(), "切号前不能提交客户端响应")
+			} else {
+				require.NotErrorAs(t, err, &failoverErr)
+				require.Equal(t, http.StatusBadGateway, rec.Code)
+				require.True(t, c.Writer.Written(), "401 认证拒绝应直接结束当前请求")
+				require.Equal(t, "upstream_error", gjson.Get(rec.Body.String(), "error.type").String())
+				require.Equal(t, "Upstream authentication failed", gjson.Get(rec.Body.String(), "error.message").String())
+				require.NotContains(t, rec.Body.String(), "upstream credential rejected")
+			}
 		})
 	}
 }

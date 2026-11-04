@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -55,6 +56,30 @@ func writeOpenAIUpstreamClientError(c *gin.Context, statusCode int, body []byte,
 	errorPayload["message"] = message
 
 	writeOpenAIErrorJSON(c, statusCode, gin.H{"error": errorPayload})
+}
+
+// 透传账号的诊断仍保留可操作字段；包含已配置的上游地址或凭据时整条降为通用错误，
+// 避免仅清洗 message 后又从 code/param 暴露同一敏感值。
+func writeOpenAIUpstreamClientErrorForAccount(c *gin.Context, statusCode int, body []byte, upstreamMsg string, account *Account) {
+	if account != nil {
+		values := []string{account.GetCredential("api_key"), account.GetCredential("access_token")}
+		if upstreamURL, err := url.Parse(account.GetCredential("base_url")); err == nil {
+			values = append(values, upstreamURL.Hostname())
+		}
+		fields := []string{upstreamMsg, gjson.GetBytes(body, "error.type").String(), extractUpstreamErrorCode(body), gjson.GetBytes(body, "error.param").String()}
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value == "" {
+				continue
+			}
+			for _, field := range fields {
+				if strings.Contains(strings.ToLower(field), strings.ToLower(value)) {
+					writeOpenAIUpstreamClientError(c, statusCode, nil, "Upstream request failed")
+					return
+				}
+			}
+		}
+	}
+	writeOpenAIUpstreamClientError(c, statusCode, body, upstreamMsg)
 }
 
 // 保活提交 200 后只能用合法终态回错，否则严格 SSE 客户端会忽略裸 JSON。

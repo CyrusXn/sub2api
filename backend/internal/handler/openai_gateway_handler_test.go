@@ -2621,7 +2621,7 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxSwitchesImmediatelyThenExhausts
 	require.Equal(t, "Upstream service temporarily unavailable", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureDoesNotSwitchAccount(t *testing.T) {
+func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRespectsFailoverPolicy(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int
@@ -2716,9 +2716,19 @@ func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureDoesNotSwitchAccount(t 
 
 			h.Responses(c)
 
-			require.Equal(t, []int64{9910}, upstream.calls())
-			require.Equal(t, http.StatusBadGateway, rec.Code)
-			require.Empty(t, gjson.GetBytes(rec.Body.Bytes(), "id").String())
+			if tt.statusCode == http.StatusForbidden {
+				require.Equal(t, []int64{9910, 9911}, upstream.calls(), "上游 403 应直接切换到健康账号")
+				require.Equal(t, http.StatusOK, rec.Code)
+				require.Equal(t, "resp_healthy", gjson.GetBytes(rec.Body.Bytes(), "id").String())
+				require.Equal(t, "completed", gjson.GetBytes(rec.Body.Bytes(), "status").String())
+			} else {
+				require.Equal(t, []int64{9910}, upstream.calls(), "401 应保持不切号")
+				require.Equal(t, http.StatusBadGateway, rec.Code)
+				require.Empty(t, gjson.GetBytes(rec.Body.Bytes(), "id").String())
+				require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+				require.Equal(t, "Upstream authentication failed", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
+			}
+			require.NotContains(t, rec.Body.String(), "upstream credential rejected")
 		})
 	}
 }
