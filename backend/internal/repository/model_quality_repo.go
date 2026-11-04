@@ -42,7 +42,8 @@ func (r *modelQualityRepository) Create(ctx context.Context, run *service.ModelQ
 const modelQualityStatusSQL = `CASE WHEN q.status='running' AND q.created_at < NOW() - INTERVAL '9 minutes' THEN 'failed' ELSE q.status END`
 
 func (r *modelQualityRepository) Update(ctx context.Context, id, userID int64, status, content, requestID string) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE model_quality_runs SET status=$3,content=$4,request_id=COALESCE(NULLIF($5,''),request_id),
+	// 状态同时用于 varchar 列赋值和 CASE 比较，显式指定类型避免 PostgreSQL 推断冲突。
+	result, err := r.db.ExecContext(ctx, `UPDATE model_quality_runs SET status=$3::varchar,content=$4,request_id=COALESCE(NULLIF($5,''),request_id),
 		finished_at=CASE WHEN $3='running' THEN NULL ELSE NOW() END,
 		error=CASE WHEN $3='failed' THEN '模型请求失败或已中断，请检查密钥、额度或上游账号状态' ELSE '' END
 		WHERE id=$1 AND user_id=$2 AND status='running'`, id, userID, status, content, requestID)
