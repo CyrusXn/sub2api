@@ -15,6 +15,7 @@ vi.mock('@/api/keyTest', () => ({ streamKeyTest: vi.fn() }))
 vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key.split('.').reduce<unknown>((value, segment) => (value as Record<string, unknown>)?.[segment], zh) || key }) }))
 let wrapper: ReturnType<typeof mount>
 beforeEach(() => {
+ vi.resetAllMocks()
  auth.isAdmin = false
  vi.mocked(modelQualityAPI.save).mockResolvedValue({ id: 99 } as never)
  vi.mocked(modelQualityAPI.update).mockResolvedValue(undefined)
@@ -30,7 +31,7 @@ describe('模型智检', () => {
  it('所有下拉选择均使用始终可搜索的统一组件，少量选项也能搜索', async () => {
   const view = await open()
   expect(view.find('select').exists()).toBe(false)
-  expect(view.findAllComponents(Select)).toHaveLength(4)
+  expect(view.findAllComponents(Select)).toHaveLength(5)
   for (const select of view.findAllComponents(Select)) {
    expect(select.props('searchable')).toBe(true)
    await select.get('.select-trigger').trigger('click')
@@ -38,7 +39,8 @@ describe('模型智检', () => {
    await select.get('.select-trigger').trigger('click')
   }
  })
- it('搜索选择密钥后联动模型，主题和状态筛选仍发送正确参数', async () => {
+ it('搜索选择密钥后联动模型，分类、分组、模型和状态筛选发送正确参数', async () => {
+  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 12, filters: { groups: ['共享分组'], models: ['shared-model'] } } as never)
   vi.mocked(loadWorkspaceKeys).mockResolvedValue([
    { id: 1, name: '我的密钥', groupName: '优选', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-test'], allowImageGeneration: false },
    { id: 2, name: '备用密钥', groupName: '备用组', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-other', 'gpt-search'], allowImageGeneration: false }
@@ -57,9 +59,13 @@ describe('模型智检', () => {
   await searchAndChoose('#quality-key', '备用组', '备用密钥 · 备用组')
   expect(view.get('#quality-model').text()).toContain('gpt-other')
   await searchAndChoose('#quality-model', 'search', 'gpt-search')
-  await searchAndChoose('#quality-filter-theme', '糖果', '糖果')
+  expect(view.find('#quality-filter-theme').exists()).toBe(false)
+  await view.get('[data-theme=candy]').trigger('click')
+  await flushPromises()
+  await searchAndChoose('#quality-filter-group', '共享', '共享分组')
+  await searchAndChoose('#quality-filter-model', 'shared', 'shared-model')
   await searchAndChoose('#quality-filter-status', '正在', '正在进行')
-  expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme: 'candy', status: 'running' }, expect.anything())
+  expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme: 'candy', group: '共享分组', model: 'shared-model', status: 'running' }, expect.anything())
   await view.get('[data-theme=candy]').trigger('click')
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
@@ -99,7 +105,7 @@ describe('模型智检', () => {
   expect(view.find('.result-card').exists()).toBe(true)
   expect(view.find('.results-list').exists()).toBe(false)
   expect(view.find('.challenge > span').exists()).toBe(false)
-  expect(modelQualityAPI.list).toHaveBeenCalledWith({ page: 1, theme: '', status: '' }, expect.anything())
+  expect(modelQualityAPI.list).toHaveBeenCalledWith({ page: 1, theme: 'pelican', group: '', model: '', status: '' }, expect.anything())
   expect(view.text()).toContain('最少 21 个。')
   expect(view.text()).toContain('用户·abcdefgh')
   expect(view.find('iframe').exists()).toBe(false)
@@ -120,6 +126,43 @@ describe('模型智检', () => {
    expect(view.find('.result-card').exists()).toBe(true)
    expect(view.find('.result-list-head').exists()).toBe(false)
   }
+ })
+ it('所有分类都筛选对应记录，切换时立即清除旧分类记录', async () => {
+  const view = await open()
+  for (const theme of ['candy', 'official', 'custom', 'pelican']) {
+   let resolve!: (value: never) => void
+   vi.mocked(modelQualityAPI.list).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+   await view.get(`[data-theme=${theme}]`).trigger('click')
+   expect(view.find('.quality-result').exists()).toBe(false)
+   expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme, group: '', model: '', status: '' }, expect.anything())
+   resolve({ items: [], total: 0, page: 1, page_size: 12, filters: { groups: [], models: [] } } as never)
+   await flushPromises()
+  }
+ })
+ it('较早分类的延迟响应不能覆盖当前分类', async () => {
+  const view = await open()
+  let resolveOld!: (value: never) => void
+  vi.mocked(modelQualityAPI.list).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+  await view.get('[data-theme=candy]').trigger('click')
+  vi.mocked(modelQualityAPI.list).mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 12 })
+  await view.get('[data-theme=custom]').trigger('click')
+  await flushPromises()
+  resolveOld({ items: [{ id: 42, theme: 'candy', model: '过期分类结果', status: 'completed', content: '21' }], total: 1, page: 1, page_size: 12 } as never)
+  await flushPromises()
+  expect(view.text()).not.toContain('过期分类结果')
+  expect(view.find('.quality-result').exists()).toBe(false)
+ })
+ it('测试后端暂时断开后自动重试，恢复时移除加载错误', async () => {
+  vi.useFakeTimers()
+  try {
+   vi.mocked(modelQualityAPI.list).mockRejectedValueOnce({ status: 500 })
+   const view = await open()
+   expect(view.get('[role=alert]').text()).toContain('检测记录加载失败')
+   await vi.advanceTimersByTimeAsync(10000)
+   await flushPromises()
+   expect(modelQualityAPI.list).toHaveBeenCalledTimes(2)
+   expect(view.find('[role=alert]').exists()).toBe(false)
+  } finally { vi.useRealTimers() }
  })
  it('管理员额外看到上游账号', async () => { auth.isAdmin = true; const view = await open(); expect(view.text()).toContain('上游测试账号') })
  it('开始检测立即插入进行中记录并流式渲染 Markdown，完成后更新状态', async () => {

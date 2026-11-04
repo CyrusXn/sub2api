@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -58,15 +59,15 @@ func (r *modelQualityRepository) Update(ctx context.Context, id, userID int64, s
 	return nil
 }
 
-func (r *modelQualityRepository) List(ctx context.Context, page int, theme, status string) ([]service.ModelQualityRun, int64, error) {
-	where := ` WHERE ($1='' OR q.theme=$1) AND ($2='' OR (` + modelQualityStatusSQL + `)=$2)`
+func (r *modelQualityRepository) List(ctx context.Context, page int, theme, status, group, model string) ([]service.ModelQualityRun, int64, error) {
+	where := ` WHERE ($1='' OR q.theme=$1) AND ($2='' OR (` + modelQualityStatusSQL + `)=$2) AND ($3='' OR q.group_name=$3) AND ($4='' OR q.model=$4)`
 	var total int64
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM model_quality_runs q`+where, theme, status).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM model_quality_runs q`+where, theme, status, group, model).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	// 用量与错误日志异步写入；读取时补查真实账号，不以创建时的查询结果作为终态。
 	rows, err := r.db.QueryContext(ctx, `SELECT q.id,COALESCE(NULLIF(usr.email,''),''),q.group_name,q.model,q.theme,q.prompt,`+modelQualityStatusSQL+`,q.content,CASE WHEN q.status='running' AND q.created_at < NOW()-INTERVAL '9 minutes' THEN '检测已中断或超时，请重新发起' ELSE q.error END,COALESCE(q.account_id,u.account_id,e.account_id,0),COALESCE(a.name,''),q.created_at
-		FROM (SELECT q.* FROM model_quality_runs q`+where+` ORDER BY q.created_at DESC,q.id DESC LIMIT 12 OFFSET $3) q
+		FROM (SELECT q.* FROM model_quality_runs q`+where+` ORDER BY q.created_at DESC,q.id DESC LIMIT 12 OFFSET $5) q
 		LEFT JOIN users usr ON usr.id=q.user_id AND usr.deleted_at IS NULL
 		LEFT JOIN LATERAL (
 			SELECT u.account_id FROM usage_logs u WHERE u.api_key_id=q.api_key_id AND u.request_id='client:' || q.request_id AND u.user_id=q.user_id ORDER BY u.id DESC LIMIT 1
@@ -75,7 +76,7 @@ func (r *modelQualityRepository) List(ctx context.Context, page int, theme, stat
 			SELECT e.account_id FROM ops_error_logs e WHERE e.api_key_id=q.api_key_id AND e.client_request_id=q.request_id AND e.user_id=q.user_id AND e.account_id IS NOT NULL ORDER BY e.id DESC LIMIT 1
 		) e ON q.account_id IS NULL AND u.account_id IS NULL
 		LEFT JOIN accounts a ON a.id=COALESCE(q.account_id,u.account_id,e.account_id)
-		ORDER BY q.created_at DESC,q.id DESC`, theme, status, (page-1)*12)
+		ORDER BY q.created_at DESC,q.id DESC`, theme, status, group, model, (page-1)*12)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -89,4 +90,32 @@ func (r *modelQualityRepository) List(ctx context.Context, page int, theme, stat
 		result = append(result, run)
 	}
 	return result, total, rows.Err()
+}
+
+func (r *modelQualityRepository) FilterOptions(ctx context.Context, theme string) (service.ModelQualityFilterOptions, error) {
+	options := service.ModelQualityFilterOptions{Groups: []string{}, Models: []string{}}
+	// 筛选项来自整个分类，避免分页或当前筛选将可选分组、模型隐藏。
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT group_name,model FROM model_quality_runs WHERE ($1='' OR theme=$1)`, theme)
+	if err != nil {
+		return options, err
+	}
+	defer rows.Close()
+	groups, models := map[string]bool{}, map[string]bool{}
+	for rows.Next() {
+		var group, model string
+		if err := rows.Scan(&group, &model); err != nil {
+			return options, err
+		}
+		if group != "" && !groups[group] {
+			groups[group] = true
+			options.Groups = append(options.Groups, group)
+		}
+		if model != "" && !models[model] {
+			models[model] = true
+			options.Models = append(options.Models, model)
+		}
+	}
+	sort.Strings(options.Groups)
+	sort.Strings(options.Models)
+	return options, rows.Err()
 }

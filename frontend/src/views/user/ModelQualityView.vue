@@ -29,7 +29,7 @@
 
       <div v-if="error" class="quality-error error-banner" role="alert">{{ error }}</div>
       <section ref="resultsSection" class="results-section" :aria-label="t('modelQuality.shared')" :aria-busy="loading">
-        <div class="results-heading"><div><h2>{{ t('modelQuality.shared') }} <span v-if="total">{{ total }}</span></h2><p>{{ t('modelQuality.sharedHint') }}</p></div><div class="result-filters"><Select id="quality-filter-theme" v-model="filterTheme" class="result-filter" :options="themeOptions" :searchable="true" :aria-label="t('modelQuality.allThemes')" @change="resetResults" /><Select id="quality-filter-status" v-model="filterStatus" class="result-filter" :options="statusOptions" :searchable="true" :aria-label="t('modelQuality.allStatuses')" @change="resetResults" /><button type="button" class="btn btn-secondary" :disabled="loading" @click="loadResults">{{ t('modelQuality.refresh') }}</button></div></div>
+        <div class="results-heading"><div><h2>{{ t('modelQuality.shared') }} <span v-if="total">{{ total }}</span></h2><p>{{ t('modelQuality.sharedHint') }}</p></div><div class="result-filters"><Select id="quality-filter-group" v-model="filterGroup" class="result-filter" :options="groupFilterOptions" :searchable="true" :aria-label="t('modelQuality.allGroups')" @change="resetResults" /><Select id="quality-filter-model" v-model="filterModel" class="result-filter" :options="modelFilterOptions" :searchable="true" :aria-label="t('modelQuality.allModels')" @change="resetResults" /><Select id="quality-filter-status" v-model="filterStatus" class="result-filter" :options="statusOptions" :searchable="true" :aria-label="t('modelQuality.allStatuses')" @change="resetResults" /><button type="button" class="btn btn-secondary" :disabled="loading" @click="loadResults">{{ t('modelQuality.refresh') }}</button></div></div>
         <div v-if="loading && !runs.length" class="quality-empty">{{ t('modelQuality.loading') }}</div>
         <div v-else-if="!runs.length && !error" class="quality-empty"><span aria-hidden="true">◇</span><h3>{{ t('modelQuality.empty') }}</h3><p>{{ t('modelQuality.emptyHint') }}</p></div>
         <div v-if="runs.length" :class="officialLayout ? 'results-list' : 'results-grid'">
@@ -66,7 +66,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Select from '@/components/common/Select.vue'
 import { useAuthStore } from '@/stores/auth'
 import { loadWorkspaceKeys, loadWorkspaceModels, workspaceModelsForKey, type WorkspaceKey } from '@/api/workspace'
-import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme, type OfficialQualityConfig, type QualityStatus } from '@/api/modelQuality'
+import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme, type OfficialQualityConfig, type QualityStatus, type QualityFilterOptions } from '@/api/modelQuality'
 import { streamKeyTest } from '@/api/keyTest'
 import { renderMarkdown } from '@/utils/markdown'
 import '@/styles/announcement-markdown.css'
@@ -76,8 +76,9 @@ const auth = useAuthStore()
 const themes: QualityTheme[] = ['pelican', 'candy', 'official', 'custom']
 const statuses = ['running', 'completed', 'failed']
 const theme = ref<QualityTheme>('pelican'), prompt = ref(''), keys = ref<WorkspaceKey[]>([]), keyID = ref(0), model = ref('')
-const runs = ref<QualityRun[]>([]), total = ref(0), page = ref(1), filterTheme = ref(''), filterStatus = ref('')
-const officialLayout = computed(() => theme.value === 'official' || filterTheme.value === 'official')
+const runs = ref<QualityRun[]>([]), total = ref(0), page = ref(1), filterGroup = ref(''), filterModel = ref(''), filterStatus = ref('')
+const historyFilters = ref<QualityFilterOptions>({ groups: [], models: [] })
+const officialLayout = computed(() => theme.value === 'official')
 const keysLoading = ref(true), loading = ref(false), submitting = ref(false), ready = ref(false), error = ref(''), keyError = ref('')
 const expanded = ref<QualityRun | null>(null), previewDialog = ref<HTMLDialogElement | null>(null)
 const resultsSection = ref<HTMLElement | null>(null)
@@ -90,7 +91,8 @@ let request: AbortController | undefined, generation: AbortController | undefine
 const models = computed(() => { const key = keys.value.find(item => item.id === keyID.value); return key ? workspaceModelsForKey(key, 'chat') : [] })
 const keyOptions = computed(() => [{ value: 0, label: t('modelQuality.selectKey') }, ...keys.value.map(key => ({ value: key.id, label: `${key.name} · ${key.groupName}` }))])
 const modelOptions = computed(() => [{ value: '', label: t('modelQuality.selectModel') }, ...models.value.map(value => ({ value, label: value }))])
-const themeOptions = computed(() => [{ value: '', label: t('modelQuality.allThemes') }, ...themes.map(value => ({ value, label: t('modelQuality.' + value) }))])
+const groupFilterOptions = computed(() => [{ value: '', label: t('modelQuality.allGroups') }, ...historyFilters.value.groups.map(value => ({ value, label: value }))])
+const modelFilterOptions = computed(() => [{ value: '', label: t('modelQuality.allModels') }, ...historyFilters.value.models.map(value => ({ value, label: value }))])
 const statusOptions = computed(() => [{ value: '', label: t('modelQuality.allStatuses') }, ...statuses.map(value => ({ value, label: t('modelQuality.' + value) }))])
 const canStart = computed(() => !keysLoading.value && !submitting.value && keyID.value > 0 && models.value.includes(model.value) && (theme.value !== 'custom' || prompt.value.trim().length > 0))
 function selectModel() { model.value = models.value[0] || '' }
@@ -112,11 +114,12 @@ async function loadResults() {
   const current = new AbortController(); request = current
   loading.value = true
   try {
-    const result = await modelQualityAPI.list({ page: page.value, theme: filterTheme.value, status: filterStatus.value }, current.signal)
+    const result = await modelQualityAPI.list({ page: page.value, theme: theme.value, group: filterGroup.value, model: filterModel.value, status: filterStatus.value }, current.signal)
     if (disposed || current.signal.aborted) return
     const receivedIDs = new Set(result.items.map(run => run.id))
     for (const [id, run] of pendingRuns) if (run.status !== 'running' && result.items.some(item => item.id === run.id && item.status === run.status && item.content === run.content)) pendingRuns.delete(id)
-    const pending = page.value === 1 ? [...pendingRuns.values()].filter(run => (!filterTheme.value || run.theme === filterTheme.value) && (!filterStatus.value || run.status === filterStatus.value)) : []
+    const pending = page.value === 1 ? [...pendingRuns.values()].filter(run => run.theme === theme.value && (!filterGroup.value || run.group_name === filterGroup.value) && (!filterModel.value || run.model === filterModel.value) && (!filterStatus.value || run.status === filterStatus.value)) : []
+    historyFilters.value = result.filters || { groups: [], models: [] }
     const pendingIDs = new Set(pending.map(run => run.id))
     runs.value = [...pending, ...result.items.filter(run => !pendingIDs.has(run.id))]; total.value = result.total + pending.filter(run => !receivedIDs.has(run.id)).length; ready.value = true; error.value = ''
   } catch (cause) {
@@ -124,7 +127,7 @@ async function loadResults() {
     ready.value = false
     error.value = t((cause as {status?: number}).status === 404 ? 'modelQuality.notDeployed' : 'modelQuality.loadError')
   } finally {
-    if (!disposed && !current.signal.aborted) { loading.value = false; if (ready.value) timer = setTimeout(loadResults, runs.value.some(run => run.status === 'running') ? 2000 : 10000) }
+    if (!disposed && !current.signal.aborted) { loading.value = false; timer = setTimeout(loadResults, ready.value && runs.value.some(run => run.status === 'running') ? 2000 : 10000) }
   }
 }
 async function start() {
@@ -134,7 +137,8 @@ async function start() {
   if (!selected) { submitting.value = false; return }
   const selectedTheme = theme.value
   const fullPrompt = modelQualityPrompt(selectedTheme, prompt.value)
-  filterTheme.value = ''; filterStatus.value = ''; page.value = 1
+  request?.abort(); clearTimeout(timer)
+  filterGroup.value = ''; filterModel.value = ''; filterStatus.value = ''; page.value = 1
   const localRun = reactive<QualityRun>({ id: -Date.now(), author: t('modelQuality.currentUser'), group_name: selected.groupName, model: model.value, theme: selectedTheme, prompt: fullPrompt, status: 'running', content: '', created_at: new Date().toISOString() })
   pendingRuns.set(localRun.id, localRun)
   runs.value = [localRun, ...runs.value]
@@ -217,11 +221,13 @@ function selectOfficialKey() {
   if (key) { keyID.value = key.id; selectModel(); if (models.value.includes(official.value.model)) model.value = official.value.model }
 }
 watch(theme, value => {
-  if (value !== 'official') { if (filterTheme.value === 'official') { filterTheme.value = ''; resetResults() } return }
-  filterTheme.value = 'official'; resetResults(); selectOfficialKey()
+  filterGroup.value = ''; filterModel.value = ''; filterStatus.value = ''
+  historyFilters.value = { groups: [], models: [] }
+  resetResults()
+  if (value === 'official') selectOfficialKey()
 })
-function resetResults() { page.value = 1; void loadResults() }
-function changePage(delta: number) { page.value += delta; void loadResults() }
+function resetResults() { page.value = 1; runs.value = []; total.value = 0; error.value = ''; void loadResults() }
+function changePage(delta: number) { page.value += delta; runs.value = []; void loadResults() }
 watch(expanded, async (value) => { await nextTick(); if (value && !previewDialog.value?.open) previewDialog.value?.showModal(); else if (!value && previewDialog.value?.open) previewDialog.value.close() })
 function closePreview() { previewDialog.value?.close(); expanded.value = null }
 function closeOutside(event: MouseEvent) { if (event.target === previewDialog.value) closePreview() }
@@ -245,7 +251,7 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 :global(.dark) .quality-page{color:#dfebe6}:global(.dark) .quality-settings,:global(.dark) .result-card{background:#172524;border-color:#2b3e3a}:global(.dark) .theme-bar,:global(.dark) .prompt-details{border-color:#2b3e3a}:global(.dark) .answer-panel,:global(.dark) .account-line,:global(.dark) .result-placeholder{background:#20322c}:global(.dark) .quality-dialog{background:#172524;color:#dfebe6}:global(.dark) .error-banner{background:#30261d;border-color:#604635;color:#f5ba91}
 @media(max-width:900px){.results-heading{align-items:flex-start;flex-direction:column}.results-grid{gap:18px}.result-card{padding:18px}.preview-panel iframe{height:280px}}
 @media(max-width:640px){.quality-hero{align-items:flex-start;flex-direction:column;padding-top:8px;gap:16px}.quality-hero h1{font-size:29px}.quality-hero .btn{width:100%;justify-content:space-between}.quality-settings{padding:20px}.connection-grid{grid-template-columns:1fr;gap:16px}.theme-bar button{flex:1;padding:10px}.results-grid{grid-template-columns:1fr}.result-filters{width:100%;flex-wrap:wrap}.result-filters .input{flex:1;width:100px}.results-heading{gap:14px}.result-card h3{font-size:21px}.preview-panel iframe{height:340px}.dialog-content header h2{max-width:60%;overflow-wrap:anywhere}}
-.result-filters .result-filter{width:140px;min-width:0}
+.result-filters .result-filter{width:160px;min-width:0}
 .quality-result{scroll-margin-top:96px}
 .result-card{position:relative}
 .result-card>.quality-status{position:absolute;top:24px;right:24px}

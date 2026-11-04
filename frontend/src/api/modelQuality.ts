@@ -17,7 +17,8 @@ export interface QualityRun {
   account_name?: string
   created_at: string
 }
-export interface QualityPage { items: QualityRun[]; total: number; page: number; page_size: number }
+export interface QualityFilterOptions { groups: string[]; models: string[] }
+export interface QualityPage { items: QualityRun[]; total: number; page: number; page_size: number; filters?: QualityFilterOptions }
 export interface OfficialQualityConfig { enabled: boolean; model: string; api_key_id?: number }
 export interface QualityProgress { content: string; status: QualityStatus; request_id?: string }
 export function modelQualityPrompt(theme: QualityTheme, custom: string): string {
@@ -31,7 +32,7 @@ export function modelQualityPrompt(theme: QualityTheme, custom: string): string 
   return instruction + (theme === 'pelican' ? '一只鹈鹕骑着自行车，双脚踩动踏板，车轮转动，沿着海边前行。' : custom.trim())
 }
 export const modelQualityAPI = {
-  async list(params: {page: number; theme: string; status: string}, signal?: AbortSignal): Promise<QualityPage> {
+  async list(params: {page: number; theme: QualityTheme; status: string; group: string; model: string}, signal?: AbortSignal): Promise<QualityPage> {
     const { data } = await apiClient.get('/model-quality', { params, signal })
     // 旧版服务可能回落到前端 HTML，不能把 200 当作新接口已经上线。
     if (!data || !Array.isArray(data.items) || typeof data.total !== 'number') throw { status: 404 }

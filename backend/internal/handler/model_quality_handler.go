@@ -42,13 +42,23 @@ func (h *ModelQualityHandler) List(c *gin.Context) {
 		response.BadRequest(c, "无效状态")
 		return
 	}
+	group, model := c.Query("group"), c.Query("model")
+	if len(group) > 400 || len(model) > 200 {
+		response.BadRequest(c, "分组或模型筛选过长")
+		return
+	}
 	role, _ := middleware.GetUserRoleFromContext(c)
-	runs, total, err := h.service.List(c.Request.Context(), page, theme, status, role == service.RoleAdmin)
+	runs, total, err := h.service.List(c.Request.Context(), page, theme, status, group, model, role == service.RoleAdmin)
 	if err != nil {
 		response.InternalError(c, "读取检测记录失败")
 		return
 	}
-	response.Success(c, gin.H{"items": runs, "total": total, "page": page, "page_size": 12})
+	filters, err := h.service.FilterOptions(c.Request.Context(), theme)
+	if err != nil {
+		response.InternalError(c, "读取检测筛选项失败")
+		return
+	}
+	response.Success(c, gin.H{"items": runs, "total": total, "page": page, "page_size": 12, "filters": filters})
 }
 
 func (h *ModelQualityHandler) Create(c *gin.Context) {

@@ -22,6 +22,8 @@ type qualityRepoStub struct {
 	updatedUserID  int64
 	updatedStatus  string
 	updatedContent string
+	listedGroup    string
+	listedModel    string
 }
 
 func (r *qualityRepoStub) Update(_ context.Context, id, userID int64, status, content, requestID string) error {
@@ -66,8 +68,12 @@ func (r *qualityRepoStub) Create(_ context.Context, run *service.ModelQualityRun
 	r.createdRun = run
 	return r.createError
 }
-func (r *qualityRepoStub) List(context.Context, int, string, string) ([]service.ModelQualityRun, int64, error) {
+func (r *qualityRepoStub) List(_ context.Context, _ int, _, _, group, model string) ([]service.ModelQualityRun, int64, error) {
+	r.listedGroup, r.listedModel = group, model
 	return append([]service.ModelQualityRun(nil), r.runs...), int64(len(r.runs)), nil
+}
+func (r *qualityRepoStub) FilterOptions(context.Context, string) (service.ModelQualityFilterOptions, error) {
+	return service.ModelQualityFilterOptions{Groups: []string{"共享分组"}, Models: []string{"shared-model"}}, nil
 }
 
 type qualityKeyStub struct{ key *service.APIKey }
@@ -118,6 +124,18 @@ func TestModelQualityListRejectsInvalidFilters(t *testing.T) {
 		h.List(c)
 		require.Equal(t, 400, w.Code)
 	}
+}
+
+func TestModelQualityListForwardsGroupAndModelAndReturnsSharedOptions(t *testing.T) {
+	repo := &qualityRepoStub{}
+	h := &ModelQualityHandler{service: service.NewModelQualityService(repo)}
+	c, w := qualityContext("GET", "/model-quality?theme=candy&group=shared&model=gpt-test", "", service.RoleUser)
+	h.List(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "shared", repo.listedGroup)
+	require.Equal(t, "gpt-test", repo.listedModel)
+	require.Contains(t, w.Body.String(), "shared-model")
+	require.Contains(t, w.Body.String(), "共享分组")
 }
 
 func TestModelQualityCreatePersistsCompletedChatAnswer(t *testing.T) {

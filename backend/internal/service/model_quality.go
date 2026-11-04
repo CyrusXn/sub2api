@@ -128,10 +128,16 @@ func (r ModelQualityRun) Visible(admin bool) ModelQualityRun {
 	return r
 }
 
+type ModelQualityFilterOptions struct {
+	Groups []string `json:"groups"`
+	Models []string `json:"models"`
+}
+
 type ModelQualityRepository interface {
 	Create(context.Context, *ModelQualityRun) error
 	Update(context.Context, int64, int64, string, string, string) error
-	List(context.Context, int, string, string) ([]ModelQualityRun, int64, error)
+	List(context.Context, int, string, string, string, string) ([]ModelQualityRun, int64, error)
+	FilterOptions(context.Context, string) (ModelQualityFilterOptions, error)
 }
 
 type ModelQualityService struct{ repo ModelQualityRepository }
@@ -146,8 +152,8 @@ func (s *ModelQualityService) Create(ctx context.Context, run *ModelQualityRun) 
 func (s *ModelQualityService) Update(ctx context.Context, id, userID int64, status, content, requestID string) error {
 	return s.repo.Update(ctx, id, userID, status, content, requestID)
 }
-func (s *ModelQualityService) List(ctx context.Context, page int, theme, status string, admin bool) ([]ModelQualityRun, int64, error) {
-	runs, total, err := s.repo.List(ctx, page, theme, status)
+func (s *ModelQualityService) List(ctx context.Context, page int, theme, status, group, model string, admin bool) ([]ModelQualityRun, int64, error) {
+	runs, total, err := s.repo.List(ctx, page, theme, status, group, model)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -155,4 +161,8 @@ func (s *ModelQualityService) List(ctx context.Context, page int, theme, status 
 		runs[i] = runs[i].Visible(admin)
 	}
 	return runs, total, nil
+}
+
+func (s *ModelQualityService) FilterOptions(ctx context.Context, theme string) (ModelQualityFilterOptions, error) {
+	return s.repo.FilterOptions(ctx, theme)
 }
