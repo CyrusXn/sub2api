@@ -21,6 +21,23 @@ UPSTREAM = "https://api.xnkaixin.eu.cc"
 
 
 def scan_host_keys(host, expected_fingerprint):
+    def matching_keys(output):
+        matched = []
+        for line in output.splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[1] == "ssh-ed25519":
+                digest = base64.b64encode(hashlib.sha256(base64.b64decode(parts[2])).digest()).decode().rstrip("=")
+                if "SHA256:" + digest == expected_fingerprint:
+                    matched.append(f"{host} {parts[1]} {parts[2]}")
+        return matched
+
+    # 固定指纹仍是信任依据；复用已保存公钥，避免额外未认证探测触发来源惩罚。
+    saved = subprocess.run(
+        ["ssh-keygen", "-F", host], capture_output=True, text=True, timeout=5, check=False,
+    )
+    matched = matching_keys(saved.stdout)
+    if matched:
+        return matched
     scanned = subprocess.run(
         ["ssh-keyscan", "-T", "5", "-t", "ed25519", host],
         capture_output=True,
@@ -28,14 +45,10 @@ def scan_host_keys(host, expected_fingerprint):
         timeout=10,
         check=False,
     )
-    matched = []
-    for line in scanned.stdout.splitlines():
-        parts = line.split()
-        if len(parts) == 3 and parts[1] == "ssh-ed25519":
-            digest = base64.b64encode(hashlib.sha256(base64.b64decode(parts[2])).digest()).decode().rstrip("=")
-            if "SHA256:" + digest == expected_fingerprint:
-                matched.append(line)
+    matched = matching_keys(scanned.stdout)
     if not matched:
+        if not scanned.stdout.strip():
+            raise RuntimeError("未取得 SSH 主机密钥，连接可能超时，已停止连接")
         raise RuntimeError("SSH 主机指纹不匹配，已停止连接")
     return matched
 

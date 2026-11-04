@@ -16,6 +16,22 @@ BEGIN
               SELECT (MIN(created_at) AT TIME ZONE 'Asia/Shanghai')::date
               FROM users WHERE LOWER(TRIM(email)) = 'cyrusxn@163.com'
           )
+          -- 日活索引可能被局部重算截断，必须按完整小时汇总及小时活跃索引证明该账号未使用。
+          AND NOT EXISTS (
+              SELECT 1 FROM usage_dashboard_hourly h
+              WHERE (h.bucket_start AT TIME ZONE 'Asia/Shanghai')::date = d.bucket_date
+              HAVING SUM(h.total_requests) = d.total_requests
+                AND BOOL_AND((h.total_requests = 0 OR h.active_users > 0) AND h.active_users = (
+                    SELECT COUNT(*) FROM usage_dashboard_hourly_users a
+                    WHERE a.bucket_start = h.bucket_start
+                ))
+                AND BOOL_AND(NOT EXISTS (
+                    SELECT 1 FROM usage_dashboard_hourly_users a
+                    JOIN users t ON t.id = a.user_id
+                    WHERE a.bucket_start = h.bucket_start
+                      AND LOWER(TRIM(t.email)) = 'cyrusxn@163.com'
+                ))
+          )
     ) THEN
         RAISE EXCEPTION '测试账号充值口径回填失败：经营历史使用明细不完整，需先恢复历史消费明细，不能按残余数据重算';
     END IF;

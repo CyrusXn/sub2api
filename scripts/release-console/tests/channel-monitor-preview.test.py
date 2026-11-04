@@ -18,6 +18,26 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PreviewSshTests(unittest.TestCase):
+    def test_reuses_saved_key_only_when_pinned_fingerprint_matches(self):
+        key = base64.b64encode(b"saved-ed25519-key").decode()
+        fingerprint = "SHA256:" + base64.b64encode(
+            hashlib.sha256(base64.b64decode(key)).digest()
+        ).decode().rstrip("=")
+        saved = subprocess.CompletedProcess(
+            ["ssh-keygen"], 0, f"# found\n|hashed-host| ssh-ed25519 {key}\n", ""
+        )
+        with patch.object(MODULE.subprocess, "run", side_effect=[saved, subprocess.TimeoutExpired("ssh-keyscan", 10)]) as run:
+            self.assertEqual(MODULE.scan_host_keys("192.0.2.1", fingerprint), [f"192.0.2.1 ssh-ed25519 {key}"])
+            self.assertEqual(run.call_count, 1)
+
+    def test_never_trusts_saved_key_with_wrong_fingerprint(self):
+        key = base64.b64encode(b"wrong-key").decode()
+        saved = subprocess.CompletedProcess(["ssh-keygen"], 0, f"192.0.2.1 ssh-ed25519 {key}\n", "")
+        scanned = subprocess.CompletedProcess(["ssh-keyscan"], 1, "", "timeout")
+        with patch.object(MODULE.subprocess, "run", side_effect=[saved, scanned]):
+            with self.assertRaisesRegex(RuntimeError, "未取得"):
+                MODULE.scan_host_keys("192.0.2.1", "SHA256:expected")
+
     def test_accepts_matching_key_when_keyscan_reports_nonzero(self):
         key = base64.b64encode(b"test-ed25519-key").decode()
         fingerprint = "SHA256:" + base64.b64encode(
@@ -26,7 +46,8 @@ class PreviewSshTests(unittest.TestCase):
         result = subprocess.CompletedProcess(
             ["ssh-keyscan"], 1, f"192.0.2.1 ssh-ed25519 {key}\n", "connection closed\n"
         )
-        with patch.object(MODULE.subprocess, "run", return_value=result):
+        absent = subprocess.CompletedProcess(["ssh-keygen"], 1, "", "")
+        with patch.object(MODULE.subprocess, "run", side_effect=[absent, result]):
             self.assertEqual(
                 MODULE.scan_host_keys("192.0.2.1", fingerprint),
                 [f"192.0.2.1 ssh-ed25519 {key}"],

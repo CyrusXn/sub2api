@@ -27,8 +27,11 @@ CREATE TEMP TABLE usage_dashboard_daily (
  input_tokens bigint DEFAULT 0, output_tokens bigint DEFAULT 0,
  cache_creation_tokens bigint DEFAULT 0, cache_read_tokens bigint DEFAULT 0,
  total_cost numeric DEFAULT 0, actual_cost numeric DEFAULT 0, account_cost numeric DEFAULT 0,
- total_duration_ms bigint DEFAULT 0
+ total_duration_ms bigint DEFAULT 0, active_users bigint DEFAULT 0
 );
+CREATE TEMP TABLE usage_dashboard_daily_users (bucket_date date, user_id bigint, PRIMARY KEY (bucket_date, user_id));
+CREATE TEMP TABLE usage_dashboard_hourly (bucket_start timestamptz PRIMARY KEY, total_requests bigint, active_users bigint);
+CREATE TEMP TABLE usage_dashboard_hourly_users (bucket_start timestamptz, user_id bigint, PRIMARY KEY (bucket_start, user_id));
 CREATE TEMP TABLE dashboard_business_daily (
  bucket_date date PRIMARY KEY, recharge_amount numeric DEFAULT 0,
  total_requests bigint DEFAULT 0, input_tokens bigint DEFAULT 0, output_tokens bigint DEFAULT 0,
@@ -58,6 +61,47 @@ INSERT INTO dashboard_business_daily (bucket_date, recharge_amount, total_reques
 INSERT INTO usage_dashboard_daily (bucket_date, total_requests, actual_cost) VALUES
  ('2026-11-01', 2, 30.5), ('2026-11-02', 1, 2.5);
 `
+
+const businessRechargeUnrelatedMissingHistorySQL = `
+INSERT INTO dashboard_business_daily (bucket_date, recharge_amount, total_requests) VALUES ('2026-10-31', 88, 5);
+INSERT INTO usage_dashboard_daily (bucket_date, total_requests, active_users) VALUES ('2026-10-31', 5, 1);
+INSERT INTO usage_dashboard_daily_users VALUES ('2026-10-31', 2);
+INSERT INTO usage_dashboard_hourly VALUES ('2026-10-31 10:00:00+08', 3, 1), ('2026-10-31 11:00:00+08', 2, 1);
+INSERT INTO usage_dashboard_hourly_users VALUES ('2026-10-31 10:00:00+08', 2), ('2026-10-31 11:00:00+08', 2);
+`
+
+func TestBusinessRechargeMigrationUsesCompleteHistoricalActivityIndex(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		change  string
+		blocked bool
+	}{
+		{name: "其他用户缺失且完整小时索引证明测试账号未使用"},
+		{name: "日活索引残缺但小时记录显示测试账号曾使用则拒绝回填", change: `INSERT INTO usage_dashboard_hourly_users VALUES ('2026-10-31 10:00:00+08', 1); UPDATE usage_dashboard_hourly SET active_users=2 WHERE bucket_start='2026-10-31 10:00:00+08'`, blocked: true},
+		{name: "小时活跃索引缺失则拒绝回填", change: `DELETE FROM usage_dashboard_hourly_users WHERE bucket_start='2026-10-31 10:00:00+08'`, blocked: true},
+		{name: "小时汇总请求少于固化历史则拒绝回填", change: `UPDATE usage_dashboard_hourly SET total_requests=1 WHERE bucket_start='2026-10-31 10:00:00+08'`, blocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tx, err := integrationDB.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			_, err = tx.ExecContext(ctx, businessRechargeFixtureSQL+businessRechargeUnrelatedMissingHistorySQL+tc.change)
+			require.NoError(t, err)
+			migration, err := migrations.FS.ReadFile("266_business_test_account_recharge.sql")
+			require.NoError(t, err)
+			_, err = tx.ExecContext(ctx, string(migration))
+			if tc.blocked {
+				require.ErrorContains(t, err, "经营历史使用明细不完整")
+			} else {
+				require.NoError(t, err)
+				var amount float64
+				require.NoError(t, tx.QueryRowContext(ctx, `SELECT recharge_amount FROM dashboard_business_daily WHERE bucket_date='2026-10-31'`).Scan(&amount))
+				require.Equal(t, float64(88), amount)
+			}
+		})
+	}
+}
 
 func TestBusinessRechargeMigrationAndAggregation(t *testing.T) {
 	previousTimezone := timezone.Name()
