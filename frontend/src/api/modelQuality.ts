@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
 import { apiClient } from './client'
 
-export type QualityTheme = 'pelican' | 'candy' | 'custom'
+export type QualityTheme = 'pelican' | 'candy' | 'official' | 'custom'
 export type QualityStatus = 'running' | 'completed' | 'failed'
 export interface QualityRun {
   id: number
@@ -18,7 +18,10 @@ export interface QualityRun {
   created_at: string
 }
 export interface QualityPage { items: QualityRun[]; total: number; page: number; page_size: number }
+export interface OfficialQualityConfig { enabled: boolean; model: string; api_key_id?: number }
+export interface QualityProgress { content: string; status: QualityStatus; request_id?: string }
 export function modelQualityPrompt(theme: QualityTheme, custom: string): string {
+  if (theme === 'official') return '你是谁'
   if (theme === 'candy') return `不使用任何外部工具回答以下问题：
 在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）
           苹果味  桃子味  西瓜味
@@ -34,8 +37,20 @@ export const modelQualityAPI = {
     if (!data || !Array.isArray(data.items) || typeof data.total !== 'number') throw { status: 404 }
     return data
   },
-  async save(input: {api_key_id: number; model: string; theme: QualityTheme; prompt: string; content: string; status: 'completed' | 'failed'; request_id?: string}): Promise<QualityRun> {
+  async save(input: {api_key_id: number; model: string; theme: QualityTheme; prompt: string; content: string; status: QualityStatus; request_id?: string}): Promise<QualityRun> {
     const { data } = await apiClient.post<QualityRun>('/model-quality', input)
+    return data
+  },
+  async update(id: number, progress: QualityProgress): Promise<void> {
+    await apiClient.patch('/model-quality/' + id, progress)
+  },
+  async official(): Promise<OfficialQualityConfig> {
+    const { data } = await apiClient.get('/model-quality/official')
+    if (typeof data?.enabled !== 'boolean') throw { status: 404 }
+    return data
+  },
+  async configureOfficial(input: OfficialQualityConfig): Promise<OfficialQualityConfig> {
+    const { data } = await apiClient.put('/model-quality/official', input)
     return data
   }
 }

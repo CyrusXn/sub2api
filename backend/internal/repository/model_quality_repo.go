@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -14,6 +15,14 @@ func NewModelQualityRepository(db *sql.DB) service.ModelQualityRepository {
 }
 
 func (r *modelQualityRepository) Create(ctx context.Context, run *service.ModelQualityRun) error {
+	if run.OfficialSlot != nil {
+		err := r.db.QueryRowContext(ctx, `INSERT INTO model_quality_runs (user_id,api_key_id,author,group_name,model,theme,prompt,status,official_slot)
+			VALUES ($1,$2,$3,$4,$5,'official',$6,'running',$7) ON CONFLICT DO NOTHING RETURNING id,created_at`, run.UserID, run.APIKeyID, run.Author, run.GroupName, run.Model, run.Prompt, run.OfficialSlot).Scan(&run.ID, &run.CreatedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return service.ErrModelQualityAlreadyScheduled
+		}
+		return err
+	}
 	err := r.db.QueryRowContext(ctx, `INSERT INTO model_quality_runs (user_id, api_key_id, author, group_name, model, theme, prompt, status, content, error, account_id, created_at, request_id)
 		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE(u.account_id,e.account_id),COALESCE(u.created_at,NOW()),NULLIF($11,'')
 		FROM (SELECT 1) seed LEFT JOIN LATERAL (
@@ -31,6 +40,24 @@ func (r *modelQualityRepository) Create(ctx context.Context, run *service.ModelQ
 
 const modelQualityStatusSQL = `CASE WHEN q.status='running' AND q.created_at < NOW() - INTERVAL '9 minutes' THEN 'failed' ELSE q.status END`
 
+func (r *modelQualityRepository) Update(ctx context.Context, id, userID int64, status, content, requestID string) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE model_quality_runs SET status=$3,content=$4,request_id=COALESCE(NULLIF($5,''),request_id),
+		finished_at=CASE WHEN $3='running' THEN NULL ELSE NOW() END,
+		error=CASE WHEN $3='failed' THEN '模型请求失败或已中断，请检查密钥、额度或上游账号状态' ELSE '' END
+		WHERE id=$1 AND user_id=$2 AND status='running'`, id, userID, status, content, requestID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return service.ErrModelQualityNotRunning
+	}
+	return nil
+}
+
 func (r *modelQualityRepository) List(ctx context.Context, page int, theme, status string) ([]service.ModelQualityRun, int64, error) {
 	where := ` WHERE ($1='' OR q.theme=$1) AND ($2='' OR (` + modelQualityStatusSQL + `)=$2)`
 	var total int64
@@ -38,8 +65,9 @@ func (r *modelQualityRepository) List(ctx context.Context, page int, theme, stat
 		return nil, 0, err
 	}
 	// 用量与错误日志异步写入；读取时补查真实账号，不以创建时的查询结果作为终态。
-	rows, err := r.db.QueryContext(ctx, `SELECT q.id,q.author,q.group_name,q.model,q.theme,q.prompt,`+modelQualityStatusSQL+`,q.content,CASE WHEN q.status='running' AND q.created_at < NOW()-INTERVAL '9 minutes' THEN '检测已中断或超时，请重新发起' ELSE q.error END,COALESCE(q.account_id,u.account_id,e.account_id,0),COALESCE(a.name,''),q.created_at
+	rows, err := r.db.QueryContext(ctx, `SELECT q.id,COALESCE(NULLIF(usr.email,''),''),q.group_name,q.model,q.theme,q.prompt,`+modelQualityStatusSQL+`,q.content,CASE WHEN q.status='running' AND q.created_at < NOW()-INTERVAL '9 minutes' THEN '检测已中断或超时，请重新发起' ELSE q.error END,COALESCE(q.account_id,u.account_id,e.account_id,0),COALESCE(a.name,''),q.created_at
 		FROM (SELECT q.* FROM model_quality_runs q`+where+` ORDER BY q.created_at DESC,q.id DESC LIMIT 12 OFFSET $3) q
+		LEFT JOIN users usr ON usr.id=q.user_id AND usr.deleted_at IS NULL
 		LEFT JOIN LATERAL (
 			SELECT u.account_id FROM usage_logs u WHERE u.api_key_id=q.api_key_id AND u.request_id='client:' || q.request_id AND u.user_id=q.user_id ORDER BY u.id DESC LIMIT 1
 		) u ON q.account_id IS NULL

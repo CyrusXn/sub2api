@@ -28,6 +28,9 @@ func RegisterUserRoutes(
 		if h.ModelQuality != nil {
 			authenticated.GET("/model-quality", h.ModelQuality.List)
 			authenticated.POST("/model-quality", h.ModelQuality.Create)
+			authenticated.PATCH("/model-quality/:id", h.ModelQuality.Update)
+			authenticated.GET("/model-quality/official", h.ModelQuality.OfficialStatus)
+			authenticated.PUT("/model-quality/official", h.ModelQuality.ConfigureOfficial)
 		}
 		// 用户接口
 		user := authenticated.Group("/user")

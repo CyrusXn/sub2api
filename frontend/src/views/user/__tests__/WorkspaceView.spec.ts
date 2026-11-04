@@ -378,11 +378,11 @@ describe('创作工作台', () => {
     vi.stubGlobal('fetch', vi.fn(async url => String(url).endsWith('/models') ? Response.json({ data: ['gemini-4-argon', 'gemini-4-argon-high'].map(id => ({ id })) }) : Response.json({ candidates: [{ content: { role: 'model', parts: [{ text: '我是 Gemini', thoughtSignature: 'test-signature' }] }, finishReason: 'STOP' }] })))
     const { view } = await mountView()
     expect(selectedValue(view, 'workspace-model')).toBe('gemini-4-argon-high')
-    expect(view.get('.protocol-hint').text()).toContain('Gemini · generateContent')
+    expect(view.get('.protocol-hint').text()).toContain('Gemini · streamGenerateContent')
     await view.get('[data-test="submit"]').trigger('click')
     await flushPromises()
-    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes(':generateContent'))!
-    expect(call[0]).toBe(`${window.location.origin}/v1beta/models/gemini-4-argon-high:generateContent`)
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes(':streamGenerateContent'))!
+    expect(call[0]).toBe(window.location.origin + '/v1beta/models/gemini-4-argon-high:streamGenerateContent?alt=sse')
     expect(JSON.parse(String(call[1]?.body))).toEqual({ contents: [{ role: 'user', parts: [{ text: '你是谁' }] }], generationConfig: { maxOutputTokens: 2048 } })
     expect(view.get('.message.assistant').text()).toContain('我是 Gemini')
   })

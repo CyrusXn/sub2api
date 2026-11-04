@@ -18,6 +18,29 @@ const options = () => ({
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('密钥测试网关请求', () => {
+  it('Gemini 原生 SSE 在结束前交付首段正文而非等待完整 JSON', async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({ start(value) { controller = value } })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const opts = { ...options(), protocol: 'gemini' as const, requireStop: true }
+    let finished = false
+    const result = streamKeyTest(opts).then(() => { finished = true })
+    controller.enqueue(encoder.encode('data: {"candidates":[{"content":{"parts":[{"text":"第一段"}]}}]}\n\n'))
+    await vi.waitFor(() => expect(opts.onText).toHaveBeenCalledWith('第一段'))
+    expect(finished).toBe(false)
+    expect(fetchMock.mock.calls[0][0]).toContain(':streamGenerateContent?alt=sse')
+    controller.enqueue(encoder.encode('data: {"candidates":[{"content":{"parts":[{"text":"第二段"}]},"finishReason":"STOP"}]}\n\n'))
+    controller.close()
+    await result
+    expect(opts.onText.mock.calls).toEqual([['第一段'], ['第二段']])
+  })
+  it('HTTP 失败仍回传请求 ID，方便关联实际失败的上游账号', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 502, headers: { 'X-Client-Request-ID': 'failed-request-id' } })))
+    const onRequestID = vi.fn()
+    await expect(streamKeyTest({ ...options(), onRequestID })).rejects.toMatchObject({ code: 'http' })
+    expect(onRequestID).toHaveBeenCalledWith('failed-request-id')
+  })
   it('返回服务端关联 ID，供浏览器接收时间关联使用记录', async () => {
     const response = sseResponse([encoder.encode('data: {"choices":[{"delta":{"content":" "}}]}\n\ndata: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n')])
     response.headers.set('X-Client-Request-ID', 'server-issued-id')
@@ -44,9 +67,9 @@ describe('密钥测试网关请求', () => {
     expect(opts.onText).toHaveBeenCalledWith(' ')
   })
   it.each([
-    ['https://relay.example/prefix/v1/', false, 'https://relay.example/prefix/v1beta/models/gemini-4-argon-high:generateContent'],
-    ['https://relay.example/v1', true, '/v1beta/models/gemini-4-argon-high:generateContent'],
-    ['https://other.example/v1', true, 'https://other.example/v1beta/models/gemini-4-argon-high:generateContent']
+    ['https://relay.example/prefix/v1/', false, 'https://relay.example/prefix/v1beta/models/gemini-4-argon-high:streamGenerateContent?alt=sse'],
+    ['https://relay.example/v1', true, '/v1beta/models/gemini-4-argon-high:streamGenerateContent?alt=sse'],
+    ['https://other.example/v1', true, 'https://other.example/v1beta/models/gemini-4-argon-high:streamGenerateContent?alt=sse']
   ])('Gemini 使用原生端点并保留路径前缀：%s', async (baseUrl, dev, expected) => {
     vi.stubEnv('DEV', dev)
     vi.stubEnv('VITE_DEV_PROXY_TARGET', 'https://relay.example')
@@ -59,7 +82,7 @@ describe('密钥测试网关请求', () => {
     await streamKeyTest(opts)
     expect(fetchMock).toHaveBeenCalledWith(expected, expect.objectContaining({
       method: 'POST', credentials: 'omit', redirect: 'error', signal: opts.signal,
-      headers: expect.objectContaining({ 'x-goog-api-key': opts.apiKey, Accept: 'application/json' }),
+      headers: expect.objectContaining({ 'x-goog-api-key': opts.apiKey, Accept: 'text/event-stream' }),
       body: JSON.stringify({ contents: [
         { role: 'user', parts: [{ text: '你好' }] }, { role: 'model', parts: [{ text: '您好' }] }
       ], generationConfig: { maxOutputTokens: 2048 } })

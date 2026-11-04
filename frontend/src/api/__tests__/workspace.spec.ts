@@ -223,13 +223,13 @@ describe('workspace model selection', () => {
     expect(fetchMock).toHaveBeenCalledTimes(5)
   })
 
-  it('工作台 Gemini 自动使用截图中的 generateContent 协议', async () => {
+  it('工作台 Gemini 使用原生流式端点并兼容 JSON 代理', async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ candidates: [{ content: { parts: [{ text: '内部推理', thought: true }, { text: '你好世界', thoughtSignature: 'test-signature' }] }, finishReason: 'STOP' }] }))
     vi.stubGlobal('fetch', fetchMock)
     const onText = vi.fn()
     await streamWorkspaceChat({ selection: { key: { ...key(1), platform: 'gemini' }, model: 'gemini-4-argon' },
       messages: [{ role: 'user', content: '你好' }, { role: 'assistant', content: '您好' }, { role: 'user', content: '继续' }], signal: new AbortController().signal, onText })
-    expect(fetchMock).toHaveBeenCalledWith('https://relay.example/prefix/v1beta/models/gemini-4-argon:generateContent', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('https://relay.example/prefix/v1beta/models/gemini-4-argon:streamGenerateContent?alt=sse', expect.objectContaining({
       method: 'POST', credentials: 'omit', headers: expect.objectContaining({ 'x-goog-api-key': 'test-only-key' }),
       body: JSON.stringify({ contents: [
         { role: 'user', parts: [{ text: '你好' }] }, { role: 'model', parts: [{ text: '您好' }] }, { role: 'user', parts: [{ text: '继续' }] }

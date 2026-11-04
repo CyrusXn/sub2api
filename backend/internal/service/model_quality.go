@@ -2,17 +2,18 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
 
 const ModelQualityMaxOutput = 512 * 1024
+
+var ErrModelQualityNotRunning = errors.New("检测记录不存在或已结束")
+var ErrModelQualityAlreadyScheduled = errors.New("本小时已经检测")
 
 const ModelQualityCandyPrompt = `不使用任何外部工具回答以下问题：
 在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）
@@ -24,6 +25,8 @@ const modelQualityHTMLInstruction = "不使用任何外部工具。请创建一�
 
 func ModelQualityPrompt(theme, custom string) (string, error) {
 	switch theme {
+	case "official":
+		return "你是谁", nil
 	case "candy":
 		return ModelQualityCandyPrompt, nil
 	case "pelican":
@@ -39,12 +42,25 @@ func ModelQualityPrompt(theme, custom string) (string, error) {
 	}
 }
 
+func IsModelQualityTextModel(model string) bool {
+	if strings.TrimSpace(model) == "" || len(model) > 200 {
+		return false
+	}
+	lower := strings.ToLower(model)
+	for _, hint := range []string{"image", "dall-e", "flux", "seedream", "video", "seedance", "whisper", "tts", "audio", "embedding", "rerank", "moderation", "imagen", "veo"} {
+		if strings.Contains(lower, hint) {
+			return false
+		}
+	}
+	return true
+}
+
 func ModelQualityOutput(theme, output string) (string, error) {
 	output = strings.TrimSpace(output)
 	if output == "" || len(output) > ModelQualityMaxOutput {
 		return "", errors.New("模型返回内容为空或过大")
 	}
-	if theme == "candy" {
+	if theme == "candy" || theme == "official" {
 		return output, nil
 	}
 	// 只剥离代码围栏，不将解释文字误当作可预览作品。
@@ -61,35 +77,46 @@ func ModelQualityOutput(theme, output string) (string, error) {
 }
 
 type ModelQualityRun struct {
-	ID          int64     `json:"id"`
-	UserID      int64     `json:"-"`
-	APIKeyID    int64     `json:"-"`
-	RequestID   string    `json:"-"`
-	Author      string    `json:"author"`
-	GroupName   string    `json:"group_name"`
-	Model       string    `json:"model"`
-	Theme       string    `json:"theme"`
-	Prompt      string    `json:"prompt"`
-	Status      string    `json:"status"`
-	Content     string    `json:"content"`
-	Error       string    `json:"error,omitempty"`
-	AccountID   int64     `json:"account_id,omitempty"`
-	AccountName string    `json:"account_name,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           int64      `json:"id"`
+	UserID       int64      `json:"-"`
+	APIKeyID     int64      `json:"-"`
+	RequestID    string     `json:"-"`
+	Author       string     `json:"author"`
+	GroupName    string     `json:"group_name"`
+	Model        string     `json:"model"`
+	Theme        string     `json:"theme"`
+	Prompt       string     `json:"prompt"`
+	Status       string     `json:"status"`
+	Content      string     `json:"content"`
+	Error        string     `json:"error,omitempty"`
+	AccountID    int64      `json:"account_id,omitempty"`
+	AccountName  string     `json:"account_name,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	OfficialSlot *time.Time `json:"-"`
 }
 
 func MaskModelQualityAuthor(author string) string {
-	digest := sha256.Sum256([]byte(author))
-	return fmt.Sprintf("用户·%x", digest[:4])
-}
-
-// NewModelQualityAuthor 生成不可反查、不可跨记录关联的作者代号。
-func NewModelQualityAuthor() (string, error) {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		return "", err
+	author = strings.TrimSpace(author)
+	if address, err := mail.ParseAddress(author); err == nil && address.Address == author {
+		at := strings.LastIndexByte(author, '@')
+		local := []rune(author[:at])
+		visible := len(local) - 3
+		if visible < 0 {
+			visible = 0
+		}
+		return string(local[:visible]) + "***" + author[at:]
 	}
-	return hex.EncodeToString(value), nil
+	chars := []rune(author)
+	if len(chars) <= 3 {
+		return "***"
+	}
+	// 同一标识固定遮蔽位置，避免刷新随机位置后拼回完整账号。
+	start := 0
+	if len(chars) > 4 {
+		digest := sha256.Sum256([]byte(author))
+		start = 1 + int(digest[0])%(len(chars)-4)
+	}
+	return string(chars[:start]) + "***" + string(chars[start+3:])
 }
 
 func (r ModelQualityRun) Visible(admin bool) ModelQualityRun {
@@ -103,6 +130,7 @@ func (r ModelQualityRun) Visible(admin bool) ModelQualityRun {
 
 type ModelQualityRepository interface {
 	Create(context.Context, *ModelQualityRun) error
+	Update(context.Context, int64, int64, string, string, string) error
 	List(context.Context, int, string, string) ([]ModelQualityRun, int64, error)
 }
 
@@ -113,6 +141,10 @@ func NewModelQualityService(repo ModelQualityRepository) *ModelQualityService {
 }
 func (s *ModelQualityService) Create(ctx context.Context, run *ModelQualityRun) error {
 	return s.repo.Create(ctx, run)
+}
+
+func (s *ModelQualityService) Update(ctx context.Context, id, userID int64, status, content, requestID string) error {
+	return s.repo.Update(ctx, id, userID, status, content, requestID)
 }
 func (s *ModelQualityService) List(ctx context.Context, page int, theme, status string, admin bool) ([]ModelQualityRun, int64, error) {
 	runs, total, err := s.repo.List(ctx, page, theme, status)

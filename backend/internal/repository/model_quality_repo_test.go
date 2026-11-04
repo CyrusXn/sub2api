@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+func TestModelQualityProgressCannotOverwriteFinalOrAnotherUsersRecord(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mock.ExpectExec("UPDATE model_quality_runs.*WHERE id=\\$1 AND user_id=\\$2 AND status='running'").WithArgs(int64(9), int64(12), "running", "partial", "req-1").WillReturnResult(sqlmock.NewResult(0, 0))
+	err = NewModelQualityRepository(db).Update(context.Background(), 9, 12, "running", "partial", "req-1")
+	require.ErrorIs(t, err, service.ErrModelQualityNotRunning)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestModelQualityOfficialSlotIsClaimedAtomically(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	slot := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("INSERT INTO model_quality_runs .*official_slot.*ON CONFLICT DO NOTHING RETURNING id,created_at").WithArgs(int64(12), int64(3), "admin@example.com", "group", "gpt-test", "你是谁", slot).WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}))
+	err = NewModelQualityRepository(db).Create(context.Background(), &service.ModelQualityRun{UserID: 12, APIKeyID: 3, Author: "admin@example.com", GroupName: "group", Model: "gpt-test", OfficialSlot: &slot, Prompt: "你是谁"})
+	require.ErrorIs(t, err, service.ErrModelQualityAlreadyScheduled)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestModelQualityRepositoryStoresCompletedAnswerAndResolvesActualAccount(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

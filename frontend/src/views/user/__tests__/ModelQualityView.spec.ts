@@ -1,31 +1,103 @@
-import { mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ModelQualityView from '../ModelQualityView.vue'
 import { modelQualityAPI } from '@/api/modelQuality'
 import { loadWorkspaceKeys, loadWorkspaceModels } from '@/api/workspace'
 import zh from '@/i18n/locales/zh/modelQuality'
 import { streamKeyTest } from '@/api/keyTest'
+import Select from '@/components/common/Select.vue'
 
 const auth = vi.hoisted(() => ({ isAdmin: false }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
-vi.mock('@/api/modelQuality', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/modelQuality')>(), modelQualityAPI: { list: vi.fn(), save: vi.fn() } }))
+vi.mock('@/api/modelQuality', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/modelQuality')>(), modelQualityAPI: { list: vi.fn(), save: vi.fn(), update: vi.fn(), official: vi.fn(), configureOfficial: vi.fn() } }))
 vi.mock('@/api/workspace', () => ({ loadWorkspaceKeys: vi.fn(), loadWorkspaceModels: vi.fn(), workspaceModelsForKey: (key: {models: string[]}) => key.models }))
 vi.mock('@/api/keyTest', () => ({ streamKeyTest: vi.fn() }))
 vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key.split('.').reduce<unknown>((value, segment) => (value as Record<string, unknown>)?.[segment], zh) || key }) }))
 let wrapper: ReturnType<typeof mount>
 beforeEach(() => {
  auth.isAdmin = false
+ vi.mocked(modelQualityAPI.save).mockResolvedValue({ id: 99 } as never)
+ vi.mocked(modelQualityAPI.update).mockResolvedValue(undefined)
+ vi.mocked(modelQualityAPI.official).mockResolvedValue({ enabled: false, model: '' })
  vi.mocked(loadWorkspaceKeys).mockResolvedValue([{ id: 1, name: '我的密钥', groupName: '优选', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-test'], allowImageGeneration: false }])
  vi.mocked(loadWorkspaceModels).mockResolvedValue()
  vi.mocked(streamKeyTest).mockImplementation(async options => { options.onText('实际回答是 28 个。') })
  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [{ id: 1, author: '用户·abcdefgh', group_name: '优选', model: 'gpt-test', theme: 'candy', prompt: '糖果问题', status: 'completed', content: '最少 21 个。', created_at: '2026-11-03T02:00:00Z', account_id: 7, account_name: '上游测试账号' }], total: 1, page: 1, page_size: 12 })
 })
-afterEach(() => { wrapper?.unmount(); vi.clearAllMocks() })
+afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.clearAllMocks() })
 async function open() { wrapper = mount(ModelQualityView, { global: { stubs: { AppLayout: { template: '<div><slot /></div>' } } } }); await flushPromises(); return wrapper }
 describe('模型智检', () => {
- it('只有三个主题，默认查询所有用户结果，糖果显示真实回答而非图片', async () => {
+ it('所有下拉选择均使用始终可搜索的统一组件，少量选项也能搜索', async () => {
   const view = await open()
-  expect(view.findAll('[role=tab]').map(tab => tab.text())).toEqual(['鹈鹕', '糖果', '自定义'])
+  expect(view.find('select').exists()).toBe(false)
+  expect(view.findAllComponents(Select)).toHaveLength(4)
+  for (const select of view.findAllComponents(Select)) {
+   expect(select.props('searchable')).toBe(true)
+   await select.get('.select-trigger').trigger('click')
+   expect(document.body.querySelector('.select-search-input')).not.toBeNull()
+   await select.get('.select-trigger').trigger('click')
+  }
+ })
+ it('搜索选择密钥后联动模型，主题和状态筛选仍发送正确参数', async () => {
+  vi.mocked(loadWorkspaceKeys).mockResolvedValue([
+   { id: 1, name: '我的密钥', groupName: '优选', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-test'], allowImageGeneration: false },
+   { id: 2, name: '备用密钥', groupName: '备用组', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-other', 'gpt-search'], allowImageGeneration: false }
+  ])
+  const view = await open()
+  async function searchAndChoose(selector: string, query: string, label: string) {
+   await view.get(selector).trigger('click')
+   const dropdowns = document.body.querySelectorAll<HTMLElement>('.select-dropdown-portal')
+   const dropdown = new DOMWrapper(dropdowns[dropdowns.length - 1])
+   await dropdown.get('.select-search-input').setValue(query)
+   const options = dropdown.findAll('[role=option]')
+   expect(options.map(option => option.text())).toEqual([label])
+   await options[0].trigger('click')
+   await flushPromises()
+  }
+  await searchAndChoose('#quality-key', '备用组', '备用密钥 · 备用组')
+  expect(view.get('#quality-model').text()).toContain('gpt-other')
+  await searchAndChoose('#quality-model', 'search', 'gpt-search')
+  await searchAndChoose('#quality-filter-theme', '糖果', '糖果')
+  await searchAndChoose('#quality-filter-status', '正在', '正在进行')
+  expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme: 'candy', status: 'running' }, expect.anything())
+  await view.get('[data-theme=candy]').trigger('click')
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-search' }))
+ })
+ it('开始生成只滚动到新记录顶部，后续流式更新不再次滚动', async () => {
+  const scrollIntoView = vi.fn()
+  const originalScroll = HTMLElement.prototype.scrollIntoView
+  HTMLElement.prototype.scrollIntoView = scrollIntoView
+  let save!: (value: never) => void
+  vi.mocked(modelQualityAPI.save).mockImplementationOnce(() => new Promise(resolve => { save = resolve }))
+  let emitText!: (value: string) => void, finish!: () => void
+  vi.mocked(streamKeyTest).mockImplementation(options => new Promise<void>(resolve => { emitText = options.onText; finish = resolve }))
+  try {
+   const view = await open()
+   await view.get('[data-theme=candy]').trigger('click')
+   await view.get('[data-test=start]').trigger('click')
+   await flushPromises()
+   expect(scrollIntoView).toHaveBeenCalledTimes(1)
+   expect(scrollIntoView.mock.contexts[0]).toBe(view.findAll('.quality-result')[0].element)
+   expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' })
+   save({ id: 99 } as never)
+   await flushPromises()
+   emitText('**第一段**')
+   await flushPromises()
+   finish()
+   await flushPromises()
+   expect(scrollIntoView).toHaveBeenCalledTimes(1)
+  } finally {
+   HTMLElement.prototype.scrollIntoView = originalScroll
+  }
+ })
+ it('四个主题按顺序展示，普通查询使用卡片，糖果显示真实回答而非图片', async () => {
+  const view = await open()
+  expect(view.findAll('[role=tab]').map(tab => tab.text())).toEqual(['鹈鹕', '糖果', '官key', '自定义'])
+  expect(view.find('.results-grid').exists()).toBe(true)
+  expect(view.find('.result-card').exists()).toBe(true)
+  expect(view.find('.results-list').exists()).toBe(false)
   expect(view.find('.challenge > span').exists()).toBe(false)
   expect(modelQualityAPI.list).toHaveBeenCalledWith({ page: 1, theme: '', status: '' }, expect.anything())
   expect(view.text()).toContain('最少 21 个。')
@@ -33,6 +105,21 @@ describe('模型智检', () => {
   expect(view.find('iframe').exists()).toBe(false)
   expect(view.text()).not.toContain('上游测试账号')
   expect(view.text()).not.toContain('耗时')
+ })
+ it('只有官key查询显示列表，返回其他主题恢复卡片', async () => {
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  await flushPromises()
+  expect(view.find('.results-list').exists()).toBe(true)
+  expect(view.find('.result-list-head').exists()).toBe(true)
+  expect(view.find('.result-card').exists()).toBe(false)
+  for (const theme of ['pelican', 'candy', 'custom']) {
+   await view.get(`[data-theme=${theme}]`).trigger('click')
+   await flushPromises()
+   expect(view.find('.results-grid').exists()).toBe(true)
+   expect(view.find('.result-card').exists()).toBe(true)
+   expect(view.find('.result-list-head').exists()).toBe(false)
+  }
  })
  it('管理员额外看到上游账号', async () => { auth.isAdmin = true; const view = await open(); expect(view.text()).toContain('上游测试账号') })
  it('开始检测立即插入进行中记录并流式渲染 Markdown，完成后更新状态', async () => {
@@ -46,12 +133,15 @@ describe('模型智检', () => {
   await view.get('[data-theme=candy]').trigger('click')
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
-  expect(view.findAll('.result-card')[0].text()).toContain('正在进行')
-  expect(view.findAll('.result-card')[0].find('.answer-markdown strong').text()).toBe('回答中')
+  expect(view.findAll('.quality-result')[0].text()).toContain('正在进行')
+  expect(view.findAll('.quality-result')[0].find('.answer-markdown strong').text()).toBe('回答中')
+  expect(modelQualityAPI.save).toHaveBeenCalledWith(expect.objectContaining({ status: 'running', content: '' }))
+  expect(modelQualityAPI.update).not.toHaveBeenCalledWith(99, expect.objectContaining({ status: 'completed' }))
   finish()
   await flushPromises()
-  expect(view.findAll('.result-card')[0].text()).toContain('已完成')
-  expect(view.findAll('.result-card')[0].text()).toContain('答案是 21。')
+  expect(view.findAll('.quality-result')[0].text()).toContain('已完成')
+  expect(view.findAll('.quality-result')[0].text()).toContain('答案是 21。')
+  expect(modelQualityAPI.update).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'completed', content: '**回答中**\n\n答案是 21。' }))
  })
  it('流式空白不结束等待态，首个正文到达后才显示回答且生成状态保持进行中', async () => {
   let emitText!: (value: string) => void
@@ -69,7 +159,7 @@ describe('模型智检', () => {
   emitText('**回答开始**')
   await flushPromises()
   expect(view.find('.answer-pending').exists()).toBe(false)
-  expect(view.find('.result-card .quality-status.running').exists()).toBe(true)
+  expect(view.find('.quality-result .quality-status.running').exists()).toBe(true)
   expect(view.find('.answer-markdown strong').text()).toBe('回答开始')
   finish()
   await flushPromises()
@@ -81,7 +171,24 @@ describe('模型智检', () => {
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
   expect(view.text()).toContain('实际回答是 28 个。')
-  expect(view.findAll('.result-card')).toHaveLength(2)
+  expect(view.findAll('.quality-result')).toHaveLength(2)
+ })
+ it('历史轮询返回进行中旧快照时不覆盖当前逐段回答', async () => {
+  let emit!: (value: string) => void, finish!: () => void
+  vi.mocked(streamKeyTest).mockImplementation(options => new Promise<void>(resolve => { emit = options.onText; finish = resolve }))
+  const view = await open()
+  await view.get('[data-theme=candy]').trigger('click')
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  emit('**已经收到第一段**')
+  await flushPromises()
+  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [{ id: 99, author: 'ad***@example.com', group_name: '优选', model: 'gpt-test', theme: 'candy', prompt: '糖果问题', status: 'running', content: '', created_at: '2026-11-04T02:00:00Z' }], total: 1, page: 1, page_size: 12 })
+  await view.get('.result-filters .btn').trigger('click')
+  await flushPromises()
+  expect(view.findAll('.quality-result')).toHaveLength(1)
+  expect(view.get('.answer-markdown strong').text()).toBe('已经收到第一段')
+  finish(); await flushPromises()
+  expect(view.get('.quality-status').classes()).toContain('completed')
  })
  it('Markdown 答案使用块级布局和可横向滚动的糖果表格', async () => {
   const view = await open()
@@ -89,13 +196,44 @@ describe('模型智检', () => {
   expect(view.find('.answer-markdown').exists()).toBe(true)
   expect(view.find('.answer-markdown').classes()).toContain('markdown-body')
  })
+ it('官key仅管理员配置，普通用户可以查看结果而不能启动他人的定时密钥', async () => {
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  expect(view.text()).toContain('每小时')
+  expect(view.find('[data-test=official-configure]').exists()).toBe(false)
+  expect(view.find('[data-test=start]').exists()).toBe(false)
+ })
+ it('旧后端不支持进行中记录时，最终兼容保存成功不再显示保存失败', async () => {
+  vi.mocked(modelQualityAPI.save).mockRejectedValueOnce({ status: 400 }).mockResolvedValueOnce({ id: 99 } as never)
+  const view = await open()
+  await view.get('[data-theme=candy]').trigger('click')
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  expect(modelQualityAPI.save).toHaveBeenCalledTimes(2)
+  expect(view.find('[role=alert]').exists()).toBe(false)
+ })
+ it('进入官key时配置尚未加载，配置返回后仍优先选中绑定密钥', async () => {
+  auth.isAdmin = true
+  let resolveConfig!: (value: { enabled: boolean; model: string; api_key_id: number }) => void
+  vi.mocked(modelQualityAPI.official).mockImplementation(() => new Promise(resolve => { resolveConfig = resolve }))
+  vi.mocked(loadWorkspaceKeys).mockResolvedValue([
+   { id: 1, name: '其他密钥', groupName: '优选', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-test'], allowImageGeneration: false },
+   { id: 2, name: '已绑定的官密钥', groupName: '官key', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-official'], allowImageGeneration: false }
+  ])
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  resolveConfig({ enabled: true, model: 'gpt-official', api_key_id: 2 })
+  await flushPromises()
+  expect(view.findAllComponents(Select).find(select => select.props('id') === 'quality-key')?.props('modelValue')).toBe(2)
+  expect(view.findAllComponents(Select).find(select => select.props('id') === 'quality-model')?.props('modelValue')).toBe('gpt-official')
+ })
  it('糖果直接复用文本会话，不依赖专用创建接口，也不向模型透露答案', async () => {
   vi.mocked(modelQualityAPI.save).mockRejectedValue({ status: 404 })
   const view = await open()
   await view.get('[data-theme=candy]').trigger('click')
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
-  expect(modelQualityAPI.save).toHaveBeenCalledOnce()
+  expect(modelQualityAPI.save).toHaveBeenCalledTimes(2)
   expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'not-a-real-key', model: 'gpt-test', maxTokens: 8192 }))
   const sent = vi.mocked(streamKeyTest).mock.calls[0][0]
   expect(sent.messages[0].content).toContain('五角星形')

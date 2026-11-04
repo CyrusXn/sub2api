@@ -9,6 +9,9 @@ import (
 )
 
 func TestModelQualityPrompt(t *testing.T) {
+	official, err := ModelQualityPrompt("official", "")
+	require.NoError(t, err)
+	require.Equal(t, "你是谁", official)
 	candy, err := ModelQualityPrompt("candy", "ignore")
 	require.NoError(t, err)
 	require.Contains(t, candy, "不使用任何外部工具")
@@ -26,6 +29,21 @@ func TestModelQualityPrompt(t *testing.T) {
 	require.Error(t, err)
 	_, err = ModelQualityPrompt("custom", strings.Repeat("中", 2001))
 	require.Error(t, err)
+}
+
+func TestModelQualityMaskActualUserIdentifier(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"admin@emample.com", "ad***@emample.com"},
+		{"10023213@qq.com", "10023***@qq.com"},
+		{"ab@example.com", "***@example.com"},
+		{"", "***"},
+		{"小明", "***"},
+	} {
+		require.Equal(t, tc.want, MaskModelQualityAuthor(tc.input), tc.input)
+	}
+	first := MaskModelQualityAuthor("测试用户张三丰")
+	require.Contains(t, first, "***")
+	require.Equal(t, first, MaskModelQualityAuthor("测试用户张三丰"), "刷新不能通过随机位置暴露原始用户标识")
 }
 
 func TestModelQualityResult(t *testing.T) {
@@ -55,13 +73,4 @@ func TestModelQualityPublicProjection(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "私有上游")
 	require.Equal(t, MaskModelQualityAuthor("test@example.com"), public.Author)
-}
-
-func TestModelQualityAuthorIsUnlinkable(t *testing.T) {
-	first, err := NewModelQualityAuthor()
-	require.NoError(t, err)
-	second, err := NewModelQualityAuthor()
-	require.NoError(t, err)
-	require.Len(t, first, 32)
-	require.NotEqual(t, first, second)
 }

@@ -20,7 +20,7 @@
       <button type="button" class="text-button" :disabled="loading || busy" :title="t('workspace.refresh')" @click="emit('refresh')"><Icon name="refresh" size="xs" />{{ t('common.refresh') }}</button>
     </div>
     <Select id="workspace-model" :model-value="model" :options="modelOptions" :searchable="true" :creatable="showAll" :disabled="loading || busy || !models.length && !showAll" :aria-label="t('workspace.model')" :placeholder="t('workspace.noModel')" @update:model-value="emit('update:model', $event)" @change="emit('model-change')" />
-    <p v-if="matched && tab === 'chat'" class="protocol-hint">{{ t('workspace.protocol') }}<code>{{ /^gemini-/i.test(model) ? 'Gemini · generateContent' : 'OpenAI · chat/completions' }}</code></p>
+    <p v-if="matched && tab === 'chat'" class="protocol-hint">{{ t('workspace.protocol') }}<code>{{ /^gemini-/i.test(model) ? 'Gemini · streamGenerateContent' : 'OpenAI · chat/completions' }}</code></p>
     <div v-if="!loading && !matched && !modelsLoadError && !error" class="key-guide"><p>{{ t(keys.length ? 'workspace.noModelHint' : 'workspace.noKey') }}</p><button type="button" class="outline-button" data-test="create-key" @click="emit('create-key')"><Icon name="key" size="sm" />{{ t('workspace.createKey') }}</button></div>
     <p v-if="error || videoModelError || modelsLoadError" class="error-message" role="alert">{{ error || videoModelError || modelsLoadError }}</p>
   </div>

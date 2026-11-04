@@ -3,40 +3,53 @@
     <main class="quality-page">
       <header class="quality-hero">
         <div><span class="quality-eyebrow">{{ t('modelQuality.eyebrow') }}</span><h1>{{ t('modelQuality.title') }}<span class="hero-mark">✦</span></h1><p>{{ t('modelQuality.intro') }}</p></div>
-        <button type="button" class="btn btn-primary" data-test="start" :disabled="!canStart" @click="start">{{ submitting ? t('modelQuality.starting') : t('modelQuality.start') }} <span aria-hidden="true">↗</span></button>
+        <button v-if="theme !== 'official'" type="button" class="btn btn-primary" data-test="start" :disabled="!canStart" @click="start">{{ submitting ? t('modelQuality.starting') : t('modelQuality.start') }} <span aria-hidden="true">↗</span></button>
       </header>
 
       <section class="quality-settings" :aria-label="t('modelQuality.title')">
-        <div class="connection-grid">
-          <div><label for="quality-key">{{ t('modelQuality.key') }}</label><select id="quality-key" v-model="keyID" class="input" :disabled="keysLoading || submitting" @change="selectModel"><option :value="0">{{ t('modelQuality.selectKey') }}</option><option v-for="key in keys" :key="key.id" :value="key.id">{{ key.name }} · {{ key.groupName }}</option></select></div>
-          <div><label for="quality-model">{{ t('modelQuality.model') }}</label><select id="quality-model" v-model="model" class="input" :disabled="keysLoading || submitting"><option value="">{{ t('modelQuality.selectModel') }}</option><option v-for="item in models" :key="item" :value="item">{{ item }}</option></select></div>
+        <div v-if="theme !== 'official' || auth.isAdmin" class="connection-grid">
+          <div><label for="quality-key">{{ t('modelQuality.key') }}</label><Select id="quality-key" v-model="keyID" :options="keyOptions" :searchable="true" :disabled="keysLoading || submitting" :placeholder="t('modelQuality.selectKey')" :aria-label="t('modelQuality.key')" @change="selectModel" /></div>
+          <div><label for="quality-model">{{ t('modelQuality.model') }}</label><Select id="quality-model" v-model="model" :options="modelOptions" :searchable="true" :disabled="keysLoading || submitting" :placeholder="t('modelQuality.selectModel')" :aria-label="t('modelQuality.model')" /></div>
         </div>
         <p v-if="keyError" class="quality-error">{{ keyError }}</p>
         <p class="quality-note">{{ t('modelQuality.billing') }}</p>
         <div class="theme-bar" role="tablist" :aria-label="t('modelQuality.title')"><button v-for="item in themes" :key="item" type="button" role="tab" :aria-selected="theme === item" :data-theme="item" :class="{ active: theme === item }" :disabled="submitting" @click="theme = item">{{ t('modelQuality.' + item) }}</button></div>
         <div class="challenge"><p>{{ t('modelQuality.' + theme + 'Hint') }}</p><small v-if="theme === 'candy'">{{ t('modelQuality.reference') }}</small></div>
+        <div v-if="theme === 'official'" class="official-controls">
+          <p><span class="schedule-dot" :class="{ enabled: official.enabled }" />{{ official.enabled ? t('modelQuality.officialEnabled') : t('modelQuality.officialDisabled') }}<span v-if="official.model" class="schedule-model">{{ official.model }}</span></p>
+          <p v-if="officialError" class="quality-error" role="alert">{{ officialError }}</p>
+          <template v-if="auth.isAdmin">
+            <button type="button" class="btn btn-primary" data-test="official-configure" :disabled="officialSaving || !officialReady || !keyID || !model" @click="configureOfficial(true)">{{ t('modelQuality.officialEnable') }}</button>
+            <button v-if="official.enabled" type="button" class="btn btn-secondary" :disabled="officialSaving" @click="configureOfficial(false)">{{ t('modelQuality.officialDisable') }}</button>
+          </template>
+        </div>
         <div v-if="theme === 'custom'" class="custom-prompt"><label for="quality-prompt">{{ t('modelQuality.promptLabel') }} <small>{{ prompt.length }}/2000</small></label><textarea id="quality-prompt" v-model="prompt" class="input" rows="4" maxlength="2000" :disabled="submitting" :placeholder="t('modelQuality.placeholder')" /></div>
-        <p class="quality-note">{{ t('modelQuality.background') }}</p>
+        <p v-if="theme !== 'official'" class="quality-note">{{ t('modelQuality.background') }}</p>
       </section>
 
       <div v-if="error" class="quality-error error-banner" role="alert">{{ error }}</div>
       <section ref="resultsSection" class="results-section" :aria-label="t('modelQuality.shared')" :aria-busy="loading">
-        <div class="results-heading"><div><h2>{{ t('modelQuality.shared') }} <span v-if="total">{{ total }}</span></h2><p>{{ t('modelQuality.sharedHint') }}</p></div><div class="result-filters"><select v-model="filterTheme" class="input" :aria-label="t('modelQuality.allThemes')" @change="resetResults"><option value="">{{ t('modelQuality.allThemes') }}</option><option v-for="item in themes" :key="item" :value="item">{{ t('modelQuality.' + item) }}</option></select><select v-model="filterStatus" class="input" :aria-label="t('modelQuality.allStatuses')" @change="resetResults"><option value="">{{ t('modelQuality.allStatuses') }}</option><option v-for="status in statuses" :key="status" :value="status">{{ t('modelQuality.' + status) }}</option></select><button type="button" class="btn btn-secondary" :disabled="loading" @click="loadResults">{{ t('modelQuality.refresh') }}</button></div></div>
+        <div class="results-heading"><div><h2>{{ t('modelQuality.shared') }} <span v-if="total">{{ total }}</span></h2><p>{{ t('modelQuality.sharedHint') }}</p></div><div class="result-filters"><Select id="quality-filter-theme" v-model="filterTheme" class="result-filter" :options="themeOptions" :searchable="true" :aria-label="t('modelQuality.allThemes')" @change="resetResults" /><Select id="quality-filter-status" v-model="filterStatus" class="result-filter" :options="statusOptions" :searchable="true" :aria-label="t('modelQuality.allStatuses')" @change="resetResults" /><button type="button" class="btn btn-secondary" :disabled="loading" @click="loadResults">{{ t('modelQuality.refresh') }}</button></div></div>
         <div v-if="loading && !runs.length" class="quality-empty">{{ t('modelQuality.loading') }}</div>
         <div v-else-if="!runs.length && !error" class="quality-empty"><span aria-hidden="true">◇</span><h3>{{ t('modelQuality.empty') }}</h3><p>{{ t('modelQuality.emptyHint') }}</p></div>
-        <div class="results-grid">
-          <article v-for="run in runs" :key="run.id" class="result-card">
-            <div class="result-top"><span class="group-name">{{ run.group_name }}</span><span class="quality-status" :class="run.status">{{ t('modelQuality.' + run.status) }}</span></div>
-            <h3>{{ run.model }}</h3>
-            <p class="result-author">{{ run.author }} <span>·</span> <time :datetime="run.created_at">{{ formatDate(run.created_at) }}</time></p>
-            <div v-if="auth.isAdmin" class="account-line"><span>{{ t('modelQuality.account') }}</span><strong>{{ run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }}</strong><small>{{ t('modelQuality.adminOnly') }}</small></div>
-            <template v-if="run.theme === 'candy' && run.status !== 'failed'">
-              <div class="answer-panel"><div class="answer-header">{{ t('modelQuality.answer') }} <small>{{ t('modelQuality.reference') }}</small></div><section v-if="run.content.trim()" class="answer-scroll"><div class="markdown-body answer-markdown" v-html="renderMarkdown(run.content)"></div></section><p v-else-if="run.status === 'running'" class="answer-pending" role="status"><span class="loading-spinner" aria-hidden="true" />{{ t('modelQuality.runningHint') }}</p></div>
+        <div v-if="runs.length" :class="officialLayout ? 'results-list' : 'results-grid'">
+          <div v-if="officialLayout" class="result-list-head"><span>{{ t('modelQuality.modelInfo') }}</span><span>{{ t('modelQuality.result') }}</span><span>{{ t('modelQuality.status') }}</span></div>
+          <article v-for="run in runs" :key="run.id" :data-run-id="run.id" class="quality-result" :class="officialLayout ? 'result-row' : 'result-card'">
+            <div class="result-meta">
+              <span class="group-name">{{ run.group_name }}</span><h3>{{ run.model }}</h3>
+              <p class="result-author">{{ run.author }}</p><time :datetime="run.created_at">{{ formatDate(run.created_at) }}</time>
+              <div v-if="auth.isAdmin" class="account-line"><span>{{ t('modelQuality.account') }}</span><strong>{{ run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }}</strong><small>{{ t('modelQuality.adminOnly') }}</small></div>
+            </div>
+            <span class="quality-status" :class="run.status">{{ t('modelQuality.' + run.status) }}</span>
+            <div class="result-content">
+            <template v-if="run.theme === 'candy' || run.theme === 'official'">
+              <div class="answer-panel"><div class="answer-header">{{ t('modelQuality.' + run.theme) }}<small v-if="run.theme === 'candy'">{{ t('modelQuality.reference') }}</small></div><section v-if="run.content.trim()" class="answer-scroll"><div class="markdown-body answer-markdown" v-html="renderMarkdown(run.content)"></div></section><p v-else-if="run.status === 'running'" class="answer-pending" role="status"><span class="loading-spinner" aria-hidden="true" />{{ t('modelQuality.runningHint') }}</p></div>
             </template>
             <div v-else-if="run.status === 'completed' || (run.status === 'running' && /<svg[\s>]/i.test(run.content))" class="preview-panel"><iframe :title="t('modelQuality.previewTitle') + ' · ' + run.model" sandbox="" referrerpolicy="no-referrer" loading="lazy" :srcdoc="safeModelQualityHTML(run.content)" /><button v-if="run.status === 'completed'" type="button" class="preview-enlarge" @click="expanded = run">{{ t('modelQuality.enlarge') }} ↗</button></div>
             <div v-else-if="run.status === 'running'" class="result-placeholder" role="status"><span class="loading-spinner" aria-hidden="true" />{{ t('modelQuality.runningHint') }}</div>
-            <div v-else class="result-placeholder failure">{{ run.error || t('modelQuality.failed') }}</div>
+            <p v-if="run.status === 'failed'" class="result-placeholder failure">{{ run.error || t('modelQuality.failed') }}</p>
             <details class="prompt-details"><summary>{{ t('modelQuality.viewPrompt') }}</summary><p>{{ run.prompt }}</p></details>
+            </div>
           </article>
         </div>
         <nav v-if="total > 12" class="pagination" aria-label="Pagination"><button type="button" class="btn btn-secondary" :disabled="page === 1 || loading" @click="changePage(-1)">{{ t('modelQuality.previous') }}</button><span>{{ page }} / {{ Math.ceil(total / 12) }}</span><button type="button" class="btn btn-secondary" :disabled="page * 12 >= total || loading" @click="changePage(1)">{{ t('modelQuality.next') }}</button></nav>
@@ -50,27 +63,35 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import Select from '@/components/common/Select.vue'
 import { useAuthStore } from '@/stores/auth'
 import { loadWorkspaceKeys, loadWorkspaceModels, workspaceModelsForKey, type WorkspaceKey } from '@/api/workspace'
-import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme } from '@/api/modelQuality'
+import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme, type OfficialQualityConfig, type QualityStatus } from '@/api/modelQuality'
 import { streamKeyTest } from '@/api/keyTest'
 import { renderMarkdown } from '@/utils/markdown'
 import '@/styles/announcement-markdown.css'
 
 const { t } = useI18n()
 const auth = useAuthStore()
-const themes: QualityTheme[] = ['pelican', 'candy', 'custom']
+const themes: QualityTheme[] = ['pelican', 'candy', 'official', 'custom']
 const statuses = ['running', 'completed', 'failed']
 const theme = ref<QualityTheme>('pelican'), prompt = ref(''), keys = ref<WorkspaceKey[]>([]), keyID = ref(0), model = ref('')
 const runs = ref<QualityRun[]>([]), total = ref(0), page = ref(1), filterTheme = ref(''), filterStatus = ref('')
+const officialLayout = computed(() => theme.value === 'official' || filterTheme.value === 'official')
 const keysLoading = ref(true), loading = ref(false), submitting = ref(false), ready = ref(false), error = ref(''), keyError = ref('')
 const expanded = ref<QualityRun | null>(null), previewDialog = ref<HTMLDialogElement | null>(null)
 const resultsSection = ref<HTMLElement | null>(null)
+const official = ref<OfficialQualityConfig>({ enabled: false, model: '' })
+const officialReady = ref(false), officialSaving = ref(false), officialError = ref('')
 // 列表确认读到已保存记录后，才移除当前页面的流式结果。
 const pendingRuns = new Map<number, QualityRun>()
 const lifecycle = new AbortController()
-let request: AbortController | undefined, timer: ReturnType<typeof setTimeout> | undefined, disposed = false
+let request: AbortController | undefined, generation: AbortController | undefined, timer: ReturnType<typeof setTimeout> | undefined, disposed = false
 const models = computed(() => { const key = keys.value.find(item => item.id === keyID.value); return key ? workspaceModelsForKey(key, 'chat') : [] })
+const keyOptions = computed(() => [{ value: 0, label: t('modelQuality.selectKey') }, ...keys.value.map(key => ({ value: key.id, label: `${key.name} · ${key.groupName}` }))])
+const modelOptions = computed(() => [{ value: '', label: t('modelQuality.selectModel') }, ...models.value.map(value => ({ value, label: value }))])
+const themeOptions = computed(() => [{ value: '', label: t('modelQuality.allThemes') }, ...themes.map(value => ({ value, label: t('modelQuality.' + value) }))])
+const statusOptions = computed(() => [{ value: '', label: t('modelQuality.allStatuses') }, ...statuses.map(value => ({ value, label: t('modelQuality.' + value) }))])
 const canStart = computed(() => !keysLoading.value && !submitting.value && keyID.value > 0 && models.value.includes(model.value) && (theme.value !== 'custom' || prompt.value.trim().length > 0))
 function selectModel() { model.value = models.value[0] || '' }
 function formatDate(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
@@ -80,6 +101,7 @@ async function loadKeys() {
     await loadWorkspaceModels(keys.value, lifecycle.signal)
     keyID.value = keys.value.find(key => workspaceModelsForKey(key, 'chat').length)?.id || 0
     selectModel()
+    if (theme.value === 'official') selectOfficialKey()
     if (!keys.value.length) keyError.value = t('modelQuality.noKeys')
     else if (!models.value.length) keyError.value = t('modelQuality.keyError')
   } catch { if (!disposed) keyError.value = t('modelQuality.keyError') }
@@ -93,19 +115,20 @@ async function loadResults() {
     const result = await modelQualityAPI.list({ page: page.value, theme: filterTheme.value, status: filterStatus.value }, current.signal)
     if (disposed || current.signal.aborted) return
     const receivedIDs = new Set(result.items.map(run => run.id))
-    for (const [id, run] of pendingRuns) if (receivedIDs.has(run.id)) pendingRuns.delete(id)
+    for (const [id, run] of pendingRuns) if (run.status !== 'running' && result.items.some(item => item.id === run.id && item.status === run.status && item.content === run.content)) pendingRuns.delete(id)
     const pending = page.value === 1 ? [...pendingRuns.values()].filter(run => (!filterTheme.value || run.theme === filterTheme.value) && (!filterStatus.value || run.status === filterStatus.value)) : []
-    runs.value = [...pending, ...result.items]; total.value = result.total + pending.length; ready.value = true; error.value = ''
+    const pendingIDs = new Set(pending.map(run => run.id))
+    runs.value = [...pending, ...result.items.filter(run => !pendingIDs.has(run.id))]; total.value = result.total + pending.filter(run => !receivedIDs.has(run.id)).length; ready.value = true; error.value = ''
   } catch (cause) {
     if (disposed || current.signal.aborted) return
     ready.value = false
     error.value = t((cause as {status?: number}).status === 404 ? 'modelQuality.notDeployed' : 'modelQuality.loadError')
   } finally {
-    if (!disposed && !current.signal.aborted) { loading.value = false; if (ready.value) timer = setTimeout(loadResults, runs.value.some(run => run.status === 'running') ? 5000 : 30000) }
+    if (!disposed && !current.signal.aborted) { loading.value = false; if (ready.value) timer = setTimeout(loadResults, runs.value.some(run => run.status === 'running') ? 2000 : 10000) }
   }
 }
 async function start() {
-  if (!canStart.value) return
+  if (!canStart.value || theme.value === 'official') return
   submitting.value = true; error.value = ''
   const selected = keys.value.find(item => item.id === keyID.value)
   if (!selected) { submitting.value = false; return }
@@ -117,12 +140,27 @@ async function start() {
   runs.value = [localRun, ...runs.value]
   total.value += 1
   await nextTick()
-  resultsSection.value?.scrollIntoView?.({ block: 'end', behavior: 'smooth' })
+  resultsSection.value?.querySelector<HTMLElement>(`[data-run-id="${localRun.id}"]`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
   const requestController = new AbortController()
+  generation = requestController
   const timeout = window.setTimeout(() => requestController.abort(), 8 * 60 * 1000)
   let requestID = ''
   let content = ''
+  let savedID = 0, historyFailed = false
+  let progressTimer: ReturnType<typeof setTimeout> | undefined
+  let writes = Promise.resolve()
+  function persist(status: QualityStatus) {
+    if (!savedID) return
+    const snapshot = { status, content, request_id: requestID || undefined }
+    writes = writes.then(() => modelQualityAPI.update(savedID, snapshot)).then(() => {
+      if (status !== 'running') historyFailed = false
+    }).catch(() => { historyFailed = true })
+  }
   try {
+    try {
+      const saved = await modelQualityAPI.save({ api_key_id: selected.id, model: model.value, theme: selectedTheme, prompt: selectedTheme === 'custom' ? prompt.value.trim() : '', content: '', status: 'running' })
+      if (saved?.id) { savedID = saved.id; Object.assign(localRun, saved) }
+    } catch { historyFailed = true }
     await streamKeyTest({
       baseUrl: selected.baseUrl,
       apiKey: selected.key,
@@ -133,36 +171,62 @@ async function start() {
       maxTokens: 8192,
       toolChoice: 'none',
       requireStop: true,
-      onRequestID: id => { requestID = id },
-      onText: text => { content += text; localRun.content = content }
+      onRequestID: id => { requestID = id; persist('running') },
+      onText: text => {
+        content += text; localRun.content = content
+        if (!progressTimer) progressTimer = setTimeout(() => { progressTimer = undefined; persist('running') }, 750)
+      }
     })
     content = content.trim()
     if (!content || (selectedTheme !== 'candy' && !/<svg|<html/i.test(content))) throw new Error('invalid-model-output')
     localRun.content = content
     localRun.status = 'completed'
-    try {
-      const saved = await modelQualityAPI.save({ api_key_id: selected.id, model: model.value, theme: selectedTheme, prompt: selectedTheme === 'custom' ? prompt.value.trim() : '', content, status: 'completed', request_id: requestID || undefined })
-      if (saved?.id) Object.assign(localRun, saved)
-      await loadResults()
-    } catch { error.value = t('modelQuality.historyUnavailable') }
   } catch {
     if (!disposed) error.value = t('modelQuality.createError')
     localRun.status = 'failed'
     localRun.error = t('modelQuality.failed')
-    try {
-      const saved = await modelQualityAPI.save({ api_key_id: selected.id, model: model.value, theme: selectedTheme, prompt: selectedTheme === 'custom' ? prompt.value.trim() : '', content: '', status: 'failed', request_id: requestID || undefined })
-      if (saved?.id) Object.assign(localRun, saved)
+  } finally {
+    clearTimeout(timeout); clearTimeout(progressTimer); generation = undefined
+    if (savedID) { persist(localRun.status); await writes }
+    else {
+      try {
+        const saved = await modelQualityAPI.save({ api_key_id: selected.id, model: model.value, theme: selectedTheme, prompt: selectedTheme === 'custom' ? prompt.value.trim() : '', content, status: localRun.status, request_id: requestID || undefined })
+        if (saved?.id) { Object.assign(localRun, saved); historyFailed = false }
+      } catch { historyFailed = true }
+    }
+    if (!disposed) {
       await loadResults()
-    } catch { /* 历史 API 不可用时保留本地失败记录。 */ }
-  } finally { clearTimeout(timeout); submitting.value = false }
+      if (historyFailed) error.value = t('modelQuality.historyUnavailable')
+      submitting.value = false
+    }
+  }
 }
+async function loadOfficial() {
+  try { official.value = await modelQualityAPI.official(); officialReady.value = true; if (theme.value === 'official') selectOfficialKey() }
+  catch { officialError.value = t('modelQuality.officialUnavailable') }
+}
+async function configureOfficial(enabled: boolean) {
+  if (!auth.isAdmin || officialSaving.value || !officialReady.value) return
+  officialSaving.value = true; officialError.value = ''
+  try { official.value = await modelQualityAPI.configureOfficial({ enabled, api_key_id: keyID.value, model: model.value }) }
+  catch { officialError.value = t('modelQuality.officialSaveError') }
+  finally { officialSaving.value = false }
+}
+function selectOfficialKey() {
+  const key = keys.value.find(item => item.id === official.value.api_key_id) || keys.value.find(item => item.name === '官key')
+  if (key) { keyID.value = key.id; selectModel(); if (models.value.includes(official.value.model)) model.value = official.value.model }
+}
+watch(theme, value => {
+  if (value !== 'official') { if (filterTheme.value === 'official') { filterTheme.value = ''; resetResults() } return }
+  filterTheme.value = 'official'; resetResults(); selectOfficialKey()
+})
 function resetResults() { page.value = 1; void loadResults() }
 function changePage(delta: number) { page.value += delta; void loadResults() }
 watch(expanded, async (value) => { await nextTick(); if (value && !previewDialog.value?.open) previewDialog.value?.showModal(); else if (!value && previewDialog.value?.open) previewDialog.value.close() })
 function closePreview() { previewDialog.value?.close(); expanded.value = null }
 function closeOutside(event: MouseEvent) { if (event.target === previewDialog.value) closePreview() }
-onMounted(() => { void loadKeys(); void loadResults() })
-onBeforeUnmount(() => { disposed = true; lifecycle.abort(); request?.abort(); clearTimeout(timer) })
+onMounted(() => { void loadKeys(); void loadResults(); void loadOfficial() })
+onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort(); request?.abort(); clearTimeout(timer) })
 </script>
 
 <style scoped>
@@ -181,4 +245,42 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); request?.abort(); cl
 :global(.dark) .quality-page{color:#dfebe6}:global(.dark) .quality-settings,:global(.dark) .result-card{background:#172524;border-color:#2b3e3a}:global(.dark) .theme-bar,:global(.dark) .prompt-details{border-color:#2b3e3a}:global(.dark) .answer-panel,:global(.dark) .account-line,:global(.dark) .result-placeholder{background:#20322c}:global(.dark) .quality-dialog{background:#172524;color:#dfebe6}:global(.dark) .error-banner{background:#30261d;border-color:#604635;color:#f5ba91}
 @media(max-width:900px){.results-heading{align-items:flex-start;flex-direction:column}.results-grid{gap:18px}.result-card{padding:18px}.preview-panel iframe{height:280px}}
 @media(max-width:640px){.quality-hero{align-items:flex-start;flex-direction:column;padding-top:8px;gap:16px}.quality-hero h1{font-size:29px}.quality-hero .btn{width:100%;justify-content:space-between}.quality-settings{padding:20px}.connection-grid{grid-template-columns:1fr;gap:16px}.theme-bar button{flex:1;padding:10px}.results-grid{grid-template-columns:1fr}.result-filters{width:100%;flex-wrap:wrap}.result-filters .input{flex:1;width:100px}.results-heading{gap:14px}.result-card h3{font-size:21px}.preview-panel iframe{height:340px}.dialog-content header h2{max-width:60%;overflow-wrap:anywhere}}
+.result-filters .result-filter{width:140px;min-width:0}
+.quality-result{scroll-margin-top:96px}
+.result-card{position:relative}
+.result-card>.quality-status{position:absolute;top:24px;right:24px}
+.result-card .group-name{display:block;padding-right:90px}
+.result-card .result-content{margin-top:20px}
+@media(max-width:640px){.result-filters .result-filter{flex:1;width:100px}}
+.results-list{background:var(--color-bg-primary,#fff);border-top:2px solid #263d37;border-bottom:1px solid #dce5e2}
+.result-list-head,.result-row{display:grid;grid-template-columns:230px minmax(0,1fr) 100px;column-gap:28px}
+.result-list-head{padding:14px 20px;background:#f3f6f4;font-size:12px;font-weight:600;letter-spacing:.02em;color:#6a7b75;border-bottom:1px solid #dce5e2}
+.result-list-head span:last-child{text-align:right}
+.result-row{padding:26px 20px;border-bottom:1px solid #e3e9e6;min-width:0;align-items:start;scroll-margin-top:96px}
+.result-row:last-child{border-bottom:0}
+.result-meta{grid-column:1;grid-row:1;min-width:0}
+.result-meta h3{font-size:17px;font-weight:650;line-height:1.5;margin:6px 0 12px;overflow-wrap:anywhere}
+.result-meta .result-author{font-size:12px;line-height:1.6;margin:0 0 4px;overflow-wrap:anywhere}
+.result-meta time{font-size:11px;color:#86928d;font-variant-numeric:tabular-nums}
+.result-row>.quality-status{grid-column:3;grid-row:1;justify-self:end;display:flex;gap:6px;align-items:center}
+.quality-status.running:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
+.result-content{grid-column:2;grid-row:1;min-width:0}
+.result-row .answer-panel{padding:0;background:transparent;border-radius:0}
+.result-row .answer-header{color:#88958f;margin:0 0 12px;justify-content:flex-start;gap:14px}
+.result-row .answer-scroll{max-height:420px;margin:0}
+.answer-markdown :deep(.katex-display){overflow-x:auto;overflow-y:hidden;padding:4px 0;max-width:100%}
+.result-row .account-line{background:transparent;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:4px;border-radius:0}
+.result-row .account-line small{margin:0;color:#98a59e}
+.result-row .preview-panel{max-width:600px;border-radius:4px}
+.result-row .preview-panel iframe{height:280px}
+.result-row .prompt-details{margin-top:18px;padding-top:12px;border-top-style:dashed}
+.result-row .result-placeholder{border-radius:0;background:transparent;justify-content:flex-start;min-height:100px;padding:12px 0}
+.result-row .result-placeholder.failure{min-height:0;color:#b85544;padding:10px 0}
+.official-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px dashed #dce5e2}
+.official-controls>p:first-child{display:flex;align-items:center;gap:8px;flex:1;min-width:180px;font-size:13px;color:#73817a}
+.official-controls>.quality-error{flex-basis:100%}
+.schedule-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#9da8a1}.schedule-dot.enabled{background:#0c8a72}.schedule-model{font-family:monospace;margin-left:6px}
+:global(.dark) .results-list{background:#172524;border-color:#55766b}:global(.dark) .result-list-head{background:#20322c;border-color:#344c42}:global(.dark) .result-row{border-color:#2b3e3a}:global(.dark) .result-row .answer-panel,:global(.dark) .result-row .account-line,:global(.dark) .result-row .result-placeholder{background:transparent}
+@media(max-width:1000px){.result-list-head,.result-row{grid-template-columns:180px minmax(0,1fr) 86px;column-gap:20px}}
+@media(max-width:760px){.result-list-head{display:none}.result-row{grid-template-columns:minmax(0,1fr) auto;padding:20px 4px;row-gap:20px;column-gap:12px}.result-meta{grid-column:1;grid-row:1}.result-row>.quality-status{grid-column:2;grid-row:1}.result-content{grid-column:1/-1;grid-row:2}.result-meta h3{margin:4px 0 8px}.result-row .answer-scroll{max-height:440px}.result-row .preview-panel iframe{height:250px}.theme-bar{gap:6px}.theme-bar button{padding:10px 8px;min-width:0;white-space:nowrap}.official-controls .btn{flex:1}}
 </style>

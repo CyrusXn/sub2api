@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"time"
 
@@ -23,6 +24,15 @@ func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthCli
 	// wire.go is depguard-exempt for redis; construct the Redis session store here.
 	if redisClient != nil {
 		svc = svc.WithSessionStore(xai.NewRedisSessionStore(redisClient))
+	}
+	return svc
+}
+
+func ProvideModelQualityOfficialService(repo ModelQualityRepository, settings SettingRepository, keys *APIKeyService, cfg *config.Config) *ModelQualityOfficialService {
+	// 固定回环地址调用当前网关，禁止配置成任意外站或把共享密钥下发给浏览器。
+	svc := NewModelQualityOfficialService(repo, settings, keys, fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.Port))
+	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
+		svc.Start()
 	}
 	return svc
 }
@@ -1106,6 +1116,7 @@ var ProviderSet = wire.NewSet(
 	NewChannelMonitorQuotaFetcher,
 	ProvideChannelMonitorV2Service,
 	NewModelQualityService,
+	ProvideModelQualityOfficialService,
 	ProvideChannelMonitorV2Aggregator,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,

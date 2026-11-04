@@ -135,6 +135,7 @@ func provideCleanup(
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
+	modelQualityOfficial *service.ModelQualityOfficialService,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -147,6 +148,7 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
+			{"ModelQualityOfficialService", func() error { modelQualityOfficial.Stop(); return nil }},
 			{"AlertEmailOutboxService", func() error {
 				if alertEmailOutbox != nil {
 					alertEmailOutbox.Stop()

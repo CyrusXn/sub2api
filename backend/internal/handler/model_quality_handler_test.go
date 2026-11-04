@@ -14,10 +14,50 @@ import (
 )
 
 type qualityRepoStub struct {
-	created     int
-	runs        []service.ModelQualityRun
-	createError error
-	createdRun  *service.ModelQualityRun
+	created        int
+	runs           []service.ModelQualityRun
+	createError    error
+	createdRun     *service.ModelQualityRun
+	updatedID      int64
+	updatedUserID  int64
+	updatedStatus  string
+	updatedContent string
+}
+
+func (r *qualityRepoStub) Update(_ context.Context, id, userID int64, status, content, requestID string) error {
+	r.updatedID, r.updatedUserID, r.updatedStatus, r.updatedContent = id, userID, status, content
+	return nil
+}
+
+func TestModelQualityCreateStartsSharedRecordBeforeGeneration(t *testing.T) {
+	groupID := int64(2)
+	repo := &qualityRepoStub{}
+	h := &ModelQualityHandler{service: service.NewModelQualityService(repo), keys: qualityKeyStub{&service.APIKey{ID: 2, UserID: 12, Status: service.StatusActive, GroupID: &groupID, Group: &service.Group{ID: 2, Name: "测试分组"}, User: &service.User{Email: "admin@example.com"}}}}
+	c, w := qualityContext("POST", "/model-quality", `{"api_key_id":2,"model":"gpt-test","theme":"candy","content":"","status":"running"}`, service.RoleUser)
+	h.Create(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "running", repo.createdRun.Status)
+	require.Contains(t, w.Body.String(), "ad***@example.com")
+	require.NotContains(t, w.Body.String(), "admin@example.com")
+}
+
+func TestModelQualityProgressUsesAuthenticatedOwner(t *testing.T) {
+	repo := &qualityRepoStub{}
+	h := &ModelQualityHandler{service: service.NewModelQualityService(repo)}
+	c, w := qualityContext("PATCH", "/model-quality/17", `{"status":"running","content":"回答第一段","request_id":"req-1","user_id":99}`, service.RoleAdmin)
+	c.Params = gin.Params{{Key: "id", Value: "17"}}
+	h.Update(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.EqualValues(t, 17, repo.updatedID)
+	require.EqualValues(t, 12, repo.updatedUserID)
+	require.Equal(t, "回答第一段", repo.updatedContent)
+}
+
+func TestModelQualityOfficialConfigurationRequiresAdmin(t *testing.T) {
+	h := &ModelQualityHandler{}
+	c, w := qualityContext("PUT", "/model-quality/official", `{"enabled":true,"api_key_id":3,"model":"gpt-test"}`, service.RoleUser)
+	h.ConfigureOfficial(c)
+	require.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func (r *qualityRepoStub) Create(_ context.Context, run *service.ModelQualityRun) error {

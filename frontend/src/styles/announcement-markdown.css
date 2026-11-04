@@ -4,6 +4,13 @@
   @apply text-gray-700 dark:text-gray-300;
 }
 
+.markdown-body .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+  max-width: 100%;
+}
+
 .markdown-body h1 {
   @apply mb-6 mt-8 border-b border-gray-200 pb-3 text-3xl font-bold text-gray-900 dark:border-dark-600 dark:text-white;
 }

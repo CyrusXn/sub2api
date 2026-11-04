@@ -194,7 +194,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorV2Handler := handler.NewChannelMonitorV2Handler(channelMonitorV2Service, apiKeyService)
 	modelQualityRepository := repository.NewModelQualityRepository(db)
 	modelQualityService := service.NewModelQualityService(modelQualityRepository)
-	modelQualityHandler := handler.NewModelQualityHandler(modelQualityService, apiKeyService)
+	modelQualityOfficialService := service.ProvideModelQualityOfficialService(modelQualityRepository, settingRepository, apiKeyService, configConfig)
+	modelQualityHandler := handler.NewModelQualityHandler(modelQualityService, apiKeyService, modelQualityOfficialService)
 	dashboardAggregationRepository := repository.NewDashboardAggregationRepository(db)
 	dashboardStatsCache := repository.NewDashboardCache(redisClient, configConfig)
 	dashboardService := service.ProvideDashboardService(usageLogRepository, dashboardAggregationRepository, dashboardStatsCache, configConfig, concurrencyCache)
@@ -382,7 +383,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService, channelMonitorQuotaFetcher, configConfig)
 	channelMonitorV2Aggregator := service.ProvideChannelMonitorV2Aggregator(channelMonitorV2Repository, db, settingService, configConfig)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v2 := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, geminiCachedContentService, geminiInteractionService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, balanceNotifyService, emailQueueService, alertEmailOutboxService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager)
+	v2 := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, geminiCachedContentService, geminiInteractionService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, balanceNotifyService, emailQueueService, alertEmailOutboxService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager, modelQualityOfficialService)
 	application := &Application{
 		Server:        httpServer,
 		PromptAudit:   promptService,
@@ -473,6 +474,7 @@ func provideCleanup(
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
+	modelQualityOfficial *service.ModelQualityOfficialService,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -484,6 +486,7 @@ func provideCleanup(
 		}
 
 		parallelSteps := []cleanupStep{
+			{"ModelQualityOfficialService", func() error { modelQualityOfficial.Stop(); return nil }},
 			{"AlertEmailOutboxService", func() error {
 				if alertEmailOutbox != nil {
 					alertEmailOutbox.Stop()

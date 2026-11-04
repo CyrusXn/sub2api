@@ -68,7 +68,7 @@ afterEach(async () => {
 })
 
 describe('密钥测试对话', () => {
-  it('Gemini 模型测试走原生 generateContent 并展示实际回复', async () => {
+  it('Gemini 模型测试请求原生流式端点并展示实际回复', async () => {
     modelIds = ['gemini-4-argon-high']
     const view = await openModal()
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, init: RequestInit) => {
@@ -76,7 +76,7 @@ describe('密钥测试对话', () => {
       return Response.json({ candidates: [{ content: { parts: [{ text: '我是 Gemini。' }] }, finishReason: 'STOP' }] })
     }))
     await send()
-    expect(requests[1].url).toBe('https://relay.example/v1beta/models/gemini-4-argon-high:generateContent')
+    expect(requests[1].url).toBe('https://relay.example/v1beta/models/gemini-4-argon-high:streamGenerateContent?alt=sse')
     expect(JSON.parse(requests[1].init.body as string)).toEqual({
       contents: [{ role: 'user', parts: [{ text: testPrompt }] }], generationConfig: { maxOutputTokens: 2048 }
     })

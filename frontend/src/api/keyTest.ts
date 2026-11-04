@@ -25,7 +25,7 @@ function request(baseUrl: string, apiKey: string, path: string, signal: AbortSig
     method: body ? 'POST' : 'GET',
     headers: {
       ...(version === '/v1beta' ? { 'x-goog-api-key': apiKey } : { Authorization: `Bearer ${apiKey}` }),
-      Accept: body && version === '/v1' ? 'text/event-stream' : 'application/json',
+      Accept: body && (version === '/v1' || path.includes('alt=sse')) ? 'text/event-stream' : 'application/json',
       ...(body ? { 'Content-Type': 'application/json' } : {})
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -59,56 +59,59 @@ export async function streamKeyTest(options: {
   toolChoice?: 'none'
   requireStop?: boolean
 }): Promise<void> {
-  // Gemini 按模型原生端点测试；保留其他调用者的 OpenAI 流式契约。
+  let response: Response
+  // 两种协议都请求原生 SSE，不能等完整 JSON 才首次回调。
   if (options.protocol === 'gemini') {
-    const response = await request(options.baseUrl, options.apiKey, `models/${encodeURIComponent(options.model)}:generateContent`, options.signal, {
+    response = await request(options.baseUrl, options.apiKey, 'models/' + encodeURIComponent(options.model) + ':streamGenerateContent?alt=sse', options.signal, {
       contents: options.messages.map(message => ({
         role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }]
       })),
       generationConfig: { maxOutputTokens: options.maxTokens ?? 2048 }
     }, '/v1beta')
     options.signal.throwIfAborted()
-    if (!response.ok) throw new KeyTestError('http', response.status)
     const requestID = response.headers.get('X-Client-Request-ID')
     if (requestID) options.onRequestID?.(requestID)
-    if (!response.headers.get('content-type')?.includes('application/json')) throw new KeyTestError('invalidResponse')
-    let payload
-    try {
-      payload = await response.json()
-    } catch {
+    if (!response.ok) throw new KeyTestError('http', response.status)
+    // 兼容不支持 SSE 的代理；正常流式响应始终逐帧处理。
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      let payload
+      try {
+        payload = await response.json()
+      } catch {
+        options.signal.throwIfAborted()
+        throw new KeyTestError('invalidResponse')
+      }
       options.signal.throwIfAborted()
-      throw new KeyTestError('invalidResponse')
+      if (payload?.error || payload?.promptFeedback?.blockReason) throw new KeyTestError('streamError')
+      if (!Array.isArray(payload?.candidates)) throw new KeyTestError('invalidResponse')
+      if (!payload.candidates.length) throw new KeyTestError('empty')
+      const candidate = payload.candidates[0]
+      if (!candidate || typeof candidate !== 'object') throw new KeyTestError('invalidResponse')
+      if (options.requireStop && candidate.finishReason !== 'STOP') throw new KeyTestError('incomplete')
+      if (candidate.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) throw new KeyTestError('streamError')
+      const parts = candidate.content?.parts
+      if (!Array.isArray(parts)) throw new KeyTestError('invalidResponse')
+      const text = parts.filter(part => part && !part.thought && typeof part.text === 'string').map(part => part.text).join('')
+      if (!text.trim()) throw new KeyTestError('empty')
+      options.onText(text)
+      options.signal.throwIfAborted()
+      return
     }
-    options.signal.throwIfAborted()
-    if (payload?.error || payload?.promptFeedback?.blockReason) throw new KeyTestError('streamError')
-    if (!Array.isArray(payload?.candidates)) throw new KeyTestError('invalidResponse')
-    if (!payload.candidates.length) throw new KeyTestError('empty')
-    const candidate = payload.candidates[0]
-    if (!candidate || typeof candidate !== 'object') throw new KeyTestError('invalidResponse')
-    if (options.requireStop && candidate.finishReason !== 'STOP') throw new KeyTestError('incomplete')
-    if (candidate.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) throw new KeyTestError('streamError')
-    const parts = candidate.content?.parts
-    if (!Array.isArray(parts)) throw new KeyTestError('invalidResponse')
-    const text = parts.filter(part => part && !part.thought && typeof part.text === 'string').map(part => part.text).join('')
-    if (!text.trim()) throw new KeyTestError('empty')
-    options.onText(text)
-    options.signal.throwIfAborted()
-    return
+  } else {
+    response = await request(options.baseUrl, options.apiKey, 'chat/completions', options.signal, {
+      model: options.model,
+      messages: options.messages,
+      stream: true,
+      max_tokens: options.maxTokens ?? 2048,
+      ...(options.toolChoice ? { tool_choice: options.toolChoice } : {})
+    })
+    const requestID = response.headers.get('X-Client-Request-ID')
+    if (requestID) options.onRequestID?.(requestID)
   }
-  const response = await request(options.baseUrl, options.apiKey, 'chat/completions', options.signal, {
-    model: options.model,
-    messages: options.messages,
-    stream: true,
-    max_tokens: options.maxTokens ?? 2048,
-    ...(options.toolChoice ? { tool_choice: options.toolChoice } : {})
-  })
   if (!response.ok) throw new KeyTestError('http', response.status)
   if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body) {
     throw new KeyTestError('invalidResponse')
   }
-
-  const requestID = response.headers.get('X-Client-Request-ID')
-  if (requestID) options.onRequestID?.(requestID)
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -134,6 +137,25 @@ export async function streamKeyTest(options: {
     }
     // 不回显上游原始错误，避免泄露请求头、密钥或上游敏感详情。
     if (payload?.error || payload?.type === 'error') throw new KeyTestError('streamError')
+    if (options.protocol === 'gemini') {
+      if (payload?.promptFeedback?.blockReason) throw new KeyTestError('streamError')
+      const candidate = payload?.candidates?.[0]
+      if (!candidate) return
+      const parts = candidate.content?.parts
+      if (parts != null && !Array.isArray(parts)) throw new KeyTestError('invalidResponse')
+      for (const part of parts ?? []) {
+        if (!part?.thought && typeof part?.text === 'string' && part.text.length) {
+          if (part.text.trim()) hasText = true
+          options.onText(part.text)
+        }
+      }
+      if (candidate.finishReason) {
+        if (!['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) throw new KeyTestError('streamError')
+        finished = true
+        finishReason = candidate.finishReason === 'STOP' ? 'stop' : 'length'
+      }
+      return
+    }
     const choice = payload?.choices?.[0]
     const content = choice?.delta?.content
     if (typeof content === 'string' && content.length > 0) {
