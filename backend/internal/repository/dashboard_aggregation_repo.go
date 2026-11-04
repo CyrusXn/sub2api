@@ -670,6 +670,15 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 				ON upstream_account.id = usage_logs.account_id
 			WHERE created_at >= $1 AND created_at < $2
 			GROUP BY 1
+		), test_usage AS (
+			-- 测试账号只将实际消费视为充值，并随永久日汇总一起固化。
+			SELECT (ul.created_at AT TIME ZONE $3)::date AS bucket_date,
+				COALESCE(SUM(ul.actual_cost), 0) AS actual_cost
+			FROM usage_logs ul
+			JOIN users u ON u.id = ul.user_id
+			WHERE ul.created_at >= $1 AND ul.created_at < $2
+			  AND LOWER(TRIM(u.email)) = 'cyrusxn@163.com'
+			GROUP BY 1
 		), recharge AS (
 			SELECT
 				(used_at AT TIME ZONE $3)::date AS bucket_date,
@@ -680,7 +689,7 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 			  AND rc.status = 'used'
 			  AND rc.type IN ('balance', 'admin_balance')
 			  AND rc.value > 1
-			  AND LOWER(TRIM(COALESCE(u.email, ''))) <> 'admin@example.com'
+			  AND LOWER(TRIM(COALESCE(u.email, ''))) NOT IN ('admin@example.com', 'cyrusxn@163.com')
 			GROUP BY 1
 		), dates AS (
 			SELECT bucket_date
@@ -691,6 +700,8 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 			SELECT bucket_date FROM recharge
 			UNION
 			SELECT bucket_date FROM upstream_usage
+			UNION
+			SELECT bucket_date FROM test_usage
 		)
 		INSERT INTO dashboard_business_daily (
 			bucket_date,
@@ -712,7 +723,7 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 		)
 		SELECT
 			dates.bucket_date,
-			COALESCE(recharge.recharge_amount, 0),
+			COALESCE(recharge.recharge_amount, 0) + COALESCE(test_usage.actual_cost, 0),
 			COALESCE(d.total_requests, 0),
 			COALESCE(d.input_tokens, 0),
 			COALESCE(d.output_tokens, 0),
@@ -732,6 +743,7 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 		LEFT JOIN admin_usage ON admin_usage.bucket_date = dates.bucket_date
 		LEFT JOIN upstream_usage ON upstream_usage.bucket_date = dates.bucket_date
 		LEFT JOIN recharge ON recharge.bucket_date = dates.bucket_date
+		LEFT JOIN test_usage ON test_usage.bucket_date = dates.bucket_date
 		ON CONFLICT (bucket_date)
 		DO UPDATE SET
 			recharge_amount = EXCLUDED.recharge_amount,

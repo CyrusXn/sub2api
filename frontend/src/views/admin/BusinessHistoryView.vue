@@ -21,14 +21,14 @@
         {{ t('admin.businessHistory.loadFailed') }}
       </p>
 
-      <!-- 全部恢复原资产账本累计口径，历史区间仍保留资产快照算法。 -->
+      <!-- 完整历史使用总充值减当前账号余额，历史区间保留原算法。 -->
       <section class="card space-y-3 p-5 text-sm">
         <p class="font-medium text-gray-900 dark:text-white">{{ t('admin.businessHistory.ledgerDescription') }}</p>
         <p data-test="applied-range">{{ queriedRange ? `${queriedRange.start_date} ～ ${queriedRange.end_date}` : t('admin.businessHistory.allDates') }}</p>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.currentTotalsScope') }}</p>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userRechargeDescription') }}</p>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.upstreamBalanceDescription') }}</p>
-        <p v-if="!allDates">{{ t('admin.businessHistory.boundaryBalances', { opening: formatMoney(summary?.ledger?.opening_balance), closing: formatMoney(summary?.ledger?.closing_balance) }) }}</p>
+        <p v-if="!usesLifetimeConsumption">{{ t('admin.businessHistory.boundaryBalances', { opening: formatMoney(summary?.ledger?.opening_balance), closing: formatMoney(summary?.ledger?.closing_balance) }) }}</p>
         <p data-test="ledger-status" class="text-xs text-gray-500 dark:text-gray-400">{{ ledgerStatusHint }}</p>
         <p v-if="readOnlyPreview" data-test="read-only-preview" class="text-xs text-amber-600">{{ t('admin.businessHistory.readOnlyPreview') }}</p>
       </section>
@@ -95,7 +95,7 @@
           </div>
         </article>
 
-        <button type="button" data-test="open-recharge-details" class="card p-5 text-left transition hover:ring-2 hover:ring-primary-400 focus-visible:ring-2 focus-visible:ring-primary-500" @click="openDetails('recharge')">
+        <button type="button" data-test="open-recharge-details" class="card flex items-start p-5 text-left transition hover:ring-2 hover:ring-primary-400 focus-visible:ring-2 focus-visible:ring-primary-500" @click="openDetails('recharge')">
           <div class="flex items-start gap-3">
             <div class="rounded-lg bg-red-100 p-2 dark:bg-red-900/30"><Icon name="dollar" size="md" class="text-red-600 dark:text-red-400" /></div>
             <div class="min-w-0 flex-1">
@@ -103,7 +103,7 @@
               <p data-test="upstream-recharge-total" class="mt-1 text-2xl font-bold text-red-600 dark:text-red-400">
                 {{ formatMoney(upstreamRechargeTotal) }}
               </p>
-              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.businessHistory.${allDates ? 'lifetimeRecharge' : 'upstreamRechargeDescription'}`) }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.businessHistory.${usesLifetimeConsumption ? 'lifetimeRecharge' : 'upstreamRechargeDescription'}`) }}</p>
             </div>
           </div>
         </button>
@@ -130,9 +130,9 @@
           <div class="flex items-start gap-3">
             <div class="rounded-lg bg-orange-100 p-2 dark:bg-orange-900/30"><Icon name="chart" size="md" class="text-orange-600 dark:text-orange-400" /></div>
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t(`admin.businessHistory.${allDates ? 'lifetimeUpstreamConsumption' : 'upstreamTotalConsumption'}`) }}</p>
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t(`admin.businessHistory.${usesLifetimeConsumption ? 'lifetimeUpstreamConsumption' : 'upstreamTotalConsumption'}`) }}</p>
               <p data-test="upstream-total-consumption" class="mt-1 text-2xl font-bold text-orange-600 dark:text-orange-400">{{ formatMoney(upstreamTotalConsumption) }}</p>
-              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ usesRechargeBalanceFallback ? rechargeBalanceFallbackHint : t(`admin.businessHistory.${allDates ? 'lifetimeConsumptionFormula' : usesRequestEstimate ? 'requestCostNotice' : 'upstreamTotalConsumptionFormula'}`) }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ usesRechargeBalanceFallback ? rechargeBalanceFallbackHint : t(`admin.businessHistory.${usesLifetimeConsumption ? 'lifetimeConsumptionFormula' : usesRequestEstimate ? 'requestCostNotice' : 'upstreamTotalConsumptionFormula'}`) }}</p>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.requestCostReference') }} {{ formatMoney(totals?.upstream_cost) }}</p>
             </div>
           </div>
@@ -142,11 +142,11 @@
           <div class="flex items-start gap-3">
             <div class="rounded-lg bg-violet-100 p-2 dark:bg-violet-900/30"><Icon name="bolt" size="md" class="text-violet-600 dark:text-violet-400" /></div>
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t(`admin.businessHistory.${allDates ? 'lifetimeProfit' : 'totalProfit'}`) }}</p>
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t(`admin.businessHistory.${usesLifetimeConsumption ? 'lifetimeProfit' : 'totalProfit'}`) }}</p>
               <p data-test="total-profit" class="mt-1 flex flex-wrap items-baseline gap-2 text-2xl font-bold text-gray-900 dark:text-white">
                 <span>{{ formatMoney(totalProfitAllAccounts) }}</span>
               </p>
-              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ usesRechargeBalanceFallback ? rechargeBalanceFallbackHint : t(`admin.businessHistory.${allDates ? 'lifetimeProfitFormula' : usesRequestEstimate ? 'requestCostNotice' : 'totalProfitFormula'}`) }}</p>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ usesRechargeBalanceFallback ? rechargeBalanceFallbackHint : t(`admin.businessHistory.${usesLifetimeConsumption ? 'lifetimeProfitFormula' : usesRequestEstimate ? 'requestCostNotice' : 'totalProfitFormula'}`) }}</p>
               <div class="mt-3 border-t border-gray-100 pt-3 dark:border-dark-700">
                 <p class="text-sm text-gray-500 dark:text-gray-400">{{ t(`admin.businessHistory.${allDates ? 'lifetimeRechargeDifference' : 'rechargeDifference'}`) }}</p>
                 <p data-test="recharge-difference" class="mt-1 text-xl font-bold" :class="rechargeDifference == null ? '' : profitClass(rechargeDifference)">{{ formatMoney(rechargeDifference) }}</p>
@@ -311,21 +311,24 @@ type TrendMetric = 'requests' | 'tokens' | 'consumption' | 'profit'
 
 // 默认保留原有起点及北京时间今天；控件草稿只有点击应用后才查询。
 const defaultRange = { start_date: '2026-07-09', end_date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }) }
+const businessToday = ref(defaultRange.end_date)
 const startDate = ref(defaultRange.start_date)
 const endDate = ref(defaultRange.end_date)
 const summary = ref<DashboardBusinessSummary | null>(null)
 const queriedRange = ref<{ start_date: string; end_date: string } | null>({ ...defaultRange })
 const loading = ref(false)
 const allDates = computed(() => queriedRange.value == null)
+// 早于建站起点且覆盖至今才是完整历史，提前结束的历史区间不能混入当前余额。
+const usesLifetimeConsumption = computed(() => allDates.value || (queriedRange.value!.start_date <= defaultRange.start_date && queriedRange.value!.end_date >= businessToday.value))
 const totals = computed(() => allDates.value ? summary.value?.lifetime : summary.value?.range)
-const upstreamRechargeTotal = computed(() => allDates.value ? summary.value?.upstream_recharge_total : summary.value?.range_upstream_recharge_total)
+const upstreamRechargeTotal = computed(() => usesLifetimeConsumption.value ? summary.value?.upstream_recharge_total : summary.value?.range_upstream_recharge_total)
 const readOnlyPreview = import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
 const balances = ref<BusinessBalanceRefresh | null>(null)
 const balancesLoading = ref(false)
 const balancesError = ref(false)
 const upstreamBalanceTotal = computed(() => balances.value?.total_balance)
-// 总余额卡片独立查询全量账号；历史消费收益继续使用对应账本资产，不混入今天的余额。
-const ledgerBalance = computed(() => allDates.value ? summary.value?.ledger?.total_balance : summary.value?.ledger?.closing_balance)
+// 完整历史与总余额卡片使用同一批账号余额；历史区间仍只取期末资产快照。
+const ledgerBalance = computed(() => usesLifetimeConsumption.value ? upstreamBalanceTotal.value : summary.value?.ledger?.closing_balance)
 const userBalanceTotal = computed(() => allDates.value ? summary.value?.user_balance_total : summary.value?.range_user_balance_total)
 const loadError = ref(false)
 const trendMetric = ref<TrendMetric>('requests')
@@ -341,15 +344,15 @@ const profitHistory = computed(() => {
   for (const point of daily.value) requests.set(formatDate(point.bucket_date), point)
   const ordered = [...requests.entries()].sort(([a], [b]) => a.localeCompare(b))
   return [...(summary.value?.profit_history ?? [])].map(point => {
-    // 仅全部模式的当天累计跟随原资产账本；已保存的历史快照及日期区间算法不变。
+    // 完整历史的当天累计与卡片一致，已保存的历史快照及日期区间算法不变。
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
-    if (allDates.value && point.bucket_date === today) point = { ...point, cumulative_profit: totalProfitAllAccounts.value }
+    if (usesLifetimeConsumption.value && point.bucket_date === today) point = { ...point, cumulative_profit: totalProfitAllAccounts.value }
     const request = requests.get(point.bucket_date)
     if (point.daily_profit != null && point.cumulative_profit != null) return point
     return {
       ...point,
       daily_profit: point.daily_profit ?? (request ? request.profit_estimate ?? request.actual_cost - request.upstream_cost : null),
-      cumulative_profit: allDates.value && point.bucket_date === today ? totalProfitAllAccounts.value : point.cumulative_profit ?? (allDaily.value.length ? ordered.filter(([date]) => date <= point.bucket_date).reduce((total, [, row]) => total + (row.profit_estimate ?? row.actual_cost - row.upstream_cost), 0) : null),
+      cumulative_profit: usesLifetimeConsumption.value && point.bucket_date === today ? totalProfitAllAccounts.value : point.cumulative_profit ?? (allDaily.value.length ? ordered.filter(([date]) => date <= point.bucket_date).reduce((total, [, row]) => total + (row.profit_estimate ?? row.actual_cost - row.upstream_cost), 0) : null),
       status: 'usage_estimate' as const
     }
   })
@@ -395,26 +398,26 @@ function profitSnapshotHint(point?: DashboardBusinessProfitPoint): string {
   if (!point || point.status === 'missing_snapshot') return t('admin.businessHistory.missingProfitSnapshot')
   return point.status === 'current' ? t('admin.businessHistory.asOfNow') : t('admin.businessHistory.snapshotTime', { time: point.captured_at ? formatTimestamp(point.captured_at) : '--' })
 }
-// 有日期筛选时，经营历史与使用记录共用请求结算的上游成本；资产账本只保留“全部”口径。
-const usesRequestEstimate = computed(() => !allDates.value && summary.value != null)
+// 真正的日期区间继续共用请求结算上游成本，完整历史另用总充值减当前账号余额。
+const usesRequestEstimate = computed(() => !usesLifetimeConsumption.value && summary.value != null)
 const rangeUpstreamConsumption = computed(() => totals.value?.upstream_cost ?? daily.value.reduce((total, point) => total + point.upstream_cost, 0))
 // 仅请求成本超出所选区间充值时切换用户指定的差额口径；资产快照估值不参与这个判断。
-const usesRechargeBalanceFallback = computed(() => !allDates.value && upstreamRechargeTotal.value != null && rangeUpstreamConsumption.value > upstreamRechargeTotal.value)
+const usesRechargeBalanceFallback = computed(() => !usesLifetimeConsumption.value && upstreamRechargeTotal.value != null && rangeUpstreamConsumption.value > upstreamRechargeTotal.value)
 const rechargeBalanceFallbackHint = computed(() => t(`admin.businessHistory.${ledgerBalance.value == null ? 'rechargeBalanceFallbackMissing' : 'rechargeBalanceFallbackNotice'}`))
 const upstreamTotalConsumption = computed(() => {
   if (!summary.value) return null
-  if (allDates.value || usesRechargeBalanceFallback.value) return ledgerBalance.value == null || upstreamRechargeTotal.value == null ? null : upstreamRechargeTotal.value - ledgerBalance.value
+  if (usesLifetimeConsumption.value || usesRechargeBalanceFallback.value) return ledgerBalance.value == null || upstreamRechargeTotal.value == null ? null : upstreamRechargeTotal.value - ledgerBalance.value
   return rangeUpstreamConsumption.value
 })
 const totalProfitAllAccounts = computed(() => {
   if (!summary.value) return null
-  if (allDates.value || usesRechargeBalanceFallback.value) return upstreamTotalConsumption.value == null ? null : totals.value!.actual_cost - upstreamTotalConsumption.value
+  if (usesLifetimeConsumption.value || usesRechargeBalanceFallback.value) return upstreamTotalConsumption.value == null ? null : (usesLifetimeConsumption.value ? summary.value.lifetime.actual_cost : totals.value!.actual_cost) - upstreamTotalConsumption.value
   return totals.value!.actual_cost - rangeUpstreamConsumption.value
 })
 const rechargeDifference = computed(() => summary.value
   ? (totals.value?.recharge_amount ?? 0) - (upstreamRechargeTotal.value ?? 0) : null)
 const ledgerStatusHint = computed(() => {
-  if (allDates.value) return t('admin.businessHistory.zeroOpeningEstimate')
+  if (usesLifetimeConsumption.value) return t('admin.businessHistory.lifetimeConsumptionFormula')
   if (usesRechargeBalanceFallback.value) return rechargeBalanceFallbackHint.value
   if (usesRequestEstimate.value) return t('admin.businessHistory.requestCostNotice')
   const ledger = summary.value?.ledger
@@ -599,6 +602,7 @@ onBeforeUnmount(() => { ++summaryRequest; ++detailsRequest; ++balancesRequest })
 async function refreshBalances() {
   if (balancesLoading.value) return
   const request = ++balancesRequest
+  businessToday.value = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
   balancesLoading.value = true
   balancesError.value = false
   balances.value = null
@@ -632,6 +636,7 @@ async function fetchSummary(range: { start_date: string; end_date: string } | nu
   loading.value = true
   loadError.value = false
   const request = ++summaryRequest
+  businessToday.value = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
   try {
     const [result, fullHistory] = await Promise.all([
       range ? adminAPI.dashboard.getBusinessSummary(range) : adminAPI.dashboard.getBusinessSummary(),
