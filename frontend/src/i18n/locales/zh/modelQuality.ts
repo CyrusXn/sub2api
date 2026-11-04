@@ -15,6 +15,8 @@ export default {
     reference: '参考答案：21', customHint: '描述你想看到的场景与动作，生成一个可预览的 SVG 动画 HTML。',
     promptLabel: '自定义提示词', placeholder: '例如：一座漂浮在云海中的天空之城，灯光闪烁，瀑布缓缓流动。',
     shared: '全站检测结果', sharedHint: '所有用户共享同一份记录，作者名称已脱敏。',
+    searchUser: '搜索用户', searchUserAdmin: '搜索用户名或邮箱', searchUserMasked: '搜索用户（脱敏名称）',
+    searchUnavailable: '当前后端尚未支持用户搜索，更新后端后即可使用。',
     allThemes: '全部主题', allGroups: '全部分组', allModels: '全部模型', allStatuses: '全部状态', refresh: '刷新', loading: '正在读取…',
     running: '正在进行', completed: '已完成', failed: '检测失败', empty: '还没有检测记录', emptyHint: '从上方选择一个测试，留下第一份模型表现。',
     viewPrompt: '查看生成提示词', answer: '模型回答', account: '调用账号', noAccount: '尚未关联上游账号', unavailableAccount: '账号已删除或不可用',

@@ -15,6 +15,8 @@ export default {
     reference: 'Reference answer: 21', customHint: 'Describe a scene and its motion to generate a previewable SVG animation in HTML.',
     promptLabel: 'Custom prompt', placeholder: 'For example: a city floating above the clouds, with flickering lights and flowing waterfalls.',
     shared: 'Shared test results', sharedHint: 'Everyone sees the same history. Author names are pseudonymized.',
+    searchUser: 'Search users', searchUserAdmin: 'Search username or email', searchUserMasked: 'Search masked user name',
+    searchUnavailable: 'User search requires an updated backend.',
     allThemes: 'All themes', allGroups: 'All groups', allModels: 'All models', allStatuses: 'All statuses', refresh: 'Refresh', loading: 'Loading…',
     running: 'Running', completed: 'Completed', failed: 'Failed', empty: 'No tests yet', emptyHint: 'Choose a challenge above to create the first result.',
     viewPrompt: 'View generation prompt', answer: 'Model answer', account: 'Called account', noAccount: 'Upstream account not linked', unavailableAccount: 'Account removed or unavailable',

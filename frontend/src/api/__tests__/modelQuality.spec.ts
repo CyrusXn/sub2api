@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest'
-import { safeModelQualityHTML } from '../modelQuality'
+import { describe, expect, it, vi } from 'vitest'
+import { modelQualityAPI, safeModelQualityHTML } from '../modelQuality'
+import { apiClient } from '../client'
+vi.mock('../client', () => ({ apiClient: { get: vi.fn() } }))
+describe('智检用户搜索协议', () => {
+ it('旧后端忽略用户筛选时提示升级，不能将全部记录当作搜索结果', async () => {
+  const params = { page: 1, theme: 'candy' as const, status: '', group: '', model: '', user: 'ad***' }
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { items: [], total: 0 } })
+  await expect(modelQualityAPI.list(params)).rejects.toMatchObject({ status: 501 })
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { items: [], total: 0, user_filter: 'ad***' } })
+  await expect(modelQualityAPI.list(params)).resolves.toMatchObject({ items: [], total: 0 })
+ })
+})
 describe('智检 HTML 隔离', () => {
  it('保留 SVG 内部引用，但移除外部资源', () => {
   const safe = safeModelQualityHTML('<svg><defs><circle id="wheel" /></defs><use href="#wheel"/><use href="https://evil.example/a.svg#wheel"/></svg>')

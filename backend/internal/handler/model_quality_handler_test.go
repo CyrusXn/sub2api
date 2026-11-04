@@ -25,6 +25,8 @@ type qualityRepoStub struct {
 	updatedContent string
 	listedGroup    string
 	listedModel    string
+	listedUser     string
+	listedAdmin    bool
 	deletedID      int64
 	deleteError    error
 }
@@ -122,8 +124,9 @@ func (r *qualityRepoStub) Create(_ context.Context, run *service.ModelQualityRun
 	r.createdRun = run
 	return r.createError
 }
-func (r *qualityRepoStub) List(_ context.Context, _ int, _, _, group, model string) ([]service.ModelQualityRun, int64, error) {
+func (r *qualityRepoStub) List(_ context.Context, _ int, _, _, group, model string, user service.ModelQualityUserFilter) ([]service.ModelQualityRun, int64, error) {
 	r.listedGroup, r.listedModel = group, model
+	r.listedUser, r.listedAdmin = user.Search, user.Admin
 	return append([]service.ModelQualityRun(nil), r.runs...), int64(len(r.runs)), nil
 }
 func (r *qualityRepoStub) FilterOptions(context.Context, string) (service.ModelQualityFilterOptions, error) {
@@ -172,11 +175,23 @@ func TestModelQualityHandlerRejectsOtherUsersKeys(t *testing.T) {
 	require.Zero(t, repo.created)
 }
 func TestModelQualityListRejectsInvalidFilters(t *testing.T) {
-	h := &ModelQualityHandler{}
-	for _, query := range []string{"page=-1", "theme=other", "status=other"} {
+	h := &ModelQualityHandler{service: service.NewModelQualityService(&qualityRepoStub{})}
+	for _, query := range []string{"page=-1", "theme=other", "status=other", "user=" + strings.Repeat("x", 201)} {
 		c, w := qualityContext("GET", "/?"+query, "", service.RoleUser)
 		h.List(c)
 		require.Equal(t, 400, w.Code)
+	}
+}
+
+func TestModelQualityListUserSearchUsesAuthenticatedRole(t *testing.T) {
+	for _, role := range []string{service.RoleUser, service.RoleAdmin} {
+		repo := &qualityRepoStub{}
+		h := &ModelQualityHandler{service: service.NewModelQualityService(repo)}
+		c, w := qualityContext("GET", "/model-quality?user=%20Ad%2A%2A%2A%40example.com%20&admin=true", "", role)
+		h.List(c)
+		require.Equal(t, http.StatusOK, w.Code)
+		require.Equal(t, "Ad***@example.com", repo.listedUser)
+		require.Equal(t, role == service.RoleAdmin, repo.listedAdmin)
 	}
 }
 

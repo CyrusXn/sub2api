@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -47,8 +48,13 @@ func (h *ModelQualityHandler) List(c *gin.Context) {
 		response.BadRequest(c, "分组或模型筛选过长")
 		return
 	}
+	user := strings.TrimSpace(c.Query("user"))
+	if utf8.RuneCountInString(user) > 200 {
+		response.BadRequest(c, "用户搜索内容过长")
+		return
+	}
 	role, _ := middleware.GetUserRoleFromContext(c)
-	runs, total, err := h.service.List(c.Request.Context(), page, theme, status, group, model, role == service.RoleAdmin)
+	runs, total, err := h.service.List(c.Request.Context(), page, theme, status, group, model, user, role == service.RoleAdmin)
 	if err != nil {
 		response.InternalError(c, "读取检测记录失败")
 		return
@@ -58,7 +64,7 @@ func (h *ModelQualityHandler) List(c *gin.Context) {
 		response.InternalError(c, "读取检测筛选项失败")
 		return
 	}
-	response.Success(c, gin.H{"items": runs, "total": total, "page": page, "page_size": 12, "filters": filters})
+	response.Success(c, gin.H{"items": runs, "total": total, "page": page, "page_size": 12, "filters": filters, "user_filter": user})
 }
 
 func (h *ModelQualityHandler) Create(c *gin.Context) {

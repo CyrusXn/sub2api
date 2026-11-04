@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,7 @@ func TestModelQualityRepositoryResolvesAccountAfterUsageIsWritten(t *testing.T) 
 	// 列表必须用持久化请求标识再次关联，不能依赖创建时已写入用量。
 	query := `SELECT q.id.*LIMIT 12 OFFSET.*` + regexp.QuoteMeta("u.api_key_id=q.api_key_id AND u.request_id='client:' || q.request_id") + `.*` + regexp.QuoteMeta("e.api_key_id=q.api_key_id AND e.client_request_id=q.request_id")
 	mock.ExpectQuery(query).WithArgs("", "", "", "", 0).WillReturnRows(sqlmock.NewRows([]string{"id", "author", "group_name", "model", "theme", "prompt", "status", "content", "error", "account_id", "account_name", "created_at"}).AddRow(9, "author", "group", "gpt-test", "candy", "question", "completed", "21", "", 7, "迟到用量对应的账号", time.Now()))
-	runs, _, err := NewModelQualityRepository(db).List(context.Background(), 1, "", "", "", "")
+	runs, _, err := NewModelQualityRepository(db).List(context.Background(), 1, "", "", "", "", service.ModelQualityUserFilter{})
 	require.NoError(t, err)
 	require.EqualValues(t, 7, runs[0].AccountID)
 	require.Equal(t, "迟到用量对应的账号", runs[0].AccountName)
@@ -79,7 +80,7 @@ func TestModelQualityRepositorySharedPagination(t *testing.T) {
 	defer db.Close()
 	mock.ExpectQuery("SELECT COUNT.*FROM model_quality_runs q").WithArgs("candy", "", "", "").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(13))
 	mock.ExpectQuery("SELECT q.id.*LIMIT 12 OFFSET").WithArgs("candy", "", "", "", 12).WillReturnRows(sqlmock.NewRows([]string{"id", "author", "group_name", "model", "theme", "prompt", "status", "content", "error", "account_id", "account_name", "created_at"}).AddRow(2, "author", "group", "gpt-test", "candy", "question", "completed", "21", "", 7, "account", time.Now()))
-	runs, total, err := NewModelQualityRepository(db).List(context.Background(), 2, "candy", "", "", "")
+	runs, total, err := NewModelQualityRepository(db).List(context.Background(), 2, "candy", "", "", "", service.ModelQualityUserFilter{})
 	require.NoError(t, err)
 	require.EqualValues(t, 13, total)
 	require.Len(t, runs, 1)
@@ -94,10 +95,40 @@ func TestModelQualityRepositoryFiltersBeforeCountingAndPagination(t *testing.T) 
 	where := regexp.QuoteMeta("AND ($3='' OR q.group_name=$3) AND ($4='' OR q.model=$4)")
 	mock.ExpectQuery("SELECT COUNT.*"+where).WithArgs("candy", "completed", "shared", "gpt-test").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("SELECT q.id.*"+where+".*LIMIT 12 OFFSET "+regexp.QuoteMeta("$5")).WithArgs("candy", "completed", "shared", "gpt-test", 0).WillReturnRows(sqlmock.NewRows([]string{"id", "author", "group_name", "model", "theme", "prompt", "status", "content", "error", "account_id", "account_name", "created_at"}))
-	_, total, err := NewModelQualityRepository(db).List(context.Background(), 1, "candy", "completed", "shared", "gpt-test")
+	_, total, err := NewModelQualityRepository(db).List(context.Background(), 1, "candy", "completed", "shared", "gpt-test", service.ModelQualityUserFilter{})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, total)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestModelQualityUserSearchRespectsPrivacyBeforePagination(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		admin bool
+		ids   string
+	}{
+		{"priv***@example.com", false, "{7}"},
+		{"PRIV", false, "{7}"},
+		{"private", false, "{}"},
+		{"private", true, "{7}"},
+		{"operator", false, "{}"},
+		{"operator", true, "{7}"},
+		{"%", true, "{}"},
+		{"missing", false, "{}"},
+	} {
+		t.Run(tc.query+fmt.Sprint(tc.admin), func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			mock.ExpectQuery("SELECT DISTINCT usr.id.*WHERE usr.deleted_at IS NULL").WillReturnRows(sqlmock.NewRows([]string{"id", "email", "username"}).AddRow(7, "private@example.com", "Operator").AddRow(8, "other@example.net", "Other"))
+			where := regexp.QuoteMeta("AND q.user_id=ANY($5::bigint[])")
+			mock.ExpectQuery("SELECT COUNT.*"+where).WithArgs("candy", "completed", "shared", "gpt-test", tc.ids).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			mock.ExpectQuery("SELECT q.id.*"+where+".*LIMIT 12 OFFSET "+regexp.QuoteMeta("$6")).WithArgs("candy", "completed", "shared", "gpt-test", tc.ids, 12).WillReturnRows(sqlmock.NewRows([]string{"id", "author", "group_name", "model", "theme", "prompt", "status", "content", "error", "account_id", "account_name", "created_at"}))
+			_, _, err = NewModelQualityRepository(db).List(context.Background(), 2, "candy", "completed", "shared", "gpt-test", service.ModelQualityUserFilter{Search: tc.query, Admin: tc.admin})
+			require.NoError(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestModelQualityRepositoryOptionsUseAllRecordsInSelectedCategory(t *testing.T) {

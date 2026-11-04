@@ -29,6 +29,33 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.clearAllMocks() })
 async function open() { wrapper = mount(ModelQualityView, { global: { stubs: { AppLayout: { template: '<div><slot /></div>' } } } }); await flushPromises(); return wrapper }
 describe('模型智检', () => {
+ it('用户搜索合并输入、回到第一页，并可清空搜索恢复记录', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+   const initial = { items: [{ id: 1, author: 'ad***@example.com', group_name: '优选', model: 'gpt-test', theme: 'candy' as const, prompt: '问题', status: 'completed' as const, content: '21', created_at: '2026-11-03T02:00:00Z' }], total: 13, page: 1, page_size: 12 }
+   vi.mocked(modelQualityAPI.list).mockResolvedValue(initial)
+   const view = await open()
+   await view.get('.pagination button:last-child').trigger('click')
+   await flushPromises()
+   vi.mocked(modelQualityAPI.list).mockClear()
+   vi.mocked(modelQualityAPI.list).mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 12 })
+   await view.get('#quality-filter-user').setValue('ad')
+   await view.get('#quality-filter-user').setValue(' ad***@example.com ')
+   await vi.advanceTimersByTimeAsync(299)
+   expect(modelQualityAPI.list).not.toHaveBeenCalled()
+   await vi.advanceTimersByTimeAsync(1)
+   await flushPromises()
+   expect(modelQualityAPI.list).toHaveBeenCalledTimes(1)
+   expect(modelQualityAPI.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, user: 'ad***@example.com' }), expect.anything())
+   expect(view.find('.quality-result').exists()).toBe(false)
+   await view.get('#quality-filter-user').setValue('')
+   await vi.advanceTimersByTimeAsync(300)
+   await flushPromises()
+   expect(modelQualityAPI.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, user: '' }), expect.anything())
+   expect(view.find('.quality-result').exists()).toBe(true)
+   view.unmount()
+  } finally { vi.useRealTimers() }
+ })
  it('所有下拉选择均使用始终可搜索的统一组件，少量选项也能搜索', async () => {
   const view = await open()
   expect(view.find('select').exists()).toBe(false)
@@ -66,7 +93,7 @@ describe('模型智检', () => {
   await searchAndChoose('#quality-filter-group', '共享', '共享分组')
   await searchAndChoose('#quality-filter-model', 'shared', 'shared-model')
   await searchAndChoose('#quality-filter-status', '正在', '正在进行')
-  expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme: 'candy', group: '共享分组', model: 'shared-model', status: 'running' }, expect.anything())
+  expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme: 'candy', group: '共享分组', model: 'shared-model', status: 'running', user: '' }, expect.anything())
   await view.get('[data-theme=candy]').trigger('click')
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
@@ -106,7 +133,7 @@ describe('模型智检', () => {
   expect(view.find('.result-card').exists()).toBe(true)
   expect(view.find('.results-list').exists()).toBe(false)
   expect(view.find('.challenge > span').exists()).toBe(false)
-  expect(modelQualityAPI.list).toHaveBeenCalledWith({ page: 1, theme: 'pelican', group: '', model: '', status: '' }, expect.anything())
+  expect(modelQualityAPI.list).toHaveBeenCalledWith({ page: 1, theme: 'pelican', group: '', model: '', status: '', user: '' }, expect.anything())
   expect(view.text()).toContain('最少 21 个。')
   expect(view.text()).toContain('用户·abcdefgh')
   expect(view.find('iframe').exists()).toBe(false)
@@ -135,7 +162,7 @@ describe('模型智检', () => {
    vi.mocked(modelQualityAPI.list).mockImplementationOnce(() => new Promise(done => { resolve = done }))
    await view.get(`[data-theme=${theme}]`).trigger('click')
    expect(view.find('.quality-result').exists()).toBe(false)
-   expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme, group: '', model: '', status: '' }, expect.anything())
+   expect(modelQualityAPI.list).toHaveBeenLastCalledWith({ page: 1, theme, group: '', model: '', status: '', user: '' }, expect.anything())
    resolve({ items: [], total: 0, page: 1, page_size: 12, filters: { groups: [], models: [] } } as never)
    await flushPromises()
   }

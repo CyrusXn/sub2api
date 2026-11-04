@@ -29,7 +29,10 @@
 
       <div v-if="error" class="quality-error error-banner" role="alert">{{ error }}</div>
       <section ref="resultsSection" class="results-section" :aria-label="t('modelQuality.shared')" :aria-busy="loading">
-        <div class="results-heading"><div><h2>{{ t('modelQuality.shared') }} <span v-if="total">{{ total }}</span></h2><p>{{ t('modelQuality.sharedHint') }}</p></div><div class="result-filters"><Select id="quality-filter-group" v-model="filterGroup" class="result-filter" :options="groupFilterOptions" :searchable="true" :aria-label="t('modelQuality.allGroups')" @change="resetResults" /><Select id="quality-filter-model" v-model="filterModel" class="result-filter" :options="modelFilterOptions" :searchable="true" :aria-label="t('modelQuality.allModels')" @change="resetResults" /><Select id="quality-filter-status" v-model="filterStatus" class="result-filter" :options="statusOptions" :searchable="true" :aria-label="t('modelQuality.allStatuses')" @change="resetResults" /><button type="button" class="btn btn-secondary" :disabled="loading" @click="loadResults">{{ t('modelQuality.refresh') }}</button></div></div>
+        <div class="results-heading"><div><h2>{{ t('modelQuality.shared') }} <span v-if="total">{{ total }}</span></h2><p>{{ t('modelQuality.sharedHint') }}</p></div><div class="result-filters">
+          <input id="quality-filter-user" v-model="filterUser" type="search" class="input user-search" maxlength="200" :aria-label="t('modelQuality.searchUser')" :placeholder="t(auth.isAdmin ? 'modelQuality.searchUserAdmin' : 'modelQuality.searchUserMasked')" @input="queueUserSearch" @keydown.enter.prevent="resetResults" />
+          <Select id="quality-filter-group" v-model="filterGroup" class="result-filter" :options="groupFilterOptions" :searchable="true" :aria-label="t('modelQuality.allGroups')" @change="resetResults" /><Select id="quality-filter-model" v-model="filterModel" class="result-filter" :options="modelFilterOptions" :searchable="true" :aria-label="t('modelQuality.allModels')" @change="resetResults" /><Select id="quality-filter-status" v-model="filterStatus" class="result-filter" :options="statusOptions" :searchable="true" :aria-label="t('modelQuality.allStatuses')" @change="resetResults" /><button type="button" class="btn btn-secondary" :disabled="loading" @click="loadResults">{{ t('modelQuality.refresh') }}</button>
+        </div></div>
         <div v-if="loading && !runs.length" class="quality-empty">{{ t('modelQuality.loading') }}</div>
         <div v-else-if="!runs.length && !error" class="quality-empty"><span aria-hidden="true">◇</span><h3>{{ t('modelQuality.empty') }}</h3><p>{{ t('modelQuality.emptyHint') }}</p></div>
         <div v-if="runs.length" :class="officialLayout ? 'results-list' : 'results-grid'">
@@ -87,7 +90,7 @@ const auth = useAuthStore()
 const themes: QualityTheme[] = ['pelican', 'candy', 'official', 'custom']
 const statuses = ['running', 'completed', 'failed']
 const theme = ref<QualityTheme>('pelican'), prompt = ref(''), keys = ref<WorkspaceKey[]>([]), keyID = ref(0), model = ref('')
-const runs = ref<QualityRun[]>([]), total = ref(0), page = ref(1), filterGroup = ref(''), filterModel = ref(''), filterStatus = ref('')
+const runs = ref<QualityRun[]>([]), total = ref(0), page = ref(1), filterGroup = ref(''), filterModel = ref(''), filterStatus = ref(''), filterUser = ref('')
 const historyFilters = ref<QualityFilterOptions>({ groups: [], models: [] })
 const officialLayout = computed(() => theme.value === 'official')
 const keysLoading = ref(true), loading = ref(false), submitting = ref(false), ready = ref(false), error = ref(''), keyError = ref('')
@@ -99,7 +102,7 @@ const officialReady = ref(false), officialSaving = ref(false), officialError = r
 // 列表确认读到已保存记录后，才移除当前页面的流式结果。
 const pendingRuns = new Map<number, QualityRun>()
 const lifecycle = new AbortController()
-let request: AbortController | undefined, generation: AbortController | undefined, timer: ReturnType<typeof setTimeout> | undefined, disposed = false
+let request: AbortController | undefined, generation: AbortController | undefined, timer: ReturnType<typeof setTimeout> | undefined, userSearchTimer: ReturnType<typeof setTimeout> | undefined, disposed = false
 const models = computed(() => { const key = keys.value.find(item => item.id === keyID.value); return key ? workspaceModelsForKey(key, 'chat') : [] })
 const keyOptions = computed(() => [{ value: 0, label: t('modelQuality.selectKey') }, ...keys.value.map(key => ({ value: key.id, label: `${key.name} · ${key.groupName}` }))])
 const modelOptions = computed(() => [{ value: '', label: t('modelQuality.selectModel') }, ...models.value.map(value => ({ value, label: value }))])
@@ -140,22 +143,23 @@ async function loadKeys() {
   finally { keysLoading.value = false }
 }
 async function loadResults() {
-  request?.abort(); clearTimeout(timer)
+  request?.abort(); clearTimeout(timer); clearTimeout(userSearchTimer)
   const current = new AbortController(); request = current
   loading.value = true
   try {
-    const result = await modelQualityAPI.list({ page: page.value, theme: theme.value, group: filterGroup.value, model: filterModel.value, status: filterStatus.value }, current.signal)
+    const result = await modelQualityAPI.list({ page: page.value, theme: theme.value, group: filterGroup.value, model: filterModel.value, status: filterStatus.value, user: filterUser.value.trim() }, current.signal)
     if (disposed || current.signal.aborted) return
     const receivedIDs = new Set(result.items.map(run => run.id))
     for (const [id, run] of pendingRuns) if (run.status !== 'running' && result.items.some(item => item.id === run.id && item.status === run.status && item.content === run.content)) pendingRuns.delete(id)
-    const pending = page.value === 1 ? [...pendingRuns.values()].filter(run => run.theme === theme.value && (!filterGroup.value || run.group_name === filterGroup.value) && (!filterModel.value || run.model === filterModel.value) && (!filterStatus.value || run.status === filterStatus.value)) : []
+    const pending = page.value === 1 ? [...pendingRuns.values()].filter(run => run.theme === theme.value && (!filterGroup.value || run.group_name === filterGroup.value) && (!filterModel.value || run.model === filterModel.value) && (!filterStatus.value || run.status === filterStatus.value) && (!filterUser.value.trim() || receivedIDs.has(run.id))) : []
     historyFilters.value = result.filters || { groups: [], models: [] }
     const pendingIDs = new Set(pending.map(run => run.id))
     runs.value = [...pending, ...result.items.filter(run => !pendingIDs.has(run.id))]; total.value = result.total + pending.filter(run => !receivedIDs.has(run.id)).length; ready.value = true; error.value = ''
   } catch (cause) {
     if (disposed || current.signal.aborted) return
     ready.value = false
-    error.value = t((cause as {status?: number}).status === 404 ? 'modelQuality.notDeployed' : 'modelQuality.loadError')
+    const status = (cause as {status?: number}).status
+    error.value = t(status === 501 ? 'modelQuality.searchUnavailable' : status === 404 ? 'modelQuality.notDeployed' : 'modelQuality.loadError')
   } finally {
     if (!disposed && !current.signal.aborted) { loading.value = false; timer = setTimeout(loadResults, ready.value && runs.value.some(run => run.status === 'running') ? 2000 : 10000) }
   }
@@ -167,8 +171,8 @@ async function start() {
   if (!selected) { submitting.value = false; return }
   const selectedTheme = theme.value
   const fullPrompt = modelQualityPrompt(selectedTheme, prompt.value)
-  request?.abort(); clearTimeout(timer)
-  filterGroup.value = ''; filterModel.value = ''; filterStatus.value = ''; page.value = 1
+  request?.abort(); clearTimeout(timer); clearTimeout(userSearchTimer)
+  filterGroup.value = ''; filterModel.value = ''; filterStatus.value = ''; filterUser.value = ''; page.value = 1
   const localRun = reactive<QualityRun>({ id: -Date.now(), author: t('modelQuality.currentUser'), group_name: selected.groupName, model: model.value, theme: selectedTheme, prompt: fullPrompt, status: 'running', content: '', created_at: new Date().toISOString() })
   pendingRuns.set(localRun.id, localRun)
   runs.value = [localRun, ...runs.value]
@@ -257,12 +261,17 @@ watch(theme, value => {
   if (value === 'official') selectOfficialKey()
 })
 function resetResults() { page.value = 1; runs.value = []; total.value = 0; error.value = ''; void loadResults() }
+function queueUserSearch() {
+  request?.abort(); clearTimeout(timer); clearTimeout(userSearchTimer)
+  page.value = 1
+  userSearchTimer = setTimeout(resetResults, 300)
+}
 function changePage(delta: number) { page.value += delta; runs.value = []; void loadResults() }
 watch(expanded, async (value) => { await nextTick(); if (value && !previewDialog.value?.open) previewDialog.value?.showModal(); else if (!value && previewDialog.value?.open) previewDialog.value.close() })
 function closePreview() { previewDialog.value?.close(); expanded.value = null }
 function closeOutside(event: MouseEvent) { if (event.target === previewDialog.value) closePreview() }
 onMounted(() => { void loadKeys(); void loadResults(); void loadOfficial() })
-onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort(); request?.abort(); clearTimeout(timer) })
+onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort(); request?.abort(); clearTimeout(timer); clearTimeout(userSearchTimer) })
 </script>
 
 <style scoped>
@@ -282,6 +291,10 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 @media(max-width:900px){.results-heading{align-items:flex-start;flex-direction:column}.results-grid{gap:18px}.result-card{padding:18px}.preview-panel iframe{height:280px}}
 @media(max-width:640px){.quality-hero{align-items:flex-start;flex-direction:column;padding-top:8px;gap:16px}.quality-hero h1{font-size:29px}.quality-hero .btn{width:100%;justify-content:space-between}.quality-settings{padding:20px}.connection-grid{grid-template-columns:1fr;gap:16px}.theme-bar button{flex:1;padding:10px}.results-grid{grid-template-columns:1fr}.result-filters{width:100%;flex-wrap:wrap}.result-filters .input{flex:1;width:100px}.results-heading{gap:14px}.result-card h3{font-size:21px}.preview-panel iframe{height:340px}.dialog-content header h2{max-width:60%;overflow-wrap:anywhere}}
 .result-filters .result-filter{width:160px;min-width:0}
+.results-heading{flex-wrap:wrap}
+.result-filters{flex-wrap:wrap;justify-content:flex-end;max-width:100%}
+.result-filters .user-search{width:220px;min-width:160px;flex:1;border-radius:12px}
+@media(max-width:640px){.result-filters .user-search{flex-basis:100%}}
 .quality-result{scroll-margin-top:96px}
 .result-card{position:relative}
 .result-actions{display:flex;align-items:flex-end;flex-direction:column;gap:10px}
@@ -293,9 +306,9 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .result-card .group-name{display:block;padding-right:140px}
 .result-card .result-content{margin-top:20px}
 @media(max-width:640px){.result-filters .result-filter{flex:1;width:100px}}
-.results-list{background:var(--color-bg-primary,#fff);border-top:2px solid #263d37;border-bottom:1px solid #dce5e2}
+.results-list{background:var(--color-bg-primary,#fff);border:1px solid #dce9e5;border-radius:16px}
 .result-list-head,.result-row{display:grid;grid-template-columns:230px minmax(0,1fr) 100px;column-gap:28px}
-.result-list-head{padding:14px 20px;background:#f3f6f4;font-size:12px;font-weight:600;letter-spacing:.02em;color:#6a7b75;border-bottom:1px solid #dce5e2}
+.result-list-head{padding:16px 20px;background:linear-gradient(105deg,#edf7f4,#f5faf8);border-radius:15px 15px 0 0;font-size:13px;font-weight:600;line-height:1.5;color:#4e7c75;border-bottom:1px solid #dfede7}
 .result-list-head span:last-child{text-align:right}
 .result-row{padding:26px 20px;border-bottom:1px solid #e3e9e6;min-width:0;align-items:start;scroll-margin-top:96px}
 .result-row:last-child{border-bottom:0}
@@ -324,7 +337,7 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .official-controls>p:first-child{display:flex;align-items:center;gap:8px;flex:1;min-width:180px;font-size:13px;color:#73817a}
 .official-controls>.quality-error{flex-basis:100%}
 .schedule-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#9da8a1}.schedule-dot.enabled{background:#0c8a72}.schedule-model{font-family:monospace;margin-left:6px}
-:global(.dark) .results-list{background:#172524;border-color:#55766b}:global(.dark) .result-list-head{background:#20322c;border-color:#344c42}:global(.dark) .result-row{border-color:#2b3e3a}:global(.dark) .result-row .answer-panel,:global(.dark) .result-row .account-line,:global(.dark) .result-row .result-placeholder{background:transparent}
+:global(.dark) .results-list{background:#172524;border-color:#2b4640}:global(.dark) .result-list-head{background:linear-gradient(105deg,#1e3630,#1b2e2a);border-color:#2b4640;color:#a1c6bb}:global(.dark) .result-row{border-color:#2b3e3a}:global(.dark) .result-row .answer-panel,:global(.dark) .result-row .account-line,:global(.dark) .result-row .result-placeholder{background:transparent}
 @media(max-width:1000px){.result-list-head,.result-row{grid-template-columns:180px minmax(0,1fr) 86px;column-gap:20px}}
 @media(max-width:760px){.result-list-head{display:none}.result-row{grid-template-columns:minmax(0,1fr) auto;padding:20px 4px;row-gap:20px;column-gap:12px}.result-meta{grid-column:1;grid-row:1}.result-row>.result-actions{grid-column:2;grid-row:1}.result-content{grid-column:1/-1;grid-row:2}.result-meta h3{margin:4px 0 8px}.result-row .answer-scroll{max-height:440px}.result-row .preview-panel iframe{height:250px}.theme-bar{gap:6px}.theme-bar button{padding:10px 8px;min-width:0;white-space:nowrap}.official-controls .btn{flex:1}}
 </style>

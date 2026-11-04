@@ -46,7 +46,7 @@ func (r *officialRepoFake) Update(_ context.Context, _, _ int64, status, content
 	r.updates = append(r.updates, status+":"+content)
 	return nil
 }
-func (r *officialRepoFake) List(context.Context, int, string, string, string, string) ([]ModelQualityRun, int64, error) {
+func (r *officialRepoFake) List(context.Context, int, string, string, string, string, ModelQualityUserFilter) ([]ModelQualityRun, int64, error) {
 	return nil, 0, nil
 }
 func (r *officialRepoFake) FilterOptions(context.Context, string) (ModelQualityFilterOptions, error) {

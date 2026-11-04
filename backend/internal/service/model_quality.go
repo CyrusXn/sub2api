@@ -134,11 +134,16 @@ type ModelQualityFilterOptions struct {
 	Models []string `json:"models"`
 }
 
+type ModelQualityUserFilter struct {
+	Search string
+	Admin  bool
+}
+
 type ModelQualityRepository interface {
 	Create(context.Context, *ModelQualityRun) error
 	Update(context.Context, int64, int64, string, string, string) error
 	Delete(context.Context, int64) error
-	List(context.Context, int, string, string, string, string) ([]ModelQualityRun, int64, error)
+	List(context.Context, int, string, string, string, string, ModelQualityUserFilter) ([]ModelQualityRun, int64, error)
 	FilterOptions(context.Context, string) (ModelQualityFilterOptions, error)
 }
 
@@ -158,8 +163,8 @@ func (s *ModelQualityService) Update(ctx context.Context, id, userID int64, stat
 func (s *ModelQualityService) Delete(ctx context.Context, id int64) error {
 	return s.repo.Delete(ctx, id)
 }
-func (s *ModelQualityService) List(ctx context.Context, page int, theme, status, group, model string, admin bool) ([]ModelQualityRun, int64, error) {
-	runs, total, err := s.repo.List(ctx, page, theme, status, group, model)
+func (s *ModelQualityService) List(ctx context.Context, page int, theme, status, group, model, user string, admin bool) ([]ModelQualityRun, int64, error) {
+	runs, total, err := s.repo.List(ctx, page, theme, status, group, model, ModelQualityUserFilter{Search: user, Admin: admin})
 	if err != nil {
 		return nil, 0, err
 	}
