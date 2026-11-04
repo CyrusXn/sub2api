@@ -19,6 +19,20 @@ export function normalizeUserFacingErrorMessage(
   const normalized = message.trim()
   if (!normalized) return chineseFallback
   if (CHINESE_TEXT_PATTERN.test(normalized)) return normalized
-
+  // 账号测试把上游状态包在 SSE 错误中；保留可诊断原因，避免直接展示上游正文。
+  const upstreamError = /^API returned ([45]\d{2}):\s*([\s\S]*)$/.exec(normalized)
+  if (upstreamError) {
+    const [, status, body] = upstreamError
+    try {
+      const payload = JSON.parse(body ?? '')
+      const reason = payload?.error?.message
+      if (typeof reason === 'string' && /^no available accounts(?:: no available accounts)?$/i.test(reason.trim())) {
+        return `上游分组暂无可用账号（HTTP ${status}），请检查上游账号池或联系上游服务商。`
+      }
+    } catch {
+      // 非 JSON 响应仍保留状态码，不将 HTML 或敏感正文传给页面。
+    }
+    return `上游请求失败（HTTP ${status}），请检查上游配置或稍后重试。`
+  }
   return KNOWN_ENGLISH_ERROR_MESSAGES[normalized.toLowerCase()] ?? chineseFallback
 }

@@ -93,6 +93,22 @@ function mountModal(account: Record<string, unknown> = {
 }
 
 describe('AccountTestModal', () => {
+  it('探针展示上游无可用账号的具体原因，失败后允许重试', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5' }])
+    global.fetch = vi.fn().mockResolvedValue(new Response(
+      'data: {"type":"test_start","model":"claude-opus-5-5"}\n\n' +
+      `data: ${JSON.stringify({ type: 'error', error: 'API returned 503: {"error":{"message":"No available accounts: no available accounts","type":"api_error"},"type":"error"}' })}\n\n`
+    ))
+    const wrapper = mountModal({ id: 42, platform: 'anthropic', type: 'apikey', name: 'Claude' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await (wrapper.vm as any).startTest()
+    expect(wrapper.text()).toContain('上游分组暂无可用账号（HTTP 503）')
+    expect((wrapper.vm as any).status).toBe('error')
+    expect((wrapper.vm as any).running).toBe(false)
+    wrapper.unmount()
+  })
+
   it.each([
     ['openai', ['gpt-5.6-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol'], 'gpt-6.1-sol'],
     ['openai', ['gpt-5.6-sol', 'gpt-6-astra', 'gpt-6-sol'], 'gpt-6-sol'],
