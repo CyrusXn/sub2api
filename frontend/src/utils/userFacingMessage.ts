@@ -18,7 +18,6 @@ export function normalizeUserFacingErrorMessage(
 
   const normalized = message.trim()
   if (!normalized) return chineseFallback
-  if (CHINESE_TEXT_PATTERN.test(normalized)) return normalized
   // 账号测试把上游状态包在 SSE 错误中；保留可诊断原因，避免直接展示上游正文。
   const upstreamError = /^API returned ([45]\d{2}):\s*([\s\S]*)$/.exec(normalized)
   if (upstreamError) {
@@ -34,5 +33,6 @@ export function normalizeUserFacingErrorMessage(
     }
     return `上游请求失败（HTTP ${status}），请检查上游配置或稍后重试。`
   }
+  if (CHINESE_TEXT_PATTERN.test(normalized)) return normalized
   return KNOWN_ENGLISH_ERROR_MESSAGES[normalized.toLowerCase()] ?? chineseFallback
 }

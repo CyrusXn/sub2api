@@ -18,6 +18,15 @@ describe('normalizeUserFacingErrorMessage', () => {
     )
   })
 
+  it.each([
+    'API returned 401: {"error":{"message":"密钥无效: test-secret"}}',
+    'API returned 401: <html>认证失败 test-secret</html>',
+  ])('中文上游响应也必须隐藏原始正文：%s', message => {
+    expect(normalizeUserFacingErrorMessage(message)).toBe(
+      '上游请求失败（HTTP 401），请检查上游配置或稍后重试。'
+    )
+  })
+
   it('保留已有中文、已知英文翻译和未知错误兜底', () => {
     expect(normalizeUserFacingErrorMessage('余额不足')).toBe('余额不足')
     expect(normalizeUserFacingErrorMessage('Unknown error')).toBe('发生未知错误。')
