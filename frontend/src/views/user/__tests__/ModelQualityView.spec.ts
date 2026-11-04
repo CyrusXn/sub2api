@@ -6,10 +6,11 @@ import { loadWorkspaceKeys, loadWorkspaceModels } from '@/api/workspace'
 import zh from '@/i18n/locales/zh/modelQuality'
 import { streamKeyTest } from '@/api/keyTest'
 import Select from '@/components/common/Select.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const auth = vi.hoisted(() => ({ isAdmin: false }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
-vi.mock('@/api/modelQuality', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/modelQuality')>(), modelQualityAPI: { list: vi.fn(), save: vi.fn(), update: vi.fn(), official: vi.fn(), configureOfficial: vi.fn() } }))
+vi.mock('@/api/modelQuality', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/modelQuality')>(), modelQualityAPI: { list: vi.fn(), save: vi.fn(), update: vi.fn(), remove: vi.fn(), official: vi.fn(), configureOfficial: vi.fn() } }))
 vi.mock('@/api/workspace', () => ({ loadWorkspaceKeys: vi.fn(), loadWorkspaceModels: vi.fn(), workspaceModelsForKey: (key: {models: string[]}) => key.models }))
 vi.mock('@/api/keyTest', () => ({ streamKeyTest: vi.fn() }))
 vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key.split('.').reduce<unknown>((value, segment) => (value as Record<string, unknown>)?.[segment], zh) || key }) }))
@@ -165,6 +166,44 @@ describe('模型智检', () => {
   } finally { vi.useRealTimers() }
  })
  it('管理员额外看到上游账号', async () => { auth.isAdmin = true; const view = await open(); expect(view.text()).toContain('上游测试账号') })
+ it('官key回答上方显示实际调用账号，普通用户连账号占位和删除入口都不可见', async () => {
+  auth.isAdmin = true
+  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [{ id: 1, author: 'ad***@example.com', group_name: '官key分组', model: 'gpt-test', theme: 'official', prompt: '你是谁', status: 'completed', content: '我是模型', created_at: '2026-11-04T08:00:00Z', account_id: 7, account_name: '上游测试账号' }], total: 1, page: 1, page_size: 12 })
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  await flushPromises()
+  expect(view.get('.answer-header').text()).toContain('上游测试账号')
+  expect(view.get('.answer-header').text()).toContain('仅管理员可见')
+  expect(view.get('.answer-header').text()).not.toContain('糖果')
+  expect(view.find('[data-test=delete-run]').exists()).toBe(true)
+  view.unmount()
+  auth.isAdmin = false
+  const publicView = await open()
+  await publicView.get('[data-theme=official]').trigger('click')
+  await flushPromises()
+  expect(publicView.find('.answer-header').exists()).toBe(false)
+  expect(publicView.find('.account-line').exists()).toBe(false)
+  expect(publicView.find('[data-test=delete-run]').exists()).toBe(false)
+ })
+ it('管理员确认后删除记录，失败保留记录并提示，重试成功后刷新共享历史', async () => {
+  auth.isAdmin = true
+  const view = await open()
+  await view.get('[data-test=delete-run]').trigger('click')
+  expect(modelQualityAPI.remove).not.toHaveBeenCalled()
+  expect(view.getComponent(ConfirmDialog).props('show')).toBe(true)
+  vi.mocked(modelQualityAPI.remove).mockRejectedValueOnce(new Error('offline'))
+  view.getComponent(ConfirmDialog).vm.$emit('confirm')
+  await flushPromises()
+  expect(view.find('[data-run-id="1"]').exists()).toBe(true)
+  expect(document.body.textContent).toContain('删除失败')
+  vi.mocked(modelQualityAPI.remove).mockResolvedValueOnce(undefined)
+  vi.mocked(modelQualityAPI.list).mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 12 })
+  view.getComponent(ConfirmDialog).vm.$emit('confirm')
+  await flushPromises()
+  expect(modelQualityAPI.remove).toHaveBeenLastCalledWith(1)
+  expect(view.find('[data-run-id="1"]').exists()).toBe(false)
+  expect(view.getComponent(ConfirmDialog).props('show')).toBe(false)
+ })
  it('开始检测立即插入进行中记录并流式渲染 Markdown，完成后更新状态', async () => {
   let finish!: () => void
   vi.mocked(streamKeyTest).mockImplementation(async options => {

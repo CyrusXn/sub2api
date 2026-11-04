@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,59 @@ type qualityRepoStub struct {
 	updatedContent string
 	listedGroup    string
 	listedModel    string
+	deletedID      int64
+	deleteError    error
+}
+
+func (r *qualityRepoStub) Delete(_ context.Context, id int64) error {
+	r.deletedID = id
+	return r.deleteError
+}
+
+func TestModelQualityDeleteRequiresAuthenticatedAdmin(t *testing.T) {
+	for _, role := range []string{service.RoleUser, service.RoleAdmin} {
+		t.Run(role, func(t *testing.T) {
+			repo := &qualityRepoStub{}
+			h := &ModelQualityHandler{service: service.NewModelQualityService(repo)}
+			c, w := qualityContext("DELETE", "/model-quality/17?admin=true", "", role)
+			c.Params = gin.Params{{Key: "id", Value: "17"}}
+			h.Delete(c)
+			if role == service.RoleAdmin {
+				require.Equal(t, http.StatusOK, w.Code)
+				require.EqualValues(t, 17, repo.deletedID)
+			} else {
+				require.Equal(t, http.StatusForbidden, w.Code)
+				require.Zero(t, repo.deletedID)
+			}
+		})
+	}
+	c, w := qualityContext("DELETE", "/model-quality/17", "", service.RoleAdmin)
+	c.Set(string(middleware.ContextKeyUser), nil)
+	(&ModelQualityHandler{}).Delete(c)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestModelQualityDeleteValidatesIDAndReportsFailures(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		err  error
+		code int
+	}{
+		{"0", nil, http.StatusBadRequest},
+		{"invalid", nil, http.StatusBadRequest},
+		{"17", service.ErrModelQualityNotFound, http.StatusNotFound},
+		{"17", errors.New("private database details"), http.StatusInternalServerError},
+	} {
+		repo := &qualityRepoStub{deleteError: tc.err}
+		c, w := qualityContext("DELETE", "/model-quality/"+tc.id, "", service.RoleAdmin)
+		c.Params = gin.Params{{Key: "id", Value: tc.id}}
+		(&ModelQualityHandler{service: service.NewModelQualityService(repo)}).Delete(c)
+		require.Equal(t, tc.code, w.Code)
+		require.NotContains(t, w.Body.String(), "private database details")
+		if tc.code == http.StatusBadRequest {
+			require.Zero(t, repo.deletedID)
+		}
+	}
 }
 
 func (r *qualityRepoStub) Update(_ context.Context, id, userID int64, status, content, requestID string) error {

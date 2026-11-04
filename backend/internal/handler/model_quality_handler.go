@@ -160,6 +160,31 @@ func modelQualityTextModel(model string) bool {
 	return service.IsModelQualityTextModel(model)
 }
 
+func (h *ModelQualityHandler) Delete(c *gin.Context) {
+	if _, ok := middleware.GetAuthSubjectFromContext(c); !ok {
+		response.Unauthorized(c, "请先登录")
+		return
+	}
+	role, _ := middleware.GetUserRoleFromContext(c)
+	if role != service.RoleAdmin {
+		response.Forbidden(c, "仅管理员可以删除检测记录")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "无效记录")
+		return
+	}
+	if err = h.service.Delete(c.Request.Context(), id); errors.Is(err, service.ErrModelQualityNotFound) {
+		response.NotFound(c, "检测记录不存在或已删除")
+		return
+	} else if err != nil {
+		response.InternalError(c, "删除检测记录失败")
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
+}
+
 func (h *ModelQualityHandler) OfficialStatus(c *gin.Context) {
 	role, _ := middleware.GetUserRoleFromContext(c)
 	cfg, err := h.official.Status(c.Request.Context(), role == service.RoleAdmin)

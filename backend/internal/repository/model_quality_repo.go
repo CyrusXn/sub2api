@@ -46,7 +46,7 @@ func (r *modelQualityRepository) Update(ctx context.Context, id, userID int64, s
 	result, err := r.db.ExecContext(ctx, `UPDATE model_quality_runs SET status=$3::varchar,content=$4,request_id=COALESCE(NULLIF($5,''),request_id),
 		finished_at=CASE WHEN $3='running' THEN NULL ELSE NOW() END,
 		error=CASE WHEN $3='failed' THEN '模型请求失败或已中断，请检查密钥、额度或上游账号状态' ELSE '' END
-		WHERE id=$1 AND user_id=$2 AND status='running'`, id, userID, status, content, requestID)
+		WHERE id=$1 AND user_id=$2 AND status='running' AND deleted_at IS NULL`, id, userID, status, content, requestID)
 	if err != nil {
 		return err
 	}
@@ -60,8 +60,25 @@ func (r *modelQualityRepository) Update(ctx context.Context, id, userID int64, s
 	return nil
 }
 
+func (r *modelQualityRepository) Delete(ctx context.Context, id int64) error {
+	// 清除结果正文但保留官 key 的小时占位，避免删除后定时器再次调用并计费。
+	result, err := r.db.ExecContext(ctx, `UPDATE model_quality_runs SET deleted_at=NOW(),content='',prompt='',error=''
+		WHERE id=$1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return service.ErrModelQualityNotFound
+	}
+	return nil
+}
+
 func (r *modelQualityRepository) List(ctx context.Context, page int, theme, status, group, model string) ([]service.ModelQualityRun, int64, error) {
-	where := ` WHERE ($1='' OR q.theme=$1) AND ($2='' OR (` + modelQualityStatusSQL + `)=$2) AND ($3='' OR q.group_name=$3) AND ($4='' OR q.model=$4)`
+	where := ` WHERE q.deleted_at IS NULL AND ($1='' OR q.theme=$1) AND ($2='' OR (` + modelQualityStatusSQL + `)=$2) AND ($3='' OR q.group_name=$3) AND ($4='' OR q.model=$4)`
 	var total int64
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM model_quality_runs q`+where, theme, status, group, model).Scan(&total); err != nil {
 		return nil, 0, err
@@ -96,7 +113,7 @@ func (r *modelQualityRepository) List(ctx context.Context, page int, theme, stat
 func (r *modelQualityRepository) FilterOptions(ctx context.Context, theme string) (service.ModelQualityFilterOptions, error) {
 	options := service.ModelQualityFilterOptions{Groups: []string{}, Models: []string{}}
 	// 筛选项来自整个分类，避免分页或当前筛选将可选分组、模型隐藏。
-	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT group_name,model FROM model_quality_runs WHERE ($1='' OR theme=$1)`, theme)
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT group_name,model FROM model_quality_runs WHERE deleted_at IS NULL AND ($1='' OR theme=$1)`, theme)
 	if err != nil {
 		return options, err
 	}

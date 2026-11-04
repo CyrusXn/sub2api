@@ -38,12 +38,19 @@
             <div class="result-meta">
               <span class="group-name">{{ run.group_name }}</span><h3>{{ run.model }}</h3>
               <p class="result-author">{{ run.author }}</p><time :datetime="run.created_at">{{ formatDate(run.created_at) }}</time>
-              <div v-if="auth.isAdmin" class="account-line"><span>{{ t('modelQuality.account') }}</span><strong>{{ run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }}</strong><small>{{ t('modelQuality.adminOnly') }}</small></div>
+              <div v-if="auth.isAdmin && run.theme !== 'official'" class="account-line"><span>{{ t('modelQuality.account') }}</span><strong>{{ accountName(run) }}</strong><small>{{ t('modelQuality.adminOnly') }}</small></div>
             </div>
-            <span class="quality-status" :class="run.status">{{ t('modelQuality.' + run.status) }}</span>
+            <div class="result-actions">
+              <span class="quality-status" :class="run.status">{{ t('modelQuality.' + run.status) }}</span>
+              <button v-if="auth.isAdmin" type="button" class="delete-run" data-test="delete-run" :disabled="deleting || run.id <= 0 || run.status === 'running'" @click="deleteTarget = run">{{ t('modelQuality.delete') }}</button>
+            </div>
             <div class="result-content">
             <template v-if="run.theme === 'candy' || run.theme === 'official'">
-              <div class="answer-panel"><div class="answer-header">{{ t('modelQuality.' + run.theme) }}<small v-if="run.theme === 'candy'">{{ t('modelQuality.reference') }}</small></div><section v-if="run.content.trim()" class="answer-scroll"><div class="markdown-body answer-markdown" v-html="renderMarkdown(run.content)"></div></section><p v-else-if="run.status === 'running'" class="answer-pending" role="status"><span class="loading-spinner" aria-hidden="true" />{{ t('modelQuality.runningHint') }}</p></div>
+              <div class="answer-panel">
+                <div v-if="run.theme === 'official' && auth.isAdmin" class="answer-header called-account"><span>{{ t('modelQuality.account') }}</span><strong>{{ accountName(run) }}</strong><small>{{ t('modelQuality.adminOnly') }}</small></div>
+                <div v-else-if="run.theme === 'candy'" class="answer-header">{{ t('modelQuality.candy') }}<small>{{ t('modelQuality.reference') }}</small></div>
+                <section v-if="run.content.trim()" class="answer-scroll"><div class="markdown-body answer-markdown" v-html="renderMarkdown(run.content)"></div></section><p v-else-if="run.status === 'running'" class="answer-pending" role="status"><span class="loading-spinner" aria-hidden="true" />{{ t('modelQuality.runningHint') }}</p>
+              </div>
             </template>
             <div v-else-if="run.status === 'completed' || (run.status === 'running' && /<svg[\s>]/i.test(run.content))" class="preview-panel"><iframe :title="t('modelQuality.previewTitle') + ' · ' + run.model" sandbox="" referrerpolicy="no-referrer" loading="lazy" :srcdoc="safeModelQualityHTML(run.content)" /><button v-if="run.status === 'completed'" type="button" class="preview-enlarge" @click="expanded = run">{{ t('modelQuality.enlarge') }} ↗</button></div>
             <div v-else-if="run.status === 'running'" class="result-placeholder" role="status"><span class="loading-spinner" aria-hidden="true" />{{ t('modelQuality.runningHint') }}</div>
@@ -55,6 +62,9 @@
         <nav v-if="total > 12" class="pagination" aria-label="Pagination"><button type="button" class="btn btn-secondary" :disabled="page === 1 || loading" @click="changePage(-1)">{{ t('modelQuality.previous') }}</button><span>{{ page }} / {{ Math.ceil(total / 12) }}</span><button type="button" class="btn btn-secondary" :disabled="page * 12 >= total || loading" @click="changePage(1)">{{ t('modelQuality.next') }}</button></nav>
       </section>
       <dialog ref="previewDialog" class="quality-dialog" @close="expanded = null" @click="closeOutside"><div v-if="expanded" class="dialog-content"><header><h2>{{ expanded.model }} · {{ expanded.group_name }}</h2><button type="button" class="btn btn-secondary" @click="closePreview">{{ t('modelQuality.close') }}</button></header><iframe :title="t('modelQuality.previewTitle')" sandbox="" referrerpolicy="no-referrer" :srcdoc="safeModelQualityHTML(expanded.content)" /></div></dialog>
+      <ConfirmDialog :show="!!deleteTarget" :title="t('modelQuality.deleteTitle')" :message="t('modelQuality.deleteMessage')" :confirm-text="deleting ? t('modelQuality.deleting') : t('modelQuality.delete')" danger @confirm="deleteRun" @cancel="cancelDelete">
+        <p v-if="deleteError" class="quality-error" role="alert">{{ deleteError }}</p>
+      </ConfirmDialog>
     </main>
   </AppLayout>
 </template>
@@ -64,6 +74,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } 
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Select from '@/components/common/Select.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { loadWorkspaceKeys, loadWorkspaceModels, workspaceModelsForKey, type WorkspaceKey } from '@/api/workspace'
 import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme, type OfficialQualityConfig, type QualityStatus, type QualityFilterOptions } from '@/api/modelQuality'
@@ -81,6 +92,7 @@ const historyFilters = ref<QualityFilterOptions>({ groups: [], models: [] })
 const officialLayout = computed(() => theme.value === 'official')
 const keysLoading = ref(true), loading = ref(false), submitting = ref(false), ready = ref(false), error = ref(''), keyError = ref('')
 const expanded = ref<QualityRun | null>(null), previewDialog = ref<HTMLDialogElement | null>(null)
+const deleteTarget = ref<QualityRun | null>(null), deleting = ref(false), deleteError = ref('')
 const resultsSection = ref<HTMLElement | null>(null)
 const official = ref<OfficialQualityConfig>({ enabled: false, model: '' })
 const officialReady = ref(false), officialSaving = ref(false), officialError = ref('')
@@ -97,6 +109,24 @@ const statusOptions = computed(() => [{ value: '', label: t('modelQuality.allSta
 const canStart = computed(() => !keysLoading.value && !submitting.value && keyID.value > 0 && models.value.includes(model.value) && (theme.value !== 'custom' || prompt.value.trim().length > 0))
 function selectModel() { model.value = models.value[0] || '' }
 function formatDate(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
+function accountName(run: QualityRun) { return run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }
+function cancelDelete() { if (!deleting.value) { deleteTarget.value = null; deleteError.value = '' } }
+async function deleteRun() {
+  const target = deleteTarget.value
+  if (!auth.isAdmin || !target || target.id <= 0 || target.status === 'running' || deleting.value) return
+  deleting.value = true; deleteError.value = ''
+  try {
+    await modelQualityAPI.remove(target.id)
+    for (const [localID, run] of pendingRuns) if (run.id === target.id) pendingRuns.delete(localID)
+    runs.value = runs.value.filter(run => run.id !== target.id)
+    total.value = Math.max(0, total.value - 1)
+    if (expanded.value?.id === target.id) closePreview()
+    deleteTarget.value = null
+    page.value = Math.min(page.value, Math.max(1, Math.ceil(total.value / 12)))
+    await loadResults()
+  } catch { deleteError.value = t('modelQuality.deleteError') }
+  finally { deleting.value = false }
+}
 async function loadKeys() {
   try {
     keys.value = await loadWorkspaceKeys(window.location.origin, lifecycle.signal)
@@ -254,8 +284,13 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .result-filters .result-filter{width:160px;min-width:0}
 .quality-result{scroll-margin-top:96px}
 .result-card{position:relative}
-.result-card>.quality-status{position:absolute;top:24px;right:24px}
-.result-card .group-name{display:block;padding-right:90px}
+.result-actions{display:flex;align-items:flex-end;flex-direction:column;gap:10px}
+.delete-run{font-size:12px;color:#b95547;white-space:nowrap;padding:4px 0}
+.delete-run:hover{color:#932e24;text-decoration:underline}
+.delete-run:disabled{opacity:.4;cursor:not-allowed;text-decoration:none}
+.delete-run:focus-visible{outline:2px solid currentColor;outline-offset:3px;border-radius:2px}
+.result-card>.result-actions{position:absolute;top:24px;right:24px;flex-direction:row;align-items:center}
+.result-card .group-name{display:block;padding-right:140px}
 .result-card .result-content{margin-top:20px}
 @media(max-width:640px){.result-filters .result-filter{flex:1;width:100px}}
 .results-list{background:var(--color-bg-primary,#fff);border-top:2px solid #263d37;border-bottom:1px solid #dce5e2}
@@ -268,11 +303,14 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .result-meta h3{font-size:17px;font-weight:650;line-height:1.5;margin:6px 0 12px;overflow-wrap:anywhere}
 .result-meta .result-author{font-size:12px;line-height:1.6;margin:0 0 4px;overflow-wrap:anywhere}
 .result-meta time{font-size:11px;color:#86928d;font-variant-numeric:tabular-nums}
-.result-row>.quality-status{grid-column:3;grid-row:1;justify-self:end;display:flex;gap:6px;align-items:center}
+.result-row>.result-actions{grid-column:3;grid-row:1;justify-self:end}
+.result-row .quality-status{display:flex;gap:6px;align-items:center}
 .quality-status.running:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
 .result-content{grid-column:2;grid-row:1;min-width:0}
 .result-row .answer-panel{padding:0;background:transparent;border-radius:0}
 .result-row .answer-header{color:#88958f;margin:0 0 12px;justify-content:flex-start;gap:14px}
+.called-account{flex-wrap:wrap;overflow-wrap:anywhere}
+.called-account strong{color:#536878;font-weight:600}
 .result-row .answer-scroll{max-height:420px;margin:0}
 .answer-markdown :deep(.katex-display){overflow-x:auto;overflow-y:hidden;padding:4px 0;max-width:100%}
 .result-row .account-line{background:transparent;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:4px;border-radius:0}
@@ -288,5 +326,5 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .schedule-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#9da8a1}.schedule-dot.enabled{background:#0c8a72}.schedule-model{font-family:monospace;margin-left:6px}
 :global(.dark) .results-list{background:#172524;border-color:#55766b}:global(.dark) .result-list-head{background:#20322c;border-color:#344c42}:global(.dark) .result-row{border-color:#2b3e3a}:global(.dark) .result-row .answer-panel,:global(.dark) .result-row .account-line,:global(.dark) .result-row .result-placeholder{background:transparent}
 @media(max-width:1000px){.result-list-head,.result-row{grid-template-columns:180px minmax(0,1fr) 86px;column-gap:20px}}
-@media(max-width:760px){.result-list-head{display:none}.result-row{grid-template-columns:minmax(0,1fr) auto;padding:20px 4px;row-gap:20px;column-gap:12px}.result-meta{grid-column:1;grid-row:1}.result-row>.quality-status{grid-column:2;grid-row:1}.result-content{grid-column:1/-1;grid-row:2}.result-meta h3{margin:4px 0 8px}.result-row .answer-scroll{max-height:440px}.result-row .preview-panel iframe{height:250px}.theme-bar{gap:6px}.theme-bar button{padding:10px 8px;min-width:0;white-space:nowrap}.official-controls .btn{flex:1}}
+@media(max-width:760px){.result-list-head{display:none}.result-row{grid-template-columns:minmax(0,1fr) auto;padding:20px 4px;row-gap:20px;column-gap:12px}.result-meta{grid-column:1;grid-row:1}.result-row>.result-actions{grid-column:2;grid-row:1}.result-content{grid-column:1/-1;grid-row:2}.result-meta h3{margin:4px 0 8px}.result-row .answer-scroll{max-height:440px}.result-row .preview-panel iframe{height:250px}.theme-bar{gap:6px}.theme-bar button{padding:10px 8px;min-width:0;white-space:nowrap}.official-controls .btn{flex:1}}
 </style>

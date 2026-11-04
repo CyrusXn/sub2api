@@ -45,6 +45,10 @@ export const modelQualityAPI = {
   async update(id: number, progress: QualityProgress): Promise<void> {
     await apiClient.patch('/model-quality/' + id, progress)
   },
+  async remove(id: number): Promise<void> {
+    const { data } = await apiClient.delete('/model-quality/' + id)
+    if (data?.deleted !== true) throw new Error('删除检测记录失败')
+  },
   async official(): Promise<OfficialQualityConfig> {
     const { data } = await apiClient.get('/model-quality/official')
     if (typeof data?.enabled !== 'boolean') throw { status: 404 }

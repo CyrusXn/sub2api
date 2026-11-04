@@ -10,6 +10,22 @@ import (
 	"time"
 )
 
+func TestModelQualityDeleteClearsContentAndRejectsMissingRecords(t *testing.T) {
+	for _, affected := range []int64{0, 1} {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		mock.ExpectExec(regexp.QuoteMeta("UPDATE model_quality_runs SET deleted_at=NOW(),content='',prompt='',error='' WHERE id=$1 AND deleted_at IS NULL")).WithArgs(int64(17)).WillReturnResult(sqlmock.NewResult(0, affected))
+		err = NewModelQualityRepository(db).Delete(context.Background(), 17)
+		if affected == 0 {
+			require.ErrorIs(t, err, service.ErrModelQualityNotFound)
+		} else {
+			require.NoError(t, err)
+		}
+		require.NoError(t, mock.ExpectationsWereMet())
+		db.Close()
+	}
+}
+
 func TestModelQualityProgressCannotOverwriteFinalOrAnotherUsersRecord(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

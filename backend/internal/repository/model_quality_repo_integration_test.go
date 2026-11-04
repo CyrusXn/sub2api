@@ -54,3 +54,36 @@ func TestModelQualityRepositoryPersistsProgressAndTerminalState(t *testing.T) {
 		})
 	}
 }
+
+func TestModelQualityDeleteHidesResultWithoutReleasingOfficialSlot(t *testing.T) {
+	ctx := context.Background()
+	user := mustCreateUser(t, integrationEntClient, &service.User{})
+	t.Cleanup(func() {
+		_, err := integrationDB.ExecContext(ctx, "DELETE FROM model_quality_runs WHERE user_id=$1", user.ID)
+		require.NoError(t, err)
+		_, err = integrationDB.ExecContext(ctx, "DELETE FROM users WHERE id=$1", user.ID)
+		require.NoError(t, err)
+	})
+	repo := NewModelQualityRepository(integrationDB)
+	slot := time.Now().UTC().Truncate(time.Hour).Add(10000 * time.Hour)
+	run := &service.ModelQualityRun{UserID: user.ID, Author: user.Email, GroupName: "待删除分组", Model: "gpt-delete-test", Prompt: "你是谁", OfficialSlot: &slot}
+	require.NoError(t, repo.Create(ctx, run))
+	require.NoError(t, repo.Update(ctx, run.ID, user.ID, "completed", "待删除内容", "delete-test-request"))
+	require.NoError(t, repo.Delete(ctx, run.ID))
+	var deleted sql.NullTime
+	var content, prompt string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT deleted_at,content,prompt FROM model_quality_runs WHERE id=$1", run.ID).Scan(&deleted, &content, &prompt))
+	require.True(t, deleted.Valid)
+	require.Empty(t, content)
+	require.Empty(t, prompt)
+	items, total, err := repo.List(ctx, 1, "official", "", "待删除分组", "gpt-delete-test")
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.Zero(t, total)
+	options, err := repo.FilterOptions(ctx, "official")
+	require.NoError(t, err)
+	require.NotContains(t, options.Models, "gpt-delete-test")
+	require.ErrorIs(t, repo.Update(ctx, run.ID, user.ID, "running", "迟到内容", ""), service.ErrModelQualityNotRunning)
+	require.ErrorIs(t, repo.Create(ctx, run), service.ErrModelQualityAlreadyScheduled)
+	require.ErrorIs(t, repo.Delete(ctx, run.ID), service.ErrModelQualityNotFound)
+}

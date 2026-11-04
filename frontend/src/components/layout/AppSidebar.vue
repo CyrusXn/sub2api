@@ -692,7 +692,6 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/model-factory', label: t('nav.modelFactory'), icon: CubeIcon },
     { path: '/workspace', label: t('nav.workspace'), icon: AIImageIcon },
-    { path: '/model-quality', label: t('modelQuality.title'), icon: ShieldIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
@@ -731,7 +730,7 @@ const personalNavItems = computed((): NavItem[] => finalizeNav(buildSelfNavItems
 // 简易模式也只保留统一创作工作台。
 const adminPersonalNavItems = computed((): NavItem[] => (
   authStore.isSimpleMode
-    ? personalNavItems.value.filter((item) => item.path === '/workspace' || item.path === '/model-quality')
+    ? personalNavItems.value.filter((item) => item.path === '/workspace')
     : personalNavItems.value
 ))
 

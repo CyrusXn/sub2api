@@ -52,6 +52,7 @@ func (r *officialRepoFake) List(context.Context, int, string, string, string, st
 func (r *officialRepoFake) FilterOptions(context.Context, string) (ModelQualityFilterOptions, error) {
 	return ModelQualityFilterOptions{}, nil
 }
+func (r *officialRepoFake) Delete(context.Context, int64) error { return nil }
 func officialTestKey() *APIKey {
 	gid := int64(2)
 	return &APIKey{ID: 3, UserID: 12, Name: "官key", Key: "test-only-secret", Status: StatusActive, GroupID: &gid, Group: &Group{Name: "官key分组"}, User: &User{Email: "admin@example.com", Role: RoleAdmin, Status: StatusActive}}
