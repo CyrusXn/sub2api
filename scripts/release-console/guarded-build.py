@@ -17,6 +17,9 @@ preview = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preview)
 BUILDER = 'buildx_buildkit_sub2api-release0'
 ACCESS_LOG = Path('/home/web/log/nginx/access.log')
+SAMPLE_SECONDS = 5
+SAMPLE_BUDGET = 4
+PROBE_SECONDS = 3
 
 
 class ErrorRate:
@@ -25,17 +28,39 @@ class ErrorRate:
         self.stream = path.open('rb')
         self.inode = path.stat().st_ino
         self.stream.seek(0, os.SEEK_END)
+        self.position = self.stream.tell()
+        self.tail = os.pread(self.stream.fileno(), min(64, self.position), max(0, self.position - 64))
 
-    def sample(self):
-        if self.path.stat().st_ino != self.inode:
+    def sample(self, deadline=None):
+        snapshot = self.path.stat()
+        if snapshot.st_ino != self.inode:
             raise RuntimeError('访问日志轮转，无法持续比较 5xx 基线')
+        if (snapshot.st_size < self.position or
+                os.pread(self.stream.fileno(), len(self.tail), self.position - len(self.tail)) != self.tail):
+            raise RuntimeError('访问日志截断或重写，无法持续比较 5xx 基线')
+        # 固定本次读取终点并清除缓存，避免持续追加或 copytruncate 使采样无限等待或漏报。
+        self.stream.seek(self.position)
         total = errors = 0
-        for line in self.stream:
+        while self.stream.tell() < snapshot.st_size:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError('守护采样超出时间预算')
+            position = self.stream.tell()
+            line = self.stream.readline(snapshot.st_size - position)
+            if not line:
+                raise RuntimeError('读取期间访问日志被截断')
+            if not line.endswith(b'\n'):
+                self.stream.seek(position)
+                break
             # 只提取状态码计数，不输出请求地址、用户标识或原始日志。
             match = re.search(rb'"\s+(\d{3})\s+', line)
             if match:
                 total += 1
                 errors += int(match[1]) >= 500
+        current = self.path.stat()
+        if current.st_ino != self.inode or current.st_size < snapshot.st_size:
+            raise RuntimeError('读取期间访问日志轮转或截断')
+        self.position = self.stream.tell()
+        self.tail = os.pread(self.stream.fileno(), min(64, self.position), max(0, self.position - 64))
         return errors / total if total else 0
 
 
@@ -95,9 +120,11 @@ def container_cgroup_path(relative, container_id, hierarchy=Path('/sys/fs/cgroup
 
 
 def builder_sample():
-    result = subprocess.run(['docker', 'inspect', BUILDER], capture_output=True, text=True, timeout=3)
+    result = subprocess.run(['docker', 'inspect', BUILDER], capture_output=True, text=True, timeout=PROBE_SECONDS)
     if result.returncode:
-        return None
+        if re.search(r'(?:No such object|No such container): ' + re.escape(BUILDER) + r'\s*$', result.stderr):
+            return None
+        raise RuntimeError('构建器身份探测失败，取消构建以保留保护')
     container = json.loads(result.stdout)[0]
     if not container['State']['Running']:
         return None
@@ -119,8 +146,8 @@ def builder_sample():
     }
 
 
-def require_sample(sample, previous):
-    if previous and sample is None:
+def require_sample(sample, previous, building=False):
+    if sample is None and (previous or building):
         raise RuntimeError('构建器采样丢失，取消构建以保留内存保护')
     if previous and sample['id'] != previous['id']:
         raise RuntimeError('构建期间专用构建器身份改变')
@@ -143,13 +170,20 @@ def group_processes(group):
 
 
 def owned_buildx(group):
+    processes = group_processes(group)
+    if not processes:
+        raise RuntimeError('无法确认本次构建进程阶段')
     return any(b'build' in args and b'--builder' in args and b'sub2api-release' in args
-               for _, args in group_processes(group))
+               for _, args in processes)
 
 
 def cancel(process, builder):
     # 唯一子进程固定为 build，不可能继续进入预热或切流；只取消本进程组。
-    active = owned_buildx(process.pid)
+    try:
+        active = owned_buildx(process.pid)
+    except (OSError, RuntimeError, ValueError):
+        # 阶段探针失败也必须取消自己的纯 build；未知阶段绝不停止 Docker 容器。
+        active = False
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGTERM)
         try:
@@ -160,7 +194,7 @@ def cancel(process, builder):
     try:
         if active and builder:
             # 采样可能正因 cgroup 消失而失败；停止前仅复核 Docker 身份，不再依赖 cgroup。
-            current_id = preview.docker('inspect', '-f', '{{.Id}}', BUILDER)
+            current_id = preview.docker('inspect', '-f', '{{.Id}}', BUILDER, timeout=PROBE_SECONDS)
             if current_id == builder['id']:
                 preview.docker('stop', '--time', '10', builder['id'])
     finally:
@@ -173,70 +207,129 @@ def cancel(process, builder):
                 time.sleep(.1)
 
 
-def production_health():
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        return all(pool.map(preview.healthy, (preview.PUBLIC_HEALTH, 'http://127.0.0.1:8080/health')))
+def production_state():
+    return preview.docker('inspect', '-f', '{{.Name}}|{{.Id}}|{{.State.StartedAt}}|'
+                          '{{.RestartCount}}|{{.State.Running}}', *preview.PRODUCTION,
+                          timeout=PROBE_SECONDS)
+
+
+def probe_health(url):
+    # curl 和子进程均设期限，DNS 或响应体阻塞不能让探针线程拖住构建保护。
+    try:
+        result = subprocess.run(['curl', '-fsS', '--max-time', str(PROBE_SECONDS),
+                                 '--write-out', '\n%{http_code}', url],
+                                capture_output=True, text=True, timeout=PROBE_SECONDS)
+        body, status = result.stdout.rsplit('\n', 1)
+        document = json.loads(body)
+        return (result.returncode == 0 and status == '200' and isinstance(document, dict)
+                and document.get('status') == 'ok')
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def collect_sample(counter, group=None):
+    deadline = time.monotonic() + SAMPLE_BUDGET
+    phase = 'baseline' if group is None else ('buildx' if owned_buildx(group) else 'build-prepare-or-verify')
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    try:
+        jobs = {
+            'memory': pool.submit(builder_sample),
+            'production_state': pool.submit(production_state),
+            'public_healthy': pool.submit(probe_health, preview.PUBLIC_HEALTH),
+            'application_healthy': pool.submit(probe_health, 'http://127.0.0.1:8080/health'),
+        }
+        done, pending = concurrent.futures.wait(jobs.values(),
+            timeout=max(0, deadline - time.monotonic()), return_when=concurrent.futures.FIRST_EXCEPTION)
+        for job in done:
+            if job.exception() is not None:
+                raise job.exception()
+        if pending:
+            raise RuntimeError('守护采样超出时间预算，取消本次构建')
+        sample = {key: job.result() for key, job in jobs.items()}
+        sample.update(time=time.strftime('%FT%T%z'), phase=phase, available_mib=preview.memory_mb(),
+                      error_rate=counter.sample(deadline))
+        if time.monotonic() >= deadline:
+            raise RuntimeError('守护采样超出时间预算，取消本次构建')
+        sample['production_healthy'] = sample['public_healthy'] and sample['application_healthy']
+        return sample
+    finally:
+        # 超预算先返回取消 build，不能等待失效探针；外部命令各自仍受 3 秒期限约束。
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def log_sample(sample, events):
+    record = {key: value for key, value in sample.items() if key != 'production_state'}
+    record['event_delta'] = {key: value - events.get(key, 0)
+                             for key, value in (sample['memory'] or {}).get('events', {}).items()}
+    print(json.dumps(record), flush=True)
 
 
 def build_with_lock(commit, lock):
     if not re.fullmatch('[a-f0-9]{40}', commit) or os.geteuid() != 0:
         raise RuntimeError('仅允许 root 在服务器构建完整审核 SHA')
-    baseline = preview.production_state()
-    if '|false' in baseline or not production_health():
-        raise RuntimeError('生产健康基线不满足')
     counter = ErrorRate(ACCESS_LOG)
-    # 构建前持续 60 秒记录真实业务基线，并确认恢复资源门槛。
-    rates = []
-    for _ in range(12):
-        if preview.memory_mb() < 4608 or not production_health():
-            raise RuntimeError('可用内存和健康未持续满足 60 秒门槛')
-        time.sleep(5)
-        rates.append(counter.sample())
-    before = builder_sample()
-    limits = Limits(before['events'] if before else {}, max(rates))
-    if preview.production_state() != baseline:
-        raise RuntimeError('基线采样期间生产容器状态改变')
-    environment = dict(os.environ, SUB2API_RELEASE_LOCK_FD=str(lock.fileno()))
-    process = subprocess.Popen(['/usr/local/bin/sub2api-release', 'build', commit], start_new_session=True,
-                               pass_fds=(lock.fileno(),), env=environment)
-    builder = before
+    process = builder = None
     try:
+        # 包含第 0 秒和第 60 秒的样本，基线与构建使用同一套限时探针和脱敏日志。
+        rates, baseline, baseline_events = [], None, None
+        for index in range(13):
+            tick = time.monotonic()
+            data = collect_sample(counter)
+            sample = data['memory']
+            if baseline_events is None and sample:
+                baseline_events = dict(sample['events'])
+            log_sample(data, baseline_events or {})
+            require_sample(sample, builder)
+            builder = sample
+            if baseline is None:
+                baseline = data['production_state']
+            if data['production_state'] != baseline or '|false' in baseline:
+                raise RuntimeError('基线采样期间生产容器状态改变或未运行')
+            if data['available_mib'] < 4608 or not data['production_healthy']:
+                raise RuntimeError('可用内存和健康未持续满足 60 秒门槛')
+            rates.append(data['error_rate'])
+            if index < 12:
+                time.sleep(max(0, SAMPLE_SECONDS - (time.monotonic() - tick)))
+        before = builder
+        limits = Limits(before['events'] if before else {}, max(rates))
+        environment = dict(os.environ, SUB2API_RELEASE_LOCK_FD=str(lock.fileno()))
+        process = subprocess.Popen(['/usr/local/bin/sub2api-release', 'build', commit], start_new_session=True,
+                                   pass_fds=(lock.fileno(),), env=environment)
         while process.poll() is None:
             tick = time.monotonic()
-            sample = builder_sample()
-            require_sample(sample, builder)
+            data = collect_sample(counter, process.pid)
+            sample = data['memory']
+            log_sample(data, limits.events)
+            require_sample(sample, builder, data['phase'] == 'buildx')
             if sample:
                 if builder is None:
                     # 新 cgroup 从零计数；首次采样出现 OOM 也必须识别。
                     limits.events = dict(before['events']) if before and before['id'] == sample['id'] else {}
                 builder = sample
-            available = preview.memory_mb()
-            rate = counter.sample()
-            health_ok = production_health()
-            reason = limits.check(tick, available, sample['current'] if sample else 0,
+            reason = limits.check(tick, data['available_mib'], sample['current'] if sample else 0,
                                   sample['maximum'] if sample else 0,
-                                  sample['events'] if sample else limits.events, health_ok, rate)
-            phase = 'buildx' if owned_buildx(process.pid) else 'build-prepare-or-verify'
-            print(json.dumps({'time': time.strftime('%FT%T%z'), 'phase': phase,
-                              'available_mib': available, 'memory': sample,
-                              'event_delta': {key: value - limits.events.get(key, 0) for key, value in
-                                              (sample['events'] if sample else {}).items()},
-                              'production_healthy': health_ok, 'error_rate': rate}), flush=True)
-            if reason or preview.production_state() != baseline:
+                                  sample['events'] if sample else limits.events,
+                                  data['production_healthy'], data['error_rate'])
+            if reason or data['production_state'] != baseline:
                 raise RuntimeError(reason or '生产容器状态改变')
-            time.sleep(max(0, 5 - (time.monotonic() - tick)))
-        final = builder_sample()
+            time.sleep(max(0, SAMPLE_SECONDS - (time.monotonic() - tick)))
+        data = collect_sample(counter)
+        data['phase'] = 'build-finished'
+        log_sample(data, limits.events)
+        final = data['memory']
         require_sample(final, builder)
         if final and any(final['events'].get(key, 0) > limits.events.get(key, 0) for key in ('oom', 'oom_kill')):
             raise RuntimeError('最终采样发现本次构建 OOM，保留诊断')
         if process.returncode:
             raise RuntimeError('候选构建失败，保留构建日志和状态')
+        if data['production_state'] != baseline or not data['production_healthy']:
+            raise RuntimeError('构建后生产基线验证失败')
     finally:
-        if process.poll() is None:
-            cancel(process, builder)
-        counter.stream.close()
-    if preview.production_state() != baseline or not production_health():
-        raise RuntimeError('构建后生产基线验证失败')
+        try:
+            if process is not None and process.poll() is None:
+                cancel(process, builder)
+        finally:
+            counter.stream.close()
     print('候选构建完成且生产基线未变；未启动候选、未切流。', flush=True)
 
 

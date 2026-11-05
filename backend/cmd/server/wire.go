@@ -115,6 +115,7 @@ func provideCleanup(
 	alertEmailOutbox *service.AlertEmailOutboxService,
 	billingCache *service.BillingCacheService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	digestSessions *service.DigestSessionStore,
 	subscriptionService *service.SubscriptionService,
 	oauth *service.OAuthService,
 	openaiOAuth *service.OpenAIOAuthService,
@@ -152,6 +153,12 @@ func provideCleanup(
 			{"AlertEmailOutboxService", func() error {
 				if alertEmailOutbox != nil {
 					alertEmailOutbox.Stop()
+				}
+				return nil
+			}},
+			{"DigestSessionStore", func() error {
+				if digestSessions != nil {
+					digestSessions.Close()
 				}
 				return nil
 			}},

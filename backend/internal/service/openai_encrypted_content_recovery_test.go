@@ -98,47 +98,59 @@ func TestOpenAIEncryptedHistoryWSClassification(t *testing.T) {
 	}
 }
 
+func TestOpenAIEncryptedHistoryNestedSSEFailureCode(t *testing.T) {
+	const payload = `{"type":"response.failed","response":{"id":"resp_bad","status":"failed","error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"The encrypted content could not be verified."}}}`
+	err := newOpenAIEncryptedContentRecoverySignal([]byte(payload), extractOpenAISSEErrorMessage([]byte(payload)))
+	require.Error(t, err, "response.failed 的嵌套错误码应进入密文恢复")
+	var signal *openAIEncryptedContentRecoverySignal
+	require.ErrorAs(t, err, &signal)
+}
+
 func TestOpenAIEncryptedHistorySSERecovery(t *testing.T) {
-	for _, passthrough := range []bool{false, true} {
-		for _, stream := range []bool{false, true} {
-			for _, outputStarted := range []bool{false, true} {
-				t.Run(fmt.Sprintf("passthrough=%t/stream=%t/output=%t", passthrough, stream, outputStarted), func(t *testing.T) {
-					const failure = `{"type":"response.failed","response":{"id":"resp_bad","status":"failed","error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"Encrypted function output content could not be decrypted or decoded."}}}`
-					prelude := ""
-					if outputStarted {
-						prelude = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"already-delivered\"}\n\n"
-					}
-					response := func(body string) *http.Response {
-						return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
-					}
-					upstream := &httpUpstreamRecorder{responses: []*http.Response{
-						response(prelude + "data: " + failure + "\n\n"),
-						response("data: {\"type\":\"response.output_text.delta\",\"delta\":\"recovered-output\"}\n\n" +
-							"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered-output\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"),
-					}}
-					cfg := &config.Config{}
-					svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
-					account := &Account{ID: 10, Name: "隔离流式密文测试", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
-						Credentials: map[string]any{"api_key": "test-only", "base_url": "https://example.com"},
-						Extra:       map[string]any{"use_responses_api": true, "openai_passthrough": passthrough}}
-					rec := httptest.NewRecorder()
-					c, _ := gin.CreateTestContext(rec)
-					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-					SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-					input := []byte(fmt.Sprintf(`{"model":"gpt-5","stream":%t,"input":[{"type":"reasoning","encrypted_content":"foreign-cipher","summary":[]},{"type":"message","role":"user","content":"hello"}]}`, stream))
-					_, err := svc.Forward(context.Background(), c, account, input)
-					if stream && outputStarted {
-						require.Error(t, err)
-						require.Len(t, upstream.bodies, 1, "正文已交付不能重放")
-						require.Contains(t, rec.Body.String(), "already-delivered")
-						return
-					}
-					require.NoError(t, err)
-					require.Len(t, upstream.bodies, 2)
-					require.NotContains(t, string(upstream.bodies[1]), "foreign-cipher")
-					require.Contains(t, rec.Body.String(), "recovered-output")
-					require.NotContains(t, rec.Body.String(), "resp_bad")
-				})
+	for _, failure := range []struct{ name, body string }{
+		{"function_output", `{"type":"response.failed","response":{"id":"resp_bad","status":"failed","error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"Encrypted function output content could not be decrypted or decoded."}}}`},
+		{"nested_code", `{"type":"response.failed","response":{"id":"resp_bad","status":"failed","error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"The encrypted content could not be verified."}}}`},
+	} {
+		for _, passthrough := range []bool{false, true} {
+			for _, stream := range []bool{false, true} {
+				for _, outputStarted := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/passthrough=%t/stream=%t/output=%t", failure.name, passthrough, stream, outputStarted), func(t *testing.T) {
+						prelude := ""
+						if outputStarted {
+							prelude = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"already-delivered\"}\n\n"
+						}
+						response := func(body string) *http.Response {
+							return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+						}
+						upstream := &httpUpstreamRecorder{responses: []*http.Response{
+							response(prelude + "data: " + failure.body + "\n\n"),
+							response("data: {\"type\":\"response.output_text.delta\",\"delta\":\"recovered-output\"}\n\n" +
+								"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered-output\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"),
+						}}
+						cfg := &config.Config{}
+						svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+						account := &Account{ID: 10, Name: "隔离流式密文测试", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+							Credentials: map[string]any{"api_key": "test-only", "base_url": "https://example.com"},
+							Extra:       map[string]any{"use_responses_api": true, "openai_passthrough": passthrough}}
+						rec := httptest.NewRecorder()
+						c, _ := gin.CreateTestContext(rec)
+						c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+						SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+						input := []byte(fmt.Sprintf(`{"model":"gpt-5","stream":%t,"input":[{"type":"reasoning","encrypted_content":"foreign-cipher","summary":[]},{"type":"message","role":"user","content":"hello"}]}`, stream))
+						_, err := svc.Forward(context.Background(), c, account, input)
+						if stream && outputStarted {
+							require.Error(t, err)
+							require.Len(t, upstream.bodies, 1, "正文已交付不能重放")
+							require.Contains(t, rec.Body.String(), "already-delivered")
+							return
+						}
+						require.NoError(t, err)
+						require.Len(t, upstream.bodies, 2)
+						require.NotContains(t, string(upstream.bodies[1]), "foreign-cipher")
+						require.Contains(t, rec.Body.String(), "recovered-output")
+						require.NotContains(t, rec.Body.String(), "resp_bad")
+					})
+				}
 			}
 		}
 	}

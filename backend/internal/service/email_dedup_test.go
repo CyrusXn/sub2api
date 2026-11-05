@@ -104,7 +104,7 @@ func TestEmailDedupSMTPAndOwnerRecipient(t *testing.T) {
 	require.NoError(t, second.SendEmail(ctx, "other@example.com", "相同告警", "检测时间：2026-09-09T12:01:00Z"))
 	require.EqualValues(t, 2, smtpServer.messageCount())
 	service := NewBalanceNotifyService(first, repo, nil)
-	require.True(t, service.sendBalanceLowEmails([]string{"admin@example.com"}, 7, "用户", "owner@example.com", 1, 2, "站点", ""))
+	require.True(t, service.sendBalanceLowEmails(context.Background(), []string{"admin@example.com"}, 7, "用户", "owner@example.com", 1, 2, "站点", ""))
 	message := strings.ToLower(smtpServer.lastMessage())
 	require.Contains(t, message, "to: <owner@example.com>")
 	require.NotContains(t, message, "admin@example.com")

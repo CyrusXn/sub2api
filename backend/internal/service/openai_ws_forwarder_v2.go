@@ -664,6 +664,13 @@ readLoop:
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 			failureMessage := extractOpenAISSEErrorMessage(message)
 			if !wroteDownstream && !clientDisconnected {
+				// 上游可能只发 response.failed；在交付正文前复用已有的一次性密文恢复。
+				if eventType == "response.failed" {
+					if recoveryErr := newOpenAIEncryptedContentRecoverySignal(message, failureMessage); recoveryErr != nil {
+						lease.MarkBroken()
+						return nil, wrapOpenAIWSFallback(openAIWSFallbackReasonInvalidEncryptedContent, recoveryErr)
+					}
+				}
 				shouldFailover := openAIStreamFailedEventShouldFailover(message, failureMessage)
 				if eventType == "error" {
 					shouldFailover = openAIStreamErrorEventShouldFailover(message, failureMessage)

@@ -39,7 +39,12 @@ type openAIEncryptedContentRecoverySignal struct {
 func (e *openAIEncryptedContentRecoverySignal) Error() string { return e.message }
 
 func newOpenAIEncryptedContentRecoverySignal(payload []byte, message string) error {
-	if !isOpenAIInvalidEncryptedContentError(extractUpstreamErrorCode(payload), message) {
+	// response.failed 把错误码放在 response.error 中，不能只按 HTTP 错误包读取。
+	code := openAIStreamFailedEventErrorCode(payload)
+	if code == "" {
+		code = extractUpstreamErrorCode(payload)
+	}
+	if !isOpenAIInvalidEncryptedContentError(code, message) {
 		return nil
 	}
 	return &openAIEncryptedContentRecoverySignal{payload: append([]byte(nil), payload...), message: sanitizeUpstreamErrorMessage(message)}
