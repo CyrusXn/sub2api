@@ -108,6 +108,8 @@ func writeOpenAIErrorJSON(c *gin.Context, statusCode int, payload gin.H) {
 	body, _ := json.Marshal(payload)
 	if !writeOpenAIResponsesErrorAfterKeepalive(c, statusCode, body) {
 		c.JSON(statusCode, payload)
+		// 完整 JSON 错误已经交付，阻止 handler 在尾部再拼接通用 SSE 终态。
+		MarkResponseCommitted(c)
 	}
 }
 

@@ -4582,7 +4582,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ClientDisconnect
 	}
 }
 
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InvalidEncryptedContentLineageStripsNextTurn(t *testing.T) {
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InvalidEncryptedContentRecoversAndStripsNextTurn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -4600,15 +4600,15 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InvalidEncrypted
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
-	upstreamConn := &openAIWSCaptureConn{
-		events: [][]byte{
-			[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"The encrypted content could not be verified"}}`),
-			[]byte(`{"type":"response.failed","response":{"id":"resp_enc_lineage_1","model":"gpt-5.1","error":{"code":"invalid_encrypted_content","message":"The encrypted content could not be verified"}}}`),
-			[]byte(`{"type":"response.completed","response":{"id":"resp_enc_lineage_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
-		},
-	}
+	upstreamConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"The encrypted content could not be verified"}}`),
+	}}
+	retryConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"response.completed","response":{"id":"resp_enc_lineage_recovered","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+		[]byte(`{"type":"response.completed","response":{"id":"resp_enc_lineage_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+	}}
 	dialer := &openAIWSQueueDialer{
-		conns: []openAIWSClientConn{upstreamConn},
+		conns: []openAIWSClientConn{upstreamConn, retryConn},
 	}
 	pool := newOpenAIWSConnPool(cfg)
 	pool.setClientDialerForTest(dialer)
@@ -4696,19 +4696,17 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InvalidEncrypted
 		return message
 	}
 
-	// turn1：携带失效密文，上游以 invalid_encrypted_content 拒绝（error + response.failed 透传给客户端）。
-	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"reasoning","id":"rs_1","encrypted_content":"stale-cipher","summary":[]},{"type":"input_text","text":"hi"}]}`)
+	// turn1：仅携带工具结果密文；明确拒绝后替换占位并重试一次。
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_prev_tool","input":[{"type":"function_call_output","call_id":"call_enc","output":[{"type":"input_text","text":"readable-result"},{"type":"encrypted_content","encrypted_content":"stale-cipher"}]}]}`)
 	firstEvent := readMessage()
-	require.Equal(t, "error", gjson.GetBytes(firstEvent, "type").String())
-	require.Equal(t, "invalid_encrypted_content", gjson.GetBytes(firstEvent, "error.code").String())
-	secondEvent := readMessage()
-	require.Equal(t, "response.failed", gjson.GetBytes(secondEvent, "type").String())
+	require.Equal(t, "response.completed", gjson.GetBytes(firstEvent, "type").String(), "不应将可恢复的拒绝帧先交付客户端")
+	require.Equal(t, "resp_enc_lineage_recovered", gjson.GetBytes(firstEvent, "response.id").String())
 
 	// turn2：客户端历史仍带同一失效密文，进场应被 lineage 预剥离后再发上游。
-	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"reasoning","id":"rs_1","encrypted_content":"stale-cipher","summary":[]},{"type":"input_text","text":"hi"},{"type":"input_text","text":"again"}]}`)
-	thirdEvent := readMessage()
-	require.Equal(t, "response.completed", gjson.GetBytes(thirdEvent, "type").String())
-	require.Equal(t, "resp_enc_lineage_2", gjson.GetBytes(thirdEvent, "response.id").String())
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"function_call_output","call_id":"call_enc","output":[{"type":"input_text","text":"readable-result"},{"type":"encrypted_content","encrypted_content":"stale-cipher"}]},{"type":"input_text","text":"again"}]}`)
+	secondEvent := readMessage()
+	require.Equal(t, "response.completed", gjson.GetBytes(secondEvent, "type").String())
+	require.Equal(t, "resp_enc_lineage_2", gjson.GetBytes(secondEvent, "response.id").String())
 
 	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
 	select {
@@ -4718,20 +4716,29 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InvalidEncrypted
 		t.Fatal("等待 ingress websocket 结束超时")
 	}
 
+	require.Equal(t, 2, dialer.DialCount(), "本轮恢复应更换已拒绝请求的上游连接")
 	upstreamConn.mu.Lock()
-	writes := append([]map[string]any(nil), upstreamConn.writes...)
+	firstWrites := append([]map[string]any(nil), upstreamConn.writes...)
 	upstreamConn.mu.Unlock()
-	require.Len(t, writes, 2, "两轮各应发送一次上游请求")
+	require.Len(t, firstWrites, 1)
 
-	firstUpstream := requestToJSONString(writes[0])
-	require.Equal(t, "stale-cipher", gjson.Get(firstUpstream, "input.0.encrypted_content").String(), "首轮请求原样携带密文")
+	firstUpstream := requestToJSONString(firstWrites[0])
+	require.Equal(t, "stale-cipher", gjson.Get(firstUpstream, "input.0.output.1.encrypted_content").String(), "首轮请求原样携带密文")
 
-	secondUpstream := requestToJSONString(writes[1])
-	secondInput := gjson.Get(secondUpstream, "input").Array()
-	require.Len(t, secondInput, 3, "剥离仅移除 encrypted_content 字段，reasoning 骨架保留")
-	for _, item := range secondInput {
-		require.False(t, item.Get("encrypted_content").Exists(), "第二轮请求不得再携带已失效密文: %s", item.Raw)
-	}
-	require.Equal(t, "rs_1", gjson.Get(secondUpstream, "input.0.id").String())
-	require.Equal(t, "again", gjson.Get(secondUpstream, "input.2.text").String())
+	retryConn.mu.Lock()
+	retryWrites := append([]map[string]any(nil), retryConn.writes...)
+	retryConn.mu.Unlock()
+	require.Len(t, retryWrites, 2, "重试及下一轮各发送一次上游请求")
+	retryPayload := requestToJSONString(retryWrites[0])
+	require.Equal(t, "resp_prev_tool", gjson.Get(retryPayload, "previous_response_id").String(), "恢复工具结果应保留链锚点")
+	require.Equal(t, "call_enc", gjson.Get(retryPayload, "input.0.call_id").String())
+	require.Equal(t, "readable-result", gjson.Get(retryPayload, "input.0.output.0.text").String())
+	require.Equal(t, "input_text", gjson.Get(retryPayload, "input.0.output.1.type").String())
+	require.Contains(t, gjson.Get(retryPayload, "input.0.output.1.text").String(), "结果不可用")
+	require.Contains(t, gjson.Get(retryPayload, "input.0.output.1.text").String(), "重新核查")
+	require.NotContains(t, retryPayload, "stale-cipher")
+	secondPayload := requestToJSONString(retryWrites[1])
+	require.NotContains(t, secondPayload, "stale-cipher", "后续轮次不再发送已拒绝密文")
+	require.Contains(t, secondPayload, "结果不可用")
+	require.Contains(t, secondPayload, "again")
 }

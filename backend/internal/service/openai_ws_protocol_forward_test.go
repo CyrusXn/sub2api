@@ -1881,7 +1881,7 @@ func TestOpenAIGatewayService_Forward_WSv2InvalidEncryptedContentKeepsPreviousRe
 		},
 	}
 
-	body := []byte(`{"model":"gpt-5.3-codex","stream":false,"previous_response_id":"resp_prev_function_call","input":[{"type":"reasoning","encrypted_content":"gAAA"},{"type":"function_call_output","call_id":"call_123","output":"ok"}]}`)
+	body := []byte(`{"model":"gpt-5.3-codex","stream":false,"previous_response_id":"resp_prev_function_call","input":[{"type":"function_call_output","call_id":"call_123","output":[{"type":"input_text","text":"keep-readable-result"},{"type":"encrypted_content","encrypted_content":"tool-cipher"}]}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1895,9 +1895,12 @@ func TestOpenAIGatewayService_Forward_WSv2InvalidEncryptedContentKeepsPreviousRe
 	require.Len(t, requests, 2)
 	require.True(t, gjson.GetBytes(requests[0], "previous_response_id").Exists(), "首轮请求应保留 previous_response_id")
 	require.True(t, gjson.GetBytes(requests[1], "previous_response_id").Exists(), "function_call_output 恢复重试不应移除 previous_response_id")
-	require.False(t, gjson.GetBytes(requests[1], `input.0.encrypted_content`).Exists(), "恢复重试应移除 reasoning encrypted_content")
+	require.False(t, gjson.GetBytes(requests[1], `input.0.output.1.encrypted_content`).Exists(), "恢复重试应替换失效的工具结果密文")
 	require.Equal(t, "function_call_output", gjson.GetBytes(requests[1], `input.0.type`).String(), "清洗后应保留 function_call_output 作为首个输入项")
 	require.Equal(t, "call_123", gjson.GetBytes(requests[1], `input.0.call_id`).String())
-	require.Equal(t, "ok", gjson.GetBytes(requests[1], `input.0.output`).String())
+	require.Equal(t, "keep-readable-result", gjson.GetBytes(requests[1], `input.0.output.0.text`).String())
+	require.Equal(t, "input_text", gjson.GetBytes(requests[1], `input.0.output.1.type`).String())
+	require.Contains(t, gjson.GetBytes(requests[1], `input.0.output.1.text`).String(), "结果不可用")
+	require.Contains(t, gjson.GetBytes(requests[1], `input.0.output.1.text`).String(), "重新核查")
 	require.Equal(t, "resp_prev_function_call", gjson.GetBytes(requests[1], "previous_response_id").String())
 }

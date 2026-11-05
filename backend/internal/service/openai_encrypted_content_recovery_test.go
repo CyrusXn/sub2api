@@ -136,7 +136,7 @@ func TestOpenAIEncryptedHistorySSERecovery(t *testing.T) {
 						c, _ := gin.CreateTestContext(rec)
 						c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 						SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-						input := []byte(fmt.Sprintf(`{"model":"gpt-5","stream":%t,"input":[{"type":"reasoning","encrypted_content":"foreign-cipher","summary":[]},{"type":"message","role":"user","content":"hello"}]}`, stream))
+						input := []byte(fmt.Sprintf(`{"model":"gpt-5","stream":%t,"input":[{"type":"reasoning","encrypted_content":"foreign-cipher","summary":[]},{"type":"message","role":"user","content":"hello"},{"type":"custom_tool_call_output","call_id":"call_custom","output":[{"type":"encrypted_content","encrypted_content":"tool-cipher"}]}]}`, stream))
 						_, err := svc.Forward(context.Background(), c, account, input)
 						if stream && outputStarted {
 							require.Error(t, err)
@@ -147,6 +147,9 @@ func TestOpenAIEncryptedHistorySSERecovery(t *testing.T) {
 						require.NoError(t, err)
 						require.Len(t, upstream.bodies, 2)
 						require.NotContains(t, string(upstream.bodies[1]), "foreign-cipher")
+						require.NotContains(t, string(upstream.bodies[1]), "tool-cipher")
+						require.Contains(t, string(upstream.bodies[1]), "结果不可用")
+						require.Contains(t, string(upstream.bodies[1]), "call_custom")
 						require.Contains(t, rec.Body.String(), "recovered-output")
 						require.NotContains(t, rec.Body.String(), "resp_bad")
 					})

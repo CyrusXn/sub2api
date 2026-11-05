@@ -13,11 +13,10 @@ import (
 
 // invalid_encrypted_content 失效密文 lineage。
 //
-// 上游判定某轮请求中的加密 reasoning/compaction 项不可解后，同一失效密文会随
-// 客户端维护的会话历史在后续每一轮重新出现，重复触发"整包被拒→剥离→重试/
-// 重连"。这里按会话记录已被上游拒绝过的 encrypted_content 摘要
-// （OpenAIWSStateStore，带 TTL 与容量自保护）；后续请求进场时仅剥离摘要命中
-// 的项，新生成的密文摘要不同，不会被误删。
+// 上游拒绝 reasoning/compaction 密文或代理、工具结果密文后，同一失效密文会随
+// 客户端维护的会话历史在后续每一轮重新出现。这里按会话记录已被上游拒绝过的
+// encrypted_content 摘要（OpenAIWSStateStore，带 TTL 与容量自保护）；后续请求
+// 进场时仅处理摘要命中的项，新生成的密文摘要不同，不会被误删。
 
 const openAIWSFallbackReasonInvalidEncryptedContent = "invalid_encrypted_content"
 
@@ -61,12 +60,15 @@ func (s *OpenAIGatewayService) recoverOpenAIEncryptedContentStreamError(c *gin.C
 		if decodeErr := decodeOpenAIJSONUseNumber(body, &decoded); decodeErr != nil {
 			return body, false, decodeErr
 		}
-		if trimOpenAIEncryptedReasoningItems(decoded) {
+		invalidDigests := collectOpenAIEncryptedContentDigestsRaw(entryBody)
+		removedReasoning := trimOpenAIEncryptedReasoningItems(decoded)
+		replacedToolOutput := replaceOpenAIEncryptedToolOutputContents(decoded, openAIEncryptedContentDigestSet(invalidDigests))
+		if removedReasoning || replacedToolOutput > 0 {
 			retryBody, marshalErr := marshalOpenAIUpstreamJSON(decoded)
 			if marshalErr != nil {
 				return body, false, marshalErr
 			}
-			s.markOpenAIWSInvalidEncryptedContentLineage(getOpenAIGroupIDFromContext(c), s.openAIWSLineageSessionHashFromContext(c, entryBody), collectOpenAIEncryptedContentDigestsRaw(entryBody))
+			s.markOpenAIWSInvalidEncryptedContentLineage(getOpenAIGroupIDFromContext(c), s.openAIWSLineageSessionHashFromContext(c, entryBody), invalidDigests)
 			*tried = true
 			return retryBody, true, nil
 		}
@@ -98,8 +100,74 @@ func openAIEncryptedLineageItemType(itemType string) bool {
 	}
 }
 
-// collectOpenAIEncryptedContentDigestsRaw 收集 input 中 lineage 覆盖类型所携
-// 密文的摘要。payload 须遵守 replay 所有权不变式（零拷贝视图解析）。
+func openAIEncryptedToolOutputItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "agent_message", "function_call_output", "custom_tool_call_output":
+		return true
+	default:
+		return false
+	}
+}
+
+func openAIEncryptedToolOutputField(itemType string) string {
+	if strings.TrimSpace(itemType) == "agent_message" {
+		return "content"
+	}
+	return "output"
+}
+
+func openAIEncryptedContentUnavailablePlaceholder() map[string]any {
+	return map[string]any{
+		"type": "input_text",
+		"text": "[结果不可用，需重新核查：上游无法解密此前的加密工具或代理结果。请重新读取相关数据后继续。]",
+	}
+}
+
+func appendOpenAIEncryptedContentDigest(digests *[]string, encrypted gjson.Result) {
+	if encrypted.Type == gjson.String && encrypted.String() != "" {
+		*digests = append(*digests, openAIEncryptedContentDigest(encrypted.String()))
+	}
+}
+
+func appendOpenAIEncryptedContentDigestsFromItem(digests *[]string, item gjson.Result) {
+	itemType := item.Get("type").String()
+	if openAIEncryptedLineageItemType(itemType) {
+		appendOpenAIEncryptedContentDigest(digests, item.Get("encrypted_content"))
+		return
+	}
+	if !openAIEncryptedToolOutputItemType(itemType) {
+		return
+	}
+	item.Get(openAIEncryptedToolOutputField(itemType)).ForEach(func(_, part gjson.Result) bool {
+		if part.Get("type").String() == "encrypted_content" {
+			appendOpenAIEncryptedContentDigest(digests, part.Get("encrypted_content"))
+		}
+		return true
+	})
+}
+
+func openAIEncryptedContentDigestSet(digests []string) map[string]struct{} {
+	if len(digests) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(digests))
+	for _, digest := range digests {
+		set[digest] = struct{}{}
+	}
+	return set
+}
+
+func slicesContainOpenAIInvalidDigest(digests []string, invalid map[string]struct{}) bool {
+	for _, digest := range digests {
+		if _, ok := invalid[digest]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// collectOpenAIEncryptedContentDigestsRaw 收集 input 中可恢复的加密历史摘要。
+// payload 须遵守 replay 所有权不变式（零拷贝视图解析）。
 func collectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 	if len(payload) == 0 {
 		return nil
@@ -109,26 +177,61 @@ func collectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 		return nil
 	}
 	var digests []string
-	appendItem := func(item gjson.Result) {
-		if !openAIEncryptedLineageItemType(item.Get("type").String()) {
-			return
-		}
-		encrypted := item.Get("encrypted_content")
-		if encrypted.Type == gjson.String && encrypted.String() != "" {
-			digests = append(digests, openAIEncryptedContentDigest(encrypted.String()))
-		}
-	}
 	if input.IsArray() {
 		input.ForEach(func(_, item gjson.Result) bool {
-			appendItem(item)
+			appendOpenAIEncryptedContentDigestsFromItem(&digests, item)
 			return true
 		})
 		return digests
 	}
 	if input.IsObject() {
-		appendItem(input)
+		appendOpenAIEncryptedContentDigestsFromItem(&digests, input)
 	}
 	return digests
+}
+
+// 只替换被上游拒绝的摘要，保留工具调用标识、可读结果和新生成的密文。
+func replaceOpenAIEncryptedToolOutputItem(item map[string]any, invalid map[string]struct{}) int {
+	itemType := firstNonEmptyString(item["type"])
+	if !openAIEncryptedToolOutputItemType(itemType) || len(invalid) == 0 {
+		return 0
+	}
+	parts, ok := item[openAIEncryptedToolOutputField(itemType)].([]any)
+	if !ok {
+		return 0
+	}
+	replaced := 0
+	for i, rawPart := range parts {
+		part, ok := rawPart.(map[string]any)
+		if !ok || firstNonEmptyString(part["type"]) != "encrypted_content" {
+			continue
+		}
+		encrypted, ok := part["encrypted_content"].(string)
+		if !ok || encrypted == "" {
+			continue
+		}
+		if _, hit := invalid[openAIEncryptedContentDigest(encrypted)]; !hit {
+			continue
+		}
+		parts[i] = openAIEncryptedContentUnavailablePlaceholder()
+		replaced++
+	}
+	return replaced
+}
+
+func replaceOpenAIEncryptedToolOutputContents(reqBody map[string]any, invalid map[string]struct{}) int {
+	replaced := 0
+	switch input := reqBody["input"].(type) {
+	case []any:
+		for _, raw := range input {
+			if item, ok := raw.(map[string]any); ok {
+				replaced += replaceOpenAIEncryptedToolOutputItem(item, invalid)
+			}
+		}
+	case map[string]any:
+		replaced = replaceOpenAIEncryptedToolOutputItem(input, invalid)
+	}
+	return replaced
 }
 
 // stripOpenAIInvalidEncryptedContentItems 剥离 input 中摘要命中 invalid 的密文
@@ -148,6 +251,9 @@ func stripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map
 		inputItem, ok := item.(map[string]any)
 		if !ok {
 			return item, false, true
+		}
+		if openAIEncryptedToolOutputItemType(firstNonEmptyString(inputItem["type"])) {
+			return inputItem, replaceOpenAIEncryptedToolOutputItem(inputItem, invalid) > 0, true
 		}
 		encrypted, ok := inputItem["encrypted_content"].(string)
 		if !ok || encrypted == "" {
@@ -213,11 +319,15 @@ func openAIRawPayloadHasInvalidEncryptedContent(payload []byte, invalid map[stri
 	}
 	hit := false
 	checkItem := func(item gjson.Result) bool {
-		encrypted := item.Get("encrypted_content")
-		if encrypted.Type != gjson.String || encrypted.String() == "" {
-			return false
+		matched := false
+		var digests []string
+		appendOpenAIEncryptedContentDigestsFromItem(&digests, item)
+		for _, digest := range digests {
+			if _, ok := invalid[digest]; ok {
+				matched = true
+				break
+			}
 		}
-		_, matched := invalid[openAIEncryptedContentDigest(encrypted.String())]
 		return matched
 	}
 	if input.IsArray() {
@@ -245,11 +355,9 @@ func stripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 	}
 	hit := false
 	for _, item := range items {
-		encrypted := gjson.Get(openAIWSPayloadStringView(item), "encrypted_content")
-		if encrypted.Type != gjson.String || encrypted.String() == "" {
-			continue
-		}
-		if _, matched := invalid[openAIEncryptedContentDigest(encrypted.String())]; matched {
+		var digests []string
+		appendOpenAIEncryptedContentDigestsFromItem(&digests, gjson.ParseBytes(item))
+		if slicesContainOpenAIInvalidDigest(digests, invalid) {
 			hit = true
 			break
 		}
@@ -263,6 +371,16 @@ func stripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 		var decoded map[string]any
 		if err := decodeOpenAIJSONUseNumber(item, &decoded); err != nil {
 			next = append(next, item)
+			continue
+		}
+		if replaceOpenAIEncryptedToolOutputItem(decoded, invalid) > 0 {
+			rebuilt, err := marshalOpenAIUpstreamJSON(decoded)
+			if err != nil {
+				next = append(next, item)
+				continue
+			}
+			next = append(next, json.RawMessage(rebuilt))
+			stripped++
 			continue
 		}
 		encrypted, ok := decoded["encrypted_content"].(string)

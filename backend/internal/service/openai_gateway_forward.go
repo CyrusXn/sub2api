@@ -854,9 +854,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			// 客户端进场请求，重复摘要幂等）。
 			invalidDigests := collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody)
 			removedReasoningItems := trimOpenAIEncryptedReasoningItems(wsReqBody)
-			if !removedReasoningItems {
+			replacedToolOutput := replaceOpenAIEncryptedToolOutputContents(wsReqBody, openAIEncryptedContentDigestSet(invalidDigests))
+			if !removedReasoningItems && replacedToolOutput == 0 {
 				logOpenAIWSModeInfo(
-					"reconnect_invalid_encrypted_content_recovery_skip account_id=%d attempt=%d reason=missing_encrypted_reasoning_items",
+					"reconnect_invalid_encrypted_content_recovery_skip account_id=%d attempt=%d reason=missing_encrypted_history",
 					account.ID,
 					attempt,
 				)
@@ -875,7 +876,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			wsInvalidEncryptedContentRecoveryTried = true
 			logOpenAIWSModeInfo(
-				"reconnect_invalid_encrypted_content_recovery account_id=%d attempt=%d action=drop_encrypted_reasoning_items retry=1 previous_response_id_present=%v previous_response_id=%s previous_response_id_kind=%s has_function_call_output=%v dropped_previous_response_id=%v",
+				"reconnect_invalid_encrypted_content_recovery account_id=%d attempt=%d action=recover_encrypted_history retry=1 previous_response_id_present=%v previous_response_id=%s previous_response_id_kind=%s has_function_call_output=%v dropped_previous_response_id=%v",
 				account.ID,
 				attempt,
 				previousResponseID != "",
@@ -1138,7 +1139,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					return nil, decodeErr
 				}
 				invalidDigests := collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody)
-				if trimOpenAIEncryptedReasoningItems(decoded) {
+				removedReasoning := trimOpenAIEncryptedReasoningItems(decoded)
+				replacedToolOutput := replaceOpenAIEncryptedToolOutputContents(decoded, openAIEncryptedContentDigestSet(invalidDigests))
+				if removedReasoning || replacedToolOutput > 0 {
 					body, err = marshalOpenAIUpstreamJSON(decoded)
 					if err != nil {
 						return nil, fmt.Errorf("serialize invalid_encrypted_content retry body: %w", err)
@@ -1154,7 +1157,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request once after invalid_encrypted_content (account: %s)", account.Name)
 					continue
 				}
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted history items are missing (account: %s)", account.Name)
 			}
 			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)

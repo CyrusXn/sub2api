@@ -318,6 +318,21 @@ func TestOpenAIEnsureForwardErrorResponse_WritesFallbackWhenNotWritten(t *testin
 	assert.Equal(t, "Upstream request failed", errorObj["message"])
 }
 
+func TestOpenAIEnsureForwardErrorResponse_PreservesEncryptedContentClientError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
+	const body = `{"error":{"code":"invalid_encrypted_content","type":"invalid_request_error","message":"Encrypted function output content could not be decrypted or decoded."}}`
+	service.WriteOpenAIUpstreamClientError(c, http.StatusBadRequest, []byte(body), "Encrypted function output content could not be decrypted or decoded.")
+	written := rec.Body.String()
+	h := &OpenAIGatewayHandler{}
+	require.False(t, h.ensureForwardErrorResponse(c, false), "已完整回写的客户端错误不能再拼接 SSE 兜底")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.JSONEq(t, body, rec.Body.String())
+	require.Equal(t, written, rec.Body.String())
+}
+
 // Writer 已写后 ensureForwardErrorResponse 必须仍然把错误信息以 SSE
 // 形式追加给客户端（streamStarted 强制 true）。
 // 这是 case B 修复：旧实现遇到 Writer.Written 直接 return false，

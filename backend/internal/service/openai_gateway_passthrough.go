@@ -404,7 +404,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				if decodeErr := decodeOpenAIJSONUseNumber(body, &decoded); decodeErr != nil {
 					return nil, decodeErr
 				}
-				if trimOpenAIEncryptedReasoningItems(decoded) {
+				removedReasoning := trimOpenAIEncryptedReasoningItems(decoded)
+				replacedToolOutput := replaceOpenAIEncryptedToolOutputContents(decoded, openAIEncryptedContentDigestSet(collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody)))
+				if removedReasoning || replacedToolOutput > 0 {
 					retryBody, marshalErr := marshalOpenAIUpstreamJSON(decoded)
 					if marshalErr != nil {
 						return nil, marshalErr

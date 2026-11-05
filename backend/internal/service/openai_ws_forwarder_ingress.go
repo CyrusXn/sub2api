@@ -23,6 +23,14 @@ type openAIWSRejectedFieldRetryError struct {
 	reason string
 }
 
+type openAIWSInvalidEncryptedContentRetryError struct {
+	body []byte
+}
+
+func (e *openAIWSInvalidEncryptedContentRetryError) Error() string {
+	return "retry websocket turn after upstream rejected encrypted history"
+}
+
 func (e *openAIWSRejectedFieldRetryError) Error() string {
 	if e == nil || strings.TrimSpace(e.reason) == "" {
 		return "retry websocket turn after rejected field normalization"
@@ -488,6 +496,37 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		defer cancel()
 		message = restoreCodexToolNamesFromContext(c, message)
 		return clientConn.Write(writeCtx, coderws.MessageText, message)
+	}
+	turnRetry := 0
+	recoverInvalidEncryptedContent := func(turn int, lease *openAIWSConnLease, payload, upstreamMessage []byte, wroteDownstream bool) error {
+		code, errType, message := parseOpenAIWSErrorEventFields(upstreamMessage)
+		reason, _ := classifyOpenAIWSErrorEventFromRaw(code, errType, message)
+		if reason != openAIWSFallbackReasonInvalidEncryptedContent {
+			return nil
+		}
+		digests := collectOpenAIEncryptedContentDigestsRaw(payload)
+		if len(digests) > 0 {
+			s.markOpenAIWSInvalidEncryptedContentLineage(getOpenAIGroupIDFromContext(c), s.openAIWSLineageSessionHashFromContext(c, payload), digests)
+			logOpenAIWSModeInfo("ingress_ws_invalid_encrypted_lineage_mark account_id=%d turn=%d digests=%d", account.ID, turn, len(digests))
+		}
+		if wroteDownstream || len(digests) == 0 || turnRetry != 0 {
+			return nil
+		}
+		var retryBody map[string]any
+		if decodeErr := decodeOpenAIJSONUseNumber(payload, &retryBody); decodeErr != nil {
+			return fmt.Errorf("decode invalid encrypted websocket request: %w", decodeErr)
+		}
+		removedReasoning := trimOpenAIEncryptedReasoningItems(retryBody)
+		replacedToolOutput := replaceOpenAIEncryptedToolOutputContents(retryBody, openAIEncryptedContentDigestSet(digests))
+		if !removedReasoning && replacedToolOutput == 0 {
+			return nil
+		}
+		updated, marshalErr := marshalOpenAIUpstreamJSON(retryBody)
+		if marshalErr != nil {
+			return fmt.Errorf("encode invalid encrypted websocket retry request: %w", marshalErr)
+		}
+		lease.MarkBroken()
+		return &openAIWSInvalidEncryptedContentRetryError{body: updated}
 	}
 
 	readClientMessage := func() ([]byte, error) {
@@ -1037,6 +1076,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
 			}
 			if eventType == "error" || eventType == "response.failed" {
+				if retryErr := recoverInvalidEncryptedContent(turn, lease, payload, upstreamMessage, wroteDownstream); retryErr != nil {
+					return nil, retryErr
+				}
 				markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
 				message := extractOpenAISSEErrorMessage(upstreamMessage)
 				code, errType, errMessage := parseOpenAIWSErrorEventFields(upstreamMessage)
@@ -1083,18 +1125,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					failureAccountSideEffectsApplied = modelFailureHandled
 				}
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
-				if fallbackReason == openAIWSFallbackReasonInvalidEncryptedContent {
-					// 记录被上游拒绝的密文摘要；错误照旧透传，下一轮进场时按摘要预剥离。
-					if digests := collectOpenAIEncryptedContentDigestsRaw(payload); len(digests) > 0 {
-						s.markOpenAIWSInvalidEncryptedContentLineage(groupID, sessionHash, digests)
-						logOpenAIWSModeInfo(
-							"ingress_ws_invalid_encrypted_lineage_mark account_id=%d turn=%d digests=%d",
-							account.ID,
-							turn,
-							len(digests),
-						)
-					}
-				}
 				errCode, errType, errMessage := summarizeOpenAIWSErrorEventFieldsFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				recoverablePrevNotFound := fallbackReason == openAIWSIngressStagePreviousResponseNotFound &&
 					turnPreviousResponseID != "" &&
@@ -1352,7 +1382,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 	turn := 1
 	rejectedFieldRetryState = newOpenAIResponsesRejectedFieldRetryState(currentPayload)
-	turnRetry := 0
 	turnPrevRecoveryTried := false
 	lastTurnFinishedAt := time.Time{}
 	lastTurnResponseID := ""
@@ -1833,6 +1862,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if errors.As(relayErr, &rejectedFieldErr) && rejectedFieldErr != nil && len(rejectedFieldErr.body) > 0 {
 				currentPayload = append([]byte(nil), rejectedFieldErr.body...)
 				currentPayloadBytes = len(currentPayload)
+				skipBeforeTurn = true
+				continue
+			}
+			var encryptedContentErr *openAIWSInvalidEncryptedContentRetryError
+			if errors.As(relayErr, &encryptedContentErr) && encryptedContentErr != nil && turnRetry == 0 {
+				turnRetry++
+				currentPayload = append([]byte(nil), encryptedContentErr.body...)
+				currentPayloadBytes = len(currentPayload)
+				if lastTurnReplayInputExists {
+					invalid := s.sessionInvalidEncryptedContentDigests(groupID, sessionHash)
+					lastTurnReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(lastTurnReplayInput, invalid)
+				}
+				logOpenAIWSModeInfo("ingress_ws_invalid_encrypted_retry account_id=%d turn=%d retry=1", account.ID, turn)
+				resetSessionLease(true)
 				skipBeforeTurn = true
 				continue
 			}
