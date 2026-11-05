@@ -455,7 +455,7 @@ func TestForwardAsChatCompletions_StructuredInputRejectionDoesNotRetryIneligible
 			}
 			require.True(t, strings.HasSuffix(upstream.requests[0].URL.Path, endpoint))
 			var failover *UpstreamFailoverError
-			if status == http.StatusTooManyRequests {
+			if status == http.StatusTooManyRequests || status == http.StatusForbidden {
 				require.ErrorAs(t, err, &failover)
 				require.Equal(t, status, failover.StatusCode)
 			} else {

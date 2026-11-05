@@ -376,7 +376,7 @@ func TestRateLimitService_HandleUpstreamError_403RequestTypeDoesNotDisableAccoun
 	require.Empty(t, repo.lastErrorMsg)
 }
 
-func TestRateLimitService_HandleUpstreamError_403FallsBackToRawBody(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_403UnclassifiedDetailsDoNotDisableAccount(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -393,11 +393,10 @@ func TestRateLimitService_HandleUpstreamError_403FallsBackToRawBody(t *testing.T
 		[]byte(`{"error":{"type":"access_denied","details":{"reason":"ip_blocked"}}}`),
 	)
 
-	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.setErrorCalls)
-	require.Contains(t, repo.lastErrorMsg, `"access_denied"`)
-	require.Contains(t, repo.lastErrorMsg, `"ip_blocked"`)
-	require.NotContains(t, repo.lastErrorMsg, "account may be suspended or lack permissions")
+	require.False(t, shouldDisable)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Empty(t, repo.lastErrorMsg)
 }
 
 func TestNormalizedCodexLimits_OnlySecondaryData(t *testing.T) {

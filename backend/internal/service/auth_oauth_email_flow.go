@@ -88,6 +88,10 @@ func (s *AuthService) RegisterOAuthAccount(
 	if err != nil {
 		return nil, nil, err
 	}
+	// 手动补全的第三方注册同样受黑名单约束，不恢复旧验证码流程。
+	if s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
+		return nil, nil, ErrEmailBlocked
+	}
 	if isReservedEmail(email) {
 		return nil, nil, ErrEmailReserved
 	}

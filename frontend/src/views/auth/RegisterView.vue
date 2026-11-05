@@ -1048,6 +1048,9 @@ function buildRegistrationErrorMessage(error: unknown, fallback: string): string
   if (extractApiErrorCode(error) === 'EMAIL_EXISTS') {
     return t('auth.errors.EMAIL_EXISTS')
   }
+  if (extractApiErrorCode(error) === 'EMAIL_BLOCKED') {
+    return t('auth.errors.EMAIL_BLOCKED')
+  }
   return buildAuthErrorMessage(error, { fallback })
 }
 </script>

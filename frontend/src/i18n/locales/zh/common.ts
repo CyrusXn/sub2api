@@ -260,6 +260,7 @@ export default {
       EMAIL_EXISTS: '这个账号已注册',
       INVALID_EMAIL: '请输入正确的邮箱地址',
       REGISTRATION_EMAIL_DOMAIN_NOT_ALLOWED: '仅支持 qq.com 和 163.com 邮箱注册',
+      EMAIL_BLOCKED: '该邮箱不允许注册，请更换其他邮箱。',
     },
     registrationFailed: '注册失败，请重试。',
     accountLabel: '账号',

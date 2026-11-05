@@ -138,7 +138,7 @@ func TestHandleUpstreamError_KimiNonCodingPlanQuotaMessageUsesGeneric403(t *test
 	require.Equal(t, 0, repo.tempCalls)
 }
 
-func TestHandleUpstreamError_NonCNAccessTerminated403KeepsGenericPath(t *testing.T) {
+func TestHandleUpstreamError_NonCNAccessTerminated403KeepsAccountSchedulable(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	counter := &openAI403CounterCacheStub{counts: []int64{1}}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -151,11 +151,11 @@ func TestHandleUpstreamError_NonCNAccessTerminated403KeepsGenericPath(t *testing
 
 	shouldDisable := runKimi403(service, account, kimiWeeklyQuotaExhaustedBody)
 
-	require.True(t, shouldDisable)
+	require.False(t, shouldDisable)
 	require.Equal(t, 0, repo.rateLimitedCalls, "non-CN platform must not enter the CN quota path")
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 1, repo.tempCalls)
-	require.Contains(t, repo.lastTempReason, "(1/3)")
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, []int64{1}, counter.counts)
 }
 
 func TestIsCNProviderQuotaExhausted403_Classification(t *testing.T) {

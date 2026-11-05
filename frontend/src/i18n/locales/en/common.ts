@@ -262,6 +262,7 @@ export default {
       INVALID_EMAIL: 'Please enter a valid email address.',
       REGISTRATION_EMAIL_DOMAIN_NOT_ALLOWED:
         'Only qq.com and 163.com email addresses can register.',
+      EMAIL_BLOCKED: 'This email address is not allowed. Please use a different one.',
     },
     registrationFailed: 'Registration failed. Please try again.',
     accountLabel: 'Account',
