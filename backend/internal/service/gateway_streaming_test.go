@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -186,6 +187,112 @@ func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing terminal event")
 	require.NotNil(t, result)
+}
+
+func TestHandleStreamingResponse_FirstTokenIgnoresAnthropicMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	pr, pw := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":0}}\n\n"))
+		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+	}()
+
+	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	_ = pr.Close()
+	require.NoError(t, err)
+	require.Nil(t, result.firstTokenMs, "metadata-only events are not the first generated text")
+}
+
+func TestHandleStreamingResponse_FailsOverAfterPlaceholderBeforeSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	started := time.Now()
+	ensureTextStreamTiming(c, started.Add(-TextStreamPlaceholderDelay-time.Second))
+
+	pr, pw := io.Pipe()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = pw.CloseWithError(io.ErrUnexpectedEOF)
+	}()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
+	_, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, started, "model", "model", false)
+	_ = pr.Close()
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr, "占位属于首字计时，不应阻止首字前切号")
+	require.Contains(t, rec.Body.String(), ": \n\n", "等待期间应发送一次占位")
+	require.True(t, TextStreamAwaitingOutput(c), "占位不能标记为语义回答")
+}
+
+func TestHandleStreamingResponse_FailsOverAfterMetadataBeforeSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	ensureTextStreamTiming(c, time.Now())
+	payload := "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: &openAIStreamReadThenErrorCloser{
+		reader: strings.NewReader(payload), err: io.ErrUnexpectedEOF,
+	}}
+	_, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr, "协议元数据不是语义回答")
+	require.Contains(t, rec.Body.String(), "message_start")
+	require.True(t, TextStreamAwaitingOutput(c))
+}
+
+func TestHandleStreamingResponse_DoesNotFailOverAfterSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	ensureTextStreamTiming(c, time.Now())
+	payload := "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n"
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: &openAIStreamReadThenErrorCloser{
+		reader: strings.NewReader(payload), err: io.ErrUnexpectedEOF,
+	}}
+	_, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+
+	var failoverErr *UpstreamFailoverError
+	require.Error(t, err)
+	require.NotErrorAs(t, err, &failoverErr, "已发出真实回答后不能重放到其他账号")
+	require.False(t, TextStreamAwaitingOutput(c))
+	require.Contains(t, rec.Body.String(), "hello")
+}
+
+func TestSSEEventHasSemanticOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{name: "Anthropic metadata", data: `{"type":"message_start","message":{"usage":{"input_tokens":5}}}`},
+		{name: "Anthropic text", data: `{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`, want: true},
+		{name: "OpenAI Chat metadata", data: `{"choices":[{"delta":{"role":"assistant"}}]}`},
+		{name: "OpenAI Chat content", data: `{"choices":[{"delta":{"content":"hello"}}]}`, want: true},
+		{name: "OpenAI Responses metadata", data: `{"type":"response.created","response":{"id":"resp_1"}}`},
+		{name: "OpenAI Responses content", data: `{"type":"response.output_text.delta","delta":"hello"}`, want: true},
+		{name: "Gemini metadata", data: `{"candidates":[{"finishReason":"STOP"}]}`},
+		{name: "Gemini content", data: `{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}`, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, sseEventHasSemanticOutput(test.data))
+		})
+	}
 }
 
 func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {

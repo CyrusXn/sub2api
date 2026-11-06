@@ -16,6 +16,12 @@ var ErrModelQualityNotRunning = errors.New("检测记录不存在或已结束")
 var ErrModelQualityAlreadyScheduled = errors.New("本小时已经检测")
 var ErrModelQualityNotFound = errors.New("检测记录不存在或已删除")
 
+const (
+	ModelQualityOfficialDefaultIntervalSeconds = 3600
+	ModelQualityOfficialMinIntervalSeconds     = 300
+	ModelQualityOfficialMaxIntervalSeconds     = 86400
+)
+
 const ModelQualityCandyPrompt = `不使用任何外部工具回答以下问题：
 在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）
           苹果味  桃子味  西瓜味
@@ -143,6 +149,7 @@ type ModelQualityRepository interface {
 	Create(context.Context, *ModelQualityRun) error
 	Update(context.Context, int64, int64, string, string, string) error
 	Delete(context.Context, int64) error
+	BatchDelete(context.Context, []int64) (int64, error)
 	List(context.Context, int, string, string, string, string, ModelQualityUserFilter) ([]ModelQualityRun, int64, error)
 	FilterOptions(context.Context, string) (ModelQualityFilterOptions, error)
 }
@@ -162,6 +169,10 @@ func (s *ModelQualityService) Update(ctx context.Context, id, userID int64, stat
 
 func (s *ModelQualityService) Delete(ctx context.Context, id int64) error {
 	return s.repo.Delete(ctx, id)
+}
+
+func (s *ModelQualityService) BatchDelete(ctx context.Context, ids []int64) (int64, error) {
+	return s.repo.BatchDelete(ctx, ids)
 }
 func (s *ModelQualityService) List(ctx context.Context, page int, theme, status, group, model, user string, admin bool) ([]ModelQualityRun, int64, error) {
 	runs, total, err := s.repo.List(ctx, page, theme, status, group, model, ModelQualityUserFilter{Search: user, Admin: admin})

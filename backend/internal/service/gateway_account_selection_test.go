@@ -131,6 +131,29 @@ func TestFilterByMinPriority_SelectsMinPriority(t *testing.T) {
 	require.Equal(t, int64(3), result[1].account.ID)
 }
 
+func TestFilterByAccountSchedulingOrder_PrioritizesRateConcurrencyAndPriority(t *testing.T) {
+	accounts := []accountWithLoad{
+		makeAccWithLoad(1, 1, 0, nil, AccountTypeAPIKey),
+		makeAccWithLoad(2, 2, 0, nil, AccountTypeAPIKey),
+		makeAccWithLoad(3, 1, 0, nil, AccountTypeAPIKey),
+		makeAccWithLoad(4, 1, 0, nil, AccountTypeAPIKey),
+	}
+	accounts[0].account.RateMultiplier = floatPtr(2)
+	accounts[1].account.RateMultiplier = floatPtr(1)
+	accounts[2].account.RateMultiplier = floatPtr(1)
+	accounts[3].account.RateMultiplier = floatPtr(1)
+	accounts[1].account.Concurrency = 50
+	accounts[2].account.Concurrency = 20
+	accounts[3].account.Concurrency = 50
+	accounts[1].account.Priority = 2
+	accounts[2].account.Priority = 1
+	accounts[3].account.Priority = 1
+
+	ordered := filterByMinPriority(filterByMaxConcurrency(filterByMinRate(accounts)))
+	require.Len(t, ordered, 1)
+	require.Equal(t, int64(4), ordered[0].account.ID, "倍率最低、并发数最高且优先级最小的账号优先")
+}
+
 // --- filterByMinLoadRate ---
 
 func TestFilterByMinLoadRate_Empty(t *testing.T) {

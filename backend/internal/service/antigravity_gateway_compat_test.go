@@ -19,6 +19,27 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestAntigravityCompatFailsOverAfterPlaceholderBeforeSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityCompatService(config.GatewayConfig{MaxLineSize: defaultMaxLineSize}, nil)
+	started := time.Now().Add(-4 * time.Second)
+	c, recorder := newAntigravityCompatContext(http.MethodPost, "/v1/responses", nil)
+	SetTextStreamRequestStart(c, started, "claude-sonnet-4-5")
+	reader, writer := io.Pipe()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = writer.CloseWithError(io.ErrUnexpectedEOF)
+	}()
+	resp := &http.Response{StatusCode: http.StatusOK, Body: reader}
+	_, err := svc.handleAntigravityCompatStreamWithKeepaliveInterval(c, resp, started, "claude-sonnet-4-5",
+		newAntigravityResponsesStreamAdapter("claude-sonnet-4-5"), "test", time.Second, 10*time.Second)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Contains(t, recorder.Body.String(), ": \n\n")
+	require.NotNil(t, TextStreamFirstPacketMs(c), "placeholder starts the usage-log first-character timer")
+	require.True(t, TextStreamAwaitingOutput(c), "placeholder must not mark semantic output")
+}
+
 type antigravityCompatTokenCache struct {
 	token string
 }

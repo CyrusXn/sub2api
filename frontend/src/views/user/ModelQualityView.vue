@@ -3,7 +3,7 @@
     <main class="quality-page">
       <header class="quality-hero">
         <div><span class="quality-eyebrow">{{ t('modelQuality.eyebrow') }}</span><h1>{{ t('modelQuality.title') }}<span class="hero-mark">✦</span></h1><p>{{ t('modelQuality.intro') }}</p></div>
-        <button v-if="theme !== 'official'" type="button" class="btn btn-primary" data-test="start" :disabled="!canStart" @click="start">{{ submitting ? t('modelQuality.starting') : t('modelQuality.start') }} <span aria-hidden="true">↗</span></button>
+        <button v-if="theme !== 'official' && !official.enabled" type="button" class="btn btn-primary" data-test="start" :disabled="!canStart" @click="start">{{ submitting ? t('modelQuality.starting') : t('modelQuality.start') }} <span aria-hidden="true">↗</span></button>
       </header>
 
       <section class="quality-settings" :aria-label="t('modelQuality.title')">
@@ -19,8 +19,14 @@
           <p><span class="schedule-dot" :class="{ enabled: official.enabled }" />{{ official.enabled ? t('modelQuality.officialEnabled') : t('modelQuality.officialDisabled') }}<span v-if="official.model" class="schedule-model">{{ official.model }}</span></p>
           <p v-if="officialError" class="quality-error" role="alert">{{ officialError }}</p>
           <template v-if="auth.isAdmin">
-            <button type="button" class="btn btn-primary" data-test="official-configure" :disabled="officialSaving || !officialReady || !keyID || !model" @click="configureOfficial(true)">{{ t('modelQuality.officialEnable') }}</button>
-            <button v-if="official.enabled" type="button" class="btn btn-secondary" :disabled="officialSaving" @click="configureOfficial(false)">{{ t('modelQuality.officialDisable') }}</button>
+            <label class="official-interval" for="quality-official-interval">{{ t('modelQuality.officialInterval') }}
+              <input id="quality-official-interval" v-model.number="officialIntervalMinutes" type="number" min="5" max="1440" step="1" class="input" :disabled="officialSaving" />
+              <span>{{ t('modelQuality.minutes') }}</span>
+            </label>
+            <button v-if="!official.enabled" type="button" class="btn btn-primary" data-test="official-configure" :disabled="officialSaving || !officialReady || !keyID || !model" @click="configureOfficial(true)">{{ t('modelQuality.officialEnable') }}</button>
+            <button v-if="!official.enabled" type="button" class="btn btn-secondary" data-test="official-save" :disabled="officialSaving || !officialReady || !validOfficialInterval" @click="configureOfficial(false)">{{ t('modelQuality.officialSave') }}</button>
+            <button v-if="official.enabled" type="button" class="btn btn-primary" data-test="official-save" :disabled="officialSaving || !officialReady || !validOfficialInterval" @click="configureOfficial(true)">{{ t('modelQuality.officialSave') }}</button>
+            <button v-if="official.enabled" type="button" class="btn btn-secondary" data-test="official-disable" :disabled="officialSaving" @click="configureOfficial(false)">{{ t('modelQuality.officialDisable') }}</button>
           </template>
         </div>
         <div v-if="theme === 'custom'" class="custom-prompt"><label for="quality-prompt">{{ t('modelQuality.promptLabel') }} <small>{{ prompt.length }}/2000</small></label><textarea id="quality-prompt" v-model="prompt" class="input" rows="4" maxlength="2000" :disabled="submitting" :placeholder="t('modelQuality.placeholder')" /></div>
@@ -33,11 +39,17 @@
           <input id="quality-filter-user" v-model="filterUser" type="search" class="input user-search" maxlength="200" :aria-label="t('modelQuality.searchUser')" :placeholder="t(auth.isAdmin ? 'modelQuality.searchUserAdmin' : 'modelQuality.searchUserMasked')" @input="queueUserSearch" @keydown.enter.prevent="resetResults" />
           <Select id="quality-filter-group" v-model="filterGroup" class="result-filter" :options="groupFilterOptions" :searchable="true" :aria-label="t('modelQuality.allGroups')" @change="resetResults" /><Select id="quality-filter-model" v-model="filterModel" class="result-filter" :options="modelFilterOptions" :searchable="true" :aria-label="t('modelQuality.allModels')" @change="resetResults" /><Select id="quality-filter-status" v-model="filterStatus" class="result-filter" :options="statusOptions" :searchable="true" :aria-label="t('modelQuality.allStatuses')" @change="resetResults" /><button type="button" class="btn btn-secondary" :disabled="loading" @click="loadResults">{{ t('modelQuality.refresh') }}</button>
         </div></div>
+        <div v-if="auth.isAdmin && selectableRuns.length" class="bulk-actions">
+          <label><input type="checkbox" data-test="select-all-runs" :checked="allSelectableSelected" @change="toggleAllSelected" />{{ t(allSelectableSelected ? 'modelQuality.clearSelection' : 'modelQuality.selectPage') }}</label>
+          <span>{{ t('modelQuality.selectedCount', { count: selectedIDs.length }) }}</span>
+          <button type="button" class="btn btn-danger" data-test="batch-delete" :disabled="!selectedIDs.length || deleting" @click="batchDeleteTarget = true">{{ t('modelQuality.batchDelete') }}</button>
+        </div>
         <div v-if="loading && !runs.length" class="quality-empty">{{ t('modelQuality.loading') }}</div>
         <div v-else-if="!runs.length && !error" class="quality-empty"><span aria-hidden="true">◇</span><h3>{{ t('modelQuality.empty') }}</h3><p>{{ t('modelQuality.emptyHint') }}</p></div>
         <div v-if="runs.length" :class="officialLayout ? 'results-list' : 'results-grid'">
           <div v-if="officialLayout" class="result-list-head"><span>{{ t('modelQuality.modelInfo') }}</span><span>{{ t('modelQuality.result') }}</span><span>{{ t('modelQuality.status') }}</span></div>
           <article v-for="run in runs" :key="run.id" :data-run-id="run.id" class="quality-result" :class="officialLayout ? 'result-row' : 'result-card'">
+            <label v-if="auth.isAdmin" class="run-select"><input v-model="selectedIDs" type="checkbox" :value="run.id" :disabled="run.id <= 0 || run.status === 'running' || deleting" :aria-label="t('modelQuality.selectRecord', { model: run.model })" /></label>
             <div class="result-meta">
               <span class="group-name">{{ run.group_name }}</span><h3>{{ run.model }}</h3>
               <p class="result-author">{{ run.author }}</p><time :datetime="run.created_at">{{ formatDate(run.created_at) }}</time>
@@ -65,7 +77,7 @@
         <nav v-if="total > 12" class="pagination" aria-label="Pagination"><button type="button" class="btn btn-secondary" :disabled="page === 1 || loading" @click="changePage(-1)">{{ t('modelQuality.previous') }}</button><span>{{ page }} / {{ Math.ceil(total / 12) }}</span><button type="button" class="btn btn-secondary" :disabled="page * 12 >= total || loading" @click="changePage(1)">{{ t('modelQuality.next') }}</button></nav>
       </section>
       <dialog ref="previewDialog" class="quality-dialog" @close="expanded = null" @click="closeOutside"><div v-if="expanded" class="dialog-content"><header><h2>{{ expanded.model }} · {{ expanded.group_name }}</h2><button type="button" class="btn btn-secondary" @click="closePreview">{{ t('modelQuality.close') }}</button></header><iframe :title="t('modelQuality.previewTitle')" sandbox="" referrerpolicy="no-referrer" :srcdoc="safeModelQualityHTML(expanded.content)" /></div></dialog>
-      <ConfirmDialog :show="!!deleteTarget" :title="t('modelQuality.deleteTitle')" :message="t('modelQuality.deleteMessage')" :confirm-text="deleting ? t('modelQuality.deleting') : t('modelQuality.delete')" danger @confirm="deleteRun" @cancel="cancelDelete">
+      <ConfirmDialog :show="!!deleteTarget || batchDeleteTarget" :title="t(batchDeleteTarget ? 'modelQuality.batchDeleteTitle' : 'modelQuality.deleteTitle')" :message="t(batchDeleteTarget ? 'modelQuality.batchDeleteMessage' : 'modelQuality.deleteMessage', { count: selectedIDs.length })" :confirm-text="deleting ? t('modelQuality.deleting') : t(batchDeleteTarget ? 'modelQuality.batchDelete' : 'modelQuality.delete')" danger @confirm="batchDeleteTarget ? deleteSelectedRuns() : deleteRun()" @cancel="cancelDelete">
         <p v-if="deleteError" class="quality-error" role="alert">{{ deleteError }}</p>
       </ConfirmDialog>
     </main>
@@ -96,8 +108,13 @@ const officialLayout = computed(() => theme.value === 'official')
 const keysLoading = ref(true), loading = ref(false), submitting = ref(false), ready = ref(false), error = ref(''), keyError = ref('')
 const expanded = ref<QualityRun | null>(null), previewDialog = ref<HTMLDialogElement | null>(null)
 const deleteTarget = ref<QualityRun | null>(null), deleting = ref(false), deleteError = ref('')
+const selectedIDs = ref<number[]>([]), batchDeleteTarget = ref(false)
 const resultsSection = ref<HTMLElement | null>(null)
-const official = ref<OfficialQualityConfig>({ enabled: false, model: '' })
+const official = ref<OfficialQualityConfig>({ enabled: false, model: '', interval_seconds: 3600 })
+const officialIntervalMinutes = ref(60)
+const validOfficialInterval = computed(() => Number.isInteger(officialIntervalMinutes.value) && officialIntervalMinutes.value >= 5 && officialIntervalMinutes.value <= 1440)
+const selectableRuns = computed(() => auth.isAdmin ? runs.value.filter(run => run.id > 0 && run.status !== 'running') : [])
+const allSelectableSelected = computed(() => selectableRuns.value.length > 0 && selectableRuns.value.every(run => selectedIDs.value.includes(run.id)))
 const officialReady = ref(false), officialSaving = ref(false), officialError = ref('')
 // 列表确认读到已保存记录后，才移除当前页面的流式结果。
 const pendingRuns = new Map<number, QualityRun>()
@@ -113,7 +130,7 @@ const canStart = computed(() => !keysLoading.value && !submitting.value && keyID
 function selectModel() { model.value = models.value[0] || '' }
 function formatDate(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
 function accountName(run: QualityRun) { return run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }
-function cancelDelete() { if (!deleting.value) { deleteTarget.value = null; deleteError.value = '' } }
+function cancelDelete() { if (!deleting.value) { deleteTarget.value = null; batchDeleteTarget.value = false; deleteError.value = '' } }
 async function deleteRun() {
   const target = deleteTarget.value
   if (!auth.isAdmin || !target || target.id <= 0 || target.status === 'running' || deleting.value) return
@@ -122,12 +139,33 @@ async function deleteRun() {
     await modelQualityAPI.remove(target.id)
     for (const [localID, run] of pendingRuns) if (run.id === target.id) pendingRuns.delete(localID)
     runs.value = runs.value.filter(run => run.id !== target.id)
+    selectedIDs.value = selectedIDs.value.filter(id => id !== target.id)
     total.value = Math.max(0, total.value - 1)
     if (expanded.value?.id === target.id) closePreview()
     deleteTarget.value = null
     page.value = Math.min(page.value, Math.max(1, Math.ceil(total.value / 12)))
     await loadResults()
   } catch { deleteError.value = t('modelQuality.deleteError') }
+  finally { deleting.value = false }
+}
+function toggleAllSelected(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  selectedIDs.value = checked ? selectableRuns.value.map(run => run.id) : []
+}
+async function deleteSelectedRuns() {
+  if (!auth.isAdmin || deleting.value || !batchDeleteTarget.value || !selectedIDs.value.length) return
+  deleting.value = true; deleteError.value = ''
+  const ids = [...selectedIDs.value]
+  try {
+    const deleted = await modelQualityAPI.removeMany(ids)
+    for (const [localID, run] of pendingRuns) if (ids.includes(run.id)) pendingRuns.delete(localID)
+    runs.value = runs.value.filter(run => !ids.includes(run.id))
+    total.value = Math.max(0, total.value - deleted)
+    if (expanded.value && ids.includes(expanded.value.id)) closePreview()
+    selectedIDs.value = []; batchDeleteTarget.value = false
+    page.value = Math.min(page.value, Math.max(1, Math.ceil(total.value / 12)))
+    await loadResults()
+  } catch { deleteError.value = t('modelQuality.batchDeleteError') }
   finally { deleting.value = false }
 }
 async function loadKeys() {
@@ -240,13 +278,13 @@ async function start() {
   }
 }
 async function loadOfficial() {
-  try { official.value = await modelQualityAPI.official(); officialReady.value = true; if (theme.value === 'official') selectOfficialKey() }
+  try { official.value = await modelQualityAPI.official(); officialIntervalMinutes.value = Math.round((official.value.interval_seconds || 3600) / 60); officialReady.value = true; if (theme.value === 'official') selectOfficialKey() }
   catch { officialError.value = t('modelQuality.officialUnavailable') }
 }
 async function configureOfficial(enabled: boolean) {
-  if (!auth.isAdmin || officialSaving.value || !officialReady.value) return
+  if (!auth.isAdmin || officialSaving.value || !officialReady.value || !validOfficialInterval.value) return
   officialSaving.value = true; officialError.value = ''
-  try { official.value = await modelQualityAPI.configureOfficial({ enabled, api_key_id: keyID.value, model: model.value }) }
+  try { official.value = await modelQualityAPI.configureOfficial({ enabled, api_key_id: keyID.value, model: model.value, interval_seconds: officialIntervalMinutes.value * 60 }) }
   catch { officialError.value = t('modelQuality.officialSaveError') }
   finally { officialSaving.value = false }
 }
@@ -255,11 +293,13 @@ function selectOfficialKey() {
   if (key) { keyID.value = key.id; selectModel(); if (models.value.includes(official.value.model)) model.value = official.value.model }
 }
 watch(theme, value => {
+  selectedIDs.value = []
   filterGroup.value = ''; filterModel.value = ''; filterStatus.value = ''
   historyFilters.value = { groups: [], models: [] }
   resetResults()
   if (value === 'official') selectOfficialKey()
 })
+watch([page, filterGroup, filterModel, filterStatus, filterUser], () => { selectedIDs.value = [] })
 function resetResults() { page.value = 1; runs.value = []; total.value = 0; error.value = ''; void loadResults() }
 function queueUserSearch() {
   request?.abort(); clearTimeout(timer); clearTimeout(userSearchTimer)
@@ -298,6 +338,8 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .quality-result{scroll-margin-top:96px}
 .result-card{position:relative}
 .result-actions{display:flex;align-items:flex-end;flex-direction:column;gap:10px}
+.bulk-actions{display:flex;align-items:center;justify-content:flex-end;gap:14px;margin:-10px 0 18px;font-size:12px;color:#6f817c}.bulk-actions label{display:flex;align-items:center;gap:7px;margin:0;font-weight:500}.bulk-actions input,.run-select input{accent-color:#0d9488}.bulk-actions .btn{min-height:34px;padding:7px 12px}.run-select{position:absolute;top:24px;left:24px;z-index:1;margin:0}.result-card:has(.run-select){padding-left:50px}.result-row .run-select{top:24px;left:0}.official-interval{display:flex;align-items:center;gap:7px;margin:0;color:#6f817c;font-size:12px;white-space:nowrap}.official-interval .input{width:76px;min-height:34px;padding:5px 8px}
+.bulk-actions{display:flex;align-items:center;justify-content:flex-end;gap:14px;margin:-10px 0 18px;font-size:12px;color:#6f817c}.bulk-actions label{display:flex;align-items:center;gap:7px;margin:0;font-weight:500}.bulk-actions input,.run-select input{accent-color:#0d9488}.bulk-actions .btn{min-height:34px;padding:7px 12px}.run-select{position:absolute;top:24px;left:24px;z-index:1;margin:0}.result-card:has(.run-select){padding-left:50px}.result-row .run-select{top:24px;left:0}.official-interval{display:flex;align-items:center;gap:7px;margin:0;color:#6f817c;font-size:12px;white-space:nowrap}.official-interval .input{width:76px;min-height:34px;padding:5px 8px}
 .delete-run{font-size:12px;color:#b95547;white-space:nowrap;padding:4px 0}
 .delete-run:hover{color:#932e24;text-decoration:underline}
 .delete-run:disabled{opacity:.4;cursor:not-allowed;text-decoration:none}
@@ -311,6 +353,7 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .result-list-head{padding:16px 20px;background:linear-gradient(105deg,#edf7f4,#f5faf8);border-radius:15px 15px 0 0;font-size:13px;font-weight:600;line-height:1.5;color:#4e7c75;border-bottom:1px solid #dfede7}
 .result-list-head span:last-child{text-align:right}
 .result-row{padding:26px 20px;border-bottom:1px solid #e3e9e6;min-width:0;align-items:start;scroll-margin-top:96px}
+.result-row{position:relative}
 .result-row:last-child{border-bottom:0}
 .result-meta{grid-column:1;grid-row:1;min-width:0}
 .result-meta h3{font-size:17px;font-weight:650;line-height:1.5;margin:6px 0 12px;overflow-wrap:anywhere}

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/tidwall/gjson"
@@ -664,6 +665,94 @@ type streamingResult struct {
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
 }
 
+func sseEventHasSemanticOutput(data string) bool {
+	var event map[string]any
+	if json.Unmarshal([]byte(data), &event) != nil {
+		return false
+	}
+	if eventType, _ := event["type"].(string); eventType != "" {
+		switch eventType {
+		case "content_block_delta":
+			delta, _ := event["delta"].(map[string]any)
+			kind, _ := delta["type"].(string)
+			if kind == "text_delta" || kind == "thinking_delta" {
+				text, _ := delta["text"].(string)
+				return strings.TrimSpace(text) != ""
+			}
+			if kind == "input_json_delta" {
+				partialJSON, _ := delta["partial_json"].(string)
+				return strings.TrimSpace(partialJSON) != ""
+			}
+		case "response.output_text.delta", "response.reasoning_summary_text.delta", "response.function_call_arguments.delta":
+			delta, _ := event["delta"].(string)
+			return strings.TrimSpace(delta) != ""
+		case "content_block_start":
+			block, _ := event["content_block"].(map[string]any)
+			return block["type"] == "tool_use" || block["type"] == "server_tool_use"
+		case "response.output_item.added":
+			item, _ := event["item"].(map[string]any)
+			return item["type"] == "function_call"
+		case "response.function_call_arguments.done":
+			arguments, _ := event["arguments"].(string)
+			return strings.TrimSpace(arguments) != ""
+		}
+	}
+	if choices, ok := event["choices"].([]any); ok {
+		for _, raw := range choices {
+			choice, _ := raw.(map[string]any)
+			delta, _ := choice["delta"].(map[string]any)
+			for _, key := range []string{"content", "refusal"} {
+				if text, ok := delta[key].(string); ok && strings.TrimSpace(text) != "" {
+					return true
+				}
+			}
+			if calls, ok := delta["tool_calls"].([]any); ok && len(calls) > 0 {
+				return true
+			}
+		}
+	}
+	if candidates, ok := event["candidates"].([]any); ok {
+		for _, raw := range candidates {
+			candidate, _ := raw.(map[string]any)
+			content, _ := candidate["content"].(map[string]any)
+			parts, _ := content["parts"].([]any)
+			for _, rawPart := range parts {
+				part, _ := rawPart.(map[string]any)
+				if text, ok := part["text"].(string); ok && strings.TrimSpace(text) != "" {
+					return true
+				}
+				if _, ok := part["functionCall"]; ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func anthropicEventHasSemanticOutput(event *apicompat.AnthropicStreamEvent) bool {
+	if event == nil {
+		return false
+	}
+	switch event.Type {
+	case "content_block_start":
+		return event.ContentBlock != nil && (event.ContentBlock.Type == "tool_use" || event.ContentBlock.Type == "server_tool_use")
+	case "content_block_delta":
+		if event.Delta == nil {
+			return false
+		}
+		switch event.Delta.Type {
+		case "text_delta":
+			return strings.TrimSpace(event.Delta.Text) != ""
+		case "thinking_delta":
+			return strings.TrimSpace(event.Delta.Thinking) != ""
+		case "input_json_delta":
+			return strings.TrimSpace(event.Delta.PartialJSON) != ""
+		}
+	}
+	return false
+}
+
 // hasObservedTokens 报告流式过程中是否已观测到任何上游计量的 token。
 func (u *ClaudeUsage) hasObservedTokens() bool {
 	if u == nil {
@@ -812,6 +901,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	var keepaliveCh <-chan time.Time
 	if keepaliveTimer != nil {
 		keepaliveCh = keepaliveTimer.C
+	}
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
 	}
 	lastDataAt := time.Now()
 	resetKeepaliveTimer := func() {
@@ -1072,7 +1165,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				// 默认 *net.OpError 的 Error() 会泄露内部 IP/端口和上游地址。完整 ev.err
 				// 仅在下方 LegacyPrintf 内部日志中保留供运维诊断。
 				disconnectMsg := "upstream stream disconnected: " + sanitizeStreamError(ev.err)
-				if !c.Writer.Written() {
+				if !c.Writer.Written() || TextStreamAwaitingOutput(c) {
 					logger.LegacyPrintf("service.gateway", "Upstream stream read error before any client output (account=%d), failing over: %v", account.ID, ev.err)
 					body, _ := json.Marshal(map[string]any{
 						"type": "error",
@@ -1118,13 +1211,16 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							// 否则会漏计当前事件携带的 usage 导致少计费。后续写入由
 							// clientDisconnected 守卫跳过。
 						} else {
+							if data != "" && sseEventHasSemanticOutput(data) {
+								markTextStreamRealOutput(c)
+							}
 							flusher.Flush()
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
 						}
 					}
 					if data != "" {
-						if firstTokenMs == nil && data != "[DONE]" {
+						if firstTokenMs == nil && data != "[DONE]" && sseEventHasSemanticOutput(data) {
 							ms := int(time.Since(startTime).Milliseconds())
 							firstTokenMs = &ms
 						}
@@ -1176,6 +1272,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			flusher.Flush()
 			lastDataAt = time.Now()
 			resetKeepaliveTimer()
+
+		case <-placeholderCh:
+			writeTextStreamPlaceholder(c, w)
+			placeholderCh = nil
 		}
 	}
 

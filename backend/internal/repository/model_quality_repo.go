@@ -80,6 +80,19 @@ func (r *modelQualityRepository) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (r *modelQualityRepository) BatchDelete(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE model_quality_runs SET deleted_at=NOW(),content='',prompt='',error=''
+		WHERE id=ANY($1::bigint[]) AND deleted_at IS NULL AND status <> 'running'`, pq.Array(ids))
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	return count, err
+}
+
 func (r *modelQualityRepository) matchingUsers(ctx context.Context, filter service.ModelQualityUserFilter) ([]int64, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT usr.id,COALESCE(usr.email,''),COALESCE(usr.username,'')
 		FROM users usr JOIN model_quality_runs q ON q.user_id=usr.id AND q.deleted_at IS NULL

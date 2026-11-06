@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -321,6 +322,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 // POST /v1beta/models/{model}:generateContent
 // POST /v1beta/models/{model}:streamGenerateContent?alt=sse
 func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
+	requestStart := time.Now()
 	apiKey, ok := middleware.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
@@ -387,6 +389,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	if len(body) == 0 {
 		googleError(c, http.StatusBadRequest, "Request body is empty")
 		return
+	}
+	if stream {
+		service.SetTextStreamSemanticTrackingStart(c, requestStart, modelName)
 	}
 
 	setOpsRequestContext(c, modelName, stream)

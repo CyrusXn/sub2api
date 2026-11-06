@@ -288,6 +288,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		Stream:                        input.RequestStream,
 		Duration:                      time.Since(input.StartTime),
 		FirstTokenMs:                  firstTokenMs,
+		FirstPacketMs:                 TextStreamFirstPacketMs(c),
 		ClientDisconnect:              clientDisconnect,
 	}, nil
 }
@@ -487,6 +488,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	if keepaliveTimer != nil {
 		keepaliveCh = keepaliveTimer.C
 	}
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
+	}
 	lastDataAt := time.Now()
 	resetKeepaliveTimer := func() {
 		if keepaliveTimer == nil {
@@ -520,6 +525,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 							return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 						}
 					}
+					if TextStreamAwaitingOutput(c) && !clientDisconnected {
+						return nil, newTextStreamReadFailoverError(errors.New("stream usage incomplete: missing terminal event"))
+					}
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
@@ -538,6 +546,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
 				}
+				if TextStreamAwaitingOutput(c) {
+					return nil, newTextStreamReadFailoverError(ev.err)
+				}
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
 			}
 
@@ -548,9 +559,12 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
 				}
-				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
+				if firstTokenMs == nil && sseEventHasSemanticOutput(trimmed) {
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
+				}
+				if sseEventHasSemanticOutput(trimmed) {
+					markTextStreamRealOutput(c)
 				}
 				parseSSEUsagePassthrough(data, usage)
 			} else {
@@ -587,6 +601,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			if clientDisconnected {
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 			}
+			if TextStreamAwaitingOutput(c) {
+				return nil, newTextStreamReadFailoverError(errors.New("stream data interval timeout"))
+			}
 			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, model, streamInterval)
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
@@ -613,6 +630,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			flusher.Flush()
 			lastDataAt = time.Now()
 			resetKeepaliveTimer()
+
+		case <-placeholderCh:
+			writeTextStreamPlaceholder(c, w)
+			placeholderCh = nil
 		}
 	}
 }

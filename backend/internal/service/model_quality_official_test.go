@@ -52,7 +52,8 @@ func (r *officialRepoFake) List(context.Context, int, string, string, string, st
 func (r *officialRepoFake) FilterOptions(context.Context, string) (ModelQualityFilterOptions, error) {
 	return ModelQualityFilterOptions{}, nil
 }
-func (r *officialRepoFake) Delete(context.Context, int64) error { return nil }
+func (r *officialRepoFake) Delete(context.Context, int64) error                 { return nil }
+func (r *officialRepoFake) BatchDelete(context.Context, []int64) (int64, error) { return 0, nil }
 func officialTestKey() *APIKey {
 	gid := int64(2)
 	return &APIKey{ID: 3, UserID: 12, Name: "官key", Key: "test-only-secret", Status: StatusActive, GroupID: &gid, Group: &Group{Name: "官key分组"}, User: &User{Email: "admin@example.com", Role: RoleAdmin, Status: StatusActive}}
@@ -98,6 +99,41 @@ func TestModelQualityOfficialHourlyClaimAndStream(t *testing.T) {
 	require.Equal(t, "official", repo.runs[0].Theme)
 	require.Contains(t, repo.updates, "completed:我是测试模型")
 	s.runOnce(context.Background(), now.Add(time.Hour))
+	require.Equal(t, 2, calls)
+}
+
+func TestModelQualityOfficialConfigIntervalDefaultsAndValidates(t *testing.T) {
+	settings := &qualitySettingsFake{value: `{"enabled":true,"api_key_id":3,"model":"gpt-test","owner_id":12}`}
+	s := NewModelQualityOfficialService(&officialRepoFake{}, settings, qualityKeysFake{officialTestKey()}, "http://127.0.0.1:1")
+	status, err := s.Status(context.Background(), true)
+	require.NoError(t, err)
+	require.Equal(t, ModelQualityOfficialDefaultIntervalSeconds, status.IntervalSeconds)
+	for _, interval := range []int{ModelQualityOfficialMinIntervalSeconds - 1, ModelQualityOfficialMaxIntervalSeconds + 1} {
+		require.Error(t, s.ConfigureWithInterval(context.Background(), 12, 3, "gpt-test", true, interval))
+	}
+	require.NoError(t, s.ConfigureWithInterval(context.Background(), 12, 3, "gpt-test", true, 900))
+	status, err = s.Status(context.Background(), false)
+	require.NoError(t, err)
+	require.Equal(t, 900, status.IntervalSeconds)
+	require.Zero(t, status.APIKeyID)
+}
+
+func TestModelQualityOfficialUsesConfiguredIntervalForSlot(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"回答\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+	settings, repo := &qualitySettingsFake{}, &officialRepoFake{}
+	s := NewModelQualityOfficialService(repo, settings, qualityKeysFake{officialTestKey()}, server.URL)
+	require.NoError(t, s.ConfigureWithInterval(context.Background(), 12, 3, "gpt-test", true, 300))
+	now := time.Date(2026, 11, 4, 10, 2, 0, 0, time.UTC)
+	s.runOnce(context.Background(), now)
+	s.runOnce(context.Background(), now.Add(2*time.Minute))
+	require.Equal(t, 1, calls)
+	s.runOnce(context.Background(), now.Add(3*time.Minute))
 	require.Equal(t, 2, calls)
 }
 

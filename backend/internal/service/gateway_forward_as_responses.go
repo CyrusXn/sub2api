@@ -570,7 +570,6 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	clientToolRestorer := apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
 	var usage ClaudeUsage
 	var firstTokenMs *int
-	firstChunk := true
 	writerSizeBeforeStream := c.Writer.Size()
 
 	stream := newAnthropicCompatStream(s.cfg, c, resp, "forward_as_responses", requestID)
@@ -593,8 +592,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 	// processEvent handles a single parsed Anthropic SSE event.
 	processEvent := func(event *apicompat.AnthropicStreamEvent) {
-		if firstChunk {
-			firstChunk = false
+		if firstTokenMs == nil && anthropicEventHasSemanticOutput(event) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}

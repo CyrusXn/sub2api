@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,22 +21,37 @@ const textStreamTimingKey = "text_stream_timing"
 const textStreamTimingDisabledKey = "text_stream_timing_disabled"
 const textStreamRequestStartedKey = "text_stream_request_started"
 const textStreamRequestModelKey = "text_stream_request_model"
+const textStreamPlaceholderEnabledKey = "text_stream_placeholder_enabled"
 
 type textStreamTiming struct {
-	mu                sync.Mutex
-	started           time.Time
-	generationStarted time.Time
-	placeholderFrame  string
-	placeholder       bool
-	realOutput        bool
-	firstPacketMs     *int
-	bytes             int
+	mu                 sync.Mutex
+	started            time.Time
+	generationStarted  time.Time
+	placeholderFrame   string
+	placeholderEnabled bool
+	placeholder        bool
+	realOutput         bool
+	firstPacketMs      *int
+	bytes              int
 }
 
 // SetTextStreamRequestStart 只保存计时元数据；通过鉴权并进入生成时才启用占位。
 func SetTextStreamRequestStart(c *gin.Context, started time.Time, model string) {
+	setTextStreamRequestStart(c, started, model, true)
+}
+
+// SetTextStreamSemanticTrackingStart 启用真实语义输出追踪，但不发送协议外占位帧。
+func SetTextStreamSemanticTrackingStart(c *gin.Context, started time.Time, model string) {
+	setTextStreamRequestStart(c, started, model, false)
+}
+
+func setTextStreamRequestStart(c *gin.Context, started time.Time, model string, placeholderEnabled bool) {
+	if c == nil {
+		return
+	}
 	c.Set(textStreamRequestStartedKey, started)
 	c.Set(textStreamRequestModelKey, model)
+	c.Set(textStreamPlaceholderEnabledKey, placeholderEnabled)
 }
 
 func textStreamTimingFromContext(c *gin.Context) *textStreamTiming {
@@ -57,7 +73,12 @@ func ensureTextStreamTiming(c *gin.Context, started time.Time) *textStreamTiming
 	if state := textStreamTimingFromContext(c); state != nil {
 		return state
 	}
-	state := &textStreamTiming{started: started, generationStarted: started, placeholderFrame: ": \n\n"}
+	state := &textStreamTiming{started: started, generationStarted: started, placeholderFrame: ": \n\n", placeholderEnabled: true}
+	if value, ok := c.Get(textStreamPlaceholderEnabledKey); ok {
+		if enabled, valid := value.(bool); valid {
+			state.placeholderEnabled = enabled
+		}
+	}
 	if value, ok := c.Get(textStreamRequestStartedKey); ok {
 		if requestStarted, valid := value.(time.Time); valid && !requestStarted.IsZero() {
 			state.started = requestStarted
@@ -89,9 +110,40 @@ func textStreamRequestEligible(endpoint, model string, body []byte) bool {
 	return !strings.Contains(strings.ToLower(model), "audio")
 }
 
+// IsTextStreamPlaceholderEligible 判断请求是否适用文本流首字计时占位。
+func IsTextStreamPlaceholderEligible(endpoint, model string, body []byte) bool {
+	return textStreamRequestEligible(endpoint, model, body)
+}
+
+func ensureTextStreamTimingForRequest(c *gin.Context, started time.Time) *textStreamTiming {
+	if c == nil {
+		return nil
+	}
+	if _, ok := c.Get(textStreamRequestStartedKey); !ok {
+		return nil
+	}
+	return ensureTextStreamTiming(c, started)
+}
+
 // TextStreamAwaitingOutput 只用于已通过文本流鉴权的请求，不把占位算作正文交付。
 func TextStreamAwaitingOutput(c *gin.Context) bool {
 	return textStreamTimingFromContext(c) != nil && !textStreamHasRealOutput(c)
+}
+
+func newTextStreamReadFailoverError(err error) *UpstreamFailoverError {
+	message := "upstream stream disconnected"
+	if err != nil {
+		message += ": " + sanitizeStreamError(err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"type":  "error",
+		"error": map[string]string{"type": "upstream_disconnected", "message": message},
+	})
+	return &UpstreamFailoverError{
+		StatusCode:             http.StatusBadGateway,
+		ResponseBody:           body,
+		RetryableOnSameAccount: true,
+	}
 }
 
 func (s *textStreamTiming) reservePlaceholder() bool {
@@ -148,7 +200,7 @@ func textStreamHasRealOutput(c *gin.Context) bool {
 
 func textStreamPlaceholderTimer(c *gin.Context) (*time.Timer, <-chan time.Time) {
 	state := textStreamTimingFromContext(c)
-	if state == nil {
+	if state == nil || !state.placeholderEnabled {
 		return nil, nil
 	}
 	remaining := time.Until(state.generationStarted.Add(TextStreamPlaceholderDelay))

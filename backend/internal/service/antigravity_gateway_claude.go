@@ -480,6 +480,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		Stream:                        claudeReq.Stream,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		FirstPacketMs:                 TextStreamFirstPacketMs(c),
 		ClientDisconnect:              clientDisconnect,
 	}, nil
 }

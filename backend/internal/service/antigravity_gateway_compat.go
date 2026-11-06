@@ -461,6 +461,7 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 		Stream:                        call.request.clientStream,
 		Duration:                      time.Since(call.request.startTime),
 		FirstTokenMs:                  streamResult.firstTokenMs,
+		FirstPacketMs:                 TextStreamFirstPacketMs(c),
 		ReasoningEffort:               call.request.reasoningEffort,
 		ClientDisconnect:              streamResult.clientDisconnect,
 	}, nil

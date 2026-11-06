@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,7 +119,10 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(http.StatusOK)
 
-		streamRes := s.streamUpstreamResponse(c, resp, startTime)
+		streamRes, err := s.streamUpstreamResponseWithFailover(c, resp, startTime)
+		if err != nil {
+			return nil, err
+		}
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
@@ -149,6 +153,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		Stream:                        claudeReq.Stream,
 		Duration:                      duration,
 		FirstTokenMs:                  firstTokenMs,
+		FirstPacketMs:                 TextStreamFirstPacketMs(c),
 		ClientDisconnect:              clientDisconnect,
 		UpstreamHeaders:               resp.Header,
 		Usage: ClaudeUsage{
@@ -162,6 +167,12 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 
 // streamUpstreamResponse 透传上游 SSE 流并提取 Claude usage
 func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp *http.Response, startTime time.Time) *antigravityStreamResult {
+	result, _ := s.streamUpstreamResponseWithFailover(c, resp, startTime)
+	return result
+}
+
+func (s *AntigravityGatewayService) streamUpstreamResponseWithFailover(c *gin.Context, resp *http.Response, startTime time.Time) (*antigravityStreamResult, error) {
+	ensureTextStreamTimingForRequest(c, startTime)
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 
@@ -240,6 +251,10 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 	flusher, _ := c.Writer.(http.Flusher)
 	cw := newAntigravityClientWriter(c.Writer, flusher, "antigravity upstream")
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
+	}
 
 	for {
 		select {
@@ -248,34 +263,46 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 				queueBudget.release(len(ev.line))
 			}
 			if !ok {
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}
+				if TextStreamAwaitingOutput(c) && !cw.Disconnected() {
+					return nil, newTextStreamReadFailoverError(io.EOF)
+				}
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}, nil
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity upstream"); handled {
-					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect}
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect}, nil
 				}
 				logger.LegacyPrintf("service.antigravity_gateway", "Stream read error (antigravity upstream): %v", ev.err)
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}
+				if TextStreamAwaitingOutput(c) {
+					return nil, newTextStreamReadFailoverError(ev.err)
+				}
+				return nil, ev.err
 			}
 
 			lastDataAt = time.Now()
 
 			line := ev.line
+			if TextStreamAwaitingOutput(c) && anthropicSSELineIsError(line) {
+				return nil, newTextStreamReadFailoverError(errors.New("upstream stream returned an error event"))
+			}
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				upstreamResponseModelObserverFromContext(c).ObserveAnthropic([]byte(strings.TrimSpace(data)))
 			}
 
 			// 记录首 token 时间
-			if firstTokenMs == nil && len(line) > 0 {
+			if firstTokenMs == nil && anthropicSSELineHasSemanticOutput(line) {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
+				markTextStreamRealOutput(c)
 			}
 
 			// 尝试从 message_delta 或 message_stop 事件提取 usage
 			s.extractSSEUsage(line, usage)
 
 			// 透传行
-			cw.Fprintf("%s\n", line)
+			if cw.Fprintf("%s\n", line) {
+				recordTextStreamPacket(c)
+			}
 
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -284,10 +311,13 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 			}
 			if cw.Disconnected() {
 				logger.LegacyPrintf("service.antigravity_gateway", "Upstream timeout after client disconnect (antigravity upstream), returning collected usage")
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
+			}
+			if TextStreamAwaitingOutput(c) {
+				return nil, newTextStreamReadFailoverError(errors.New("stream data interval timeout"))
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity upstream)")
-			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}
+			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 
 		case <-keepaliveCh:
 			if cw.Disconnected() {
@@ -302,8 +332,48 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity upstream), continuing to drain upstream for billing")
 				continue
 			}
+		case <-placeholderCh:
+			writeTextStreamPlaceholder(c, c.Writer)
 		}
 	}
+}
+
+func anthropicSSELineHasSemanticOutput(line string) bool {
+	if !strings.HasPrefix(line, "data:") {
+		return false
+	}
+	var event struct {
+		Type  string `json:"type"`
+		Block struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Thinking string `json:"thinking"`
+		} `json:"content_block"`
+		Delta struct {
+			Type        string `json:"type"`
+			Text        string `json:"text"`
+			Thinking    string `json:"thinking"`
+			PartialJSON string `json:"partial_json"`
+		} `json:"delta"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &event) != nil {
+		return false
+	}
+	return event.Block.Type == "tool_use" || event.Block.Text != "" || event.Block.Thinking != "" ||
+		event.Delta.Text != "" || event.Delta.Thinking != "" || event.Delta.PartialJSON != ""
+}
+
+func anthropicSSELineIsError(line string) bool {
+	if !strings.HasPrefix(line, "data:") {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &event) != nil {
+		return false
+	}
+	return event.Type == "error"
 }
 
 // extractSSEUsage 从 SSE data 行中提取 Claude usage（用于流式透传场景）

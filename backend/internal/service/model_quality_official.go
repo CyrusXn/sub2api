@@ -25,10 +25,11 @@ type modelQualityKeyReader interface {
 }
 
 type ModelQualityOfficialConfig struct {
-	Enabled  bool   `json:"enabled"`
-	APIKeyID int64  `json:"api_key_id,omitempty"`
-	Model    string `json:"model"`
-	OwnerID  int64  `json:"owner_id,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	APIKeyID        int64  `json:"api_key_id,omitempty"`
+	Model           string `json:"model"`
+	IntervalSeconds int    `json:"interval_seconds"`
+	OwnerID         int64  `json:"owner_id,omitempty"`
 }
 
 type ModelQualityOfficialService struct {
@@ -65,6 +66,7 @@ func (s *ModelQualityOfficialService) load(ctx context.Context) (ModelQualityOff
 
 func (s *ModelQualityOfficialService) Status(ctx context.Context, admin bool) (ModelQualityOfficialConfig, error) {
 	cfg, err := s.load(ctx)
+	cfg.IntervalSeconds = normalizeOfficialInterval(cfg.IntervalSeconds)
 	cfg.OwnerID = 0
 	if !admin {
 		cfg.APIKeyID = 0
@@ -73,19 +75,40 @@ func (s *ModelQualityOfficialService) Status(ctx context.Context, admin bool) (M
 }
 
 func (s *ModelQualityOfficialService) Configure(ctx context.Context, owner, keyID int64, model string, enabled bool) error {
-	var cfg ModelQualityOfficialConfig
+	return s.ConfigureWithInterval(ctx, owner, keyID, model, enabled, ModelQualityOfficialDefaultIntervalSeconds)
+}
+
+func (s *ModelQualityOfficialService) ConfigureWithInterval(ctx context.Context, owner, keyID int64, model string, enabled bool, intervalSeconds int) error {
+	if intervalSeconds < ModelQualityOfficialMinIntervalSeconds || intervalSeconds > ModelQualityOfficialMaxIntervalSeconds {
+		return errors.New("检测间隔需设置在 300 至 86400 秒之间")
+	}
+	cfg, err := s.load(ctx)
+	if err != nil {
+		return err
+	}
+	cfg.IntervalSeconds = intervalSeconds
+	cfg.Enabled = enabled
 	if enabled {
 		key, err := s.keys.GetByID(ctx, keyID)
 		if err != nil || key == nil || key.UserID != owner || !validOfficialQualityKey(key, model) {
 			return errors.New("请选择本人可用的官 key 及其文本模型")
 		}
-		cfg = ModelQualityOfficialConfig{Enabled: true, APIKeyID: keyID, Model: model, OwnerID: owner}
+		cfg.APIKeyID, cfg.Model, cfg.OwnerID = keyID, model, owner
+	} else if cfg.OwnerID == 0 {
+		cfg.OwnerID = owner
 	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return err
 	}
 	return s.settings.Set(ctx, modelQualityOfficialSetting, string(raw))
+}
+
+func normalizeOfficialInterval(seconds int) int {
+	if seconds < ModelQualityOfficialMinIntervalSeconds || seconds > ModelQualityOfficialMaxIntervalSeconds {
+		return ModelQualityOfficialDefaultIntervalSeconds
+	}
+	return seconds
 }
 
 func validOfficialQualityKey(key *APIKey, model string) bool {
@@ -137,7 +160,8 @@ func (s *ModelQualityOfficialService) runOnce(parent context.Context, now time.T
 	if err != nil || key == nil || key.UserID != cfg.OwnerID {
 		return
 	}
-	slot := now.UTC().Truncate(time.Hour)
+	interval := time.Duration(normalizeOfficialInterval(cfg.IntervalSeconds)) * time.Second
+	slot := now.UTC().Truncate(interval)
 	run := &ModelQualityRun{UserID: cfg.OwnerID, APIKeyID: key.ID, Model: cfg.Model, Theme: "official", Prompt: "你是谁", Status: "running", OfficialSlot: &slot}
 	if key.User != nil {
 		run.Author = key.User.Email

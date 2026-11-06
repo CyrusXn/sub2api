@@ -19,7 +19,7 @@ export interface QualityRun {
 }
 export interface QualityFilterOptions { groups: string[]; models: string[] }
 export interface QualityPage { items: QualityRun[]; total: number; page: number; page_size: number; filters?: QualityFilterOptions; user_filter?: string }
-export interface OfficialQualityConfig { enabled: boolean; model: string; api_key_id?: number }
+export interface OfficialQualityConfig { enabled: boolean; model: string; api_key_id?: number; interval_seconds?: number }
 export interface QualityProgress { content: string; status: QualityStatus; request_id?: string }
 export function modelQualityPrompt(theme: QualityTheme, custom: string): string {
   if (theme === 'official') return '你是谁'
@@ -49,6 +49,11 @@ export const modelQualityAPI = {
   async remove(id: number): Promise<void> {
     const { data } = await apiClient.delete('/model-quality/' + id)
     if (data?.deleted !== true) throw new Error('删除检测记录失败')
+  },
+  async removeMany(ids: number[]): Promise<number> {
+    const { data } = await apiClient.post('/model-quality/batch-delete', { ids })
+    if (typeof data?.deleted !== 'number') throw new Error('批量删除检测记录失败')
+    return data.deleted
   },
   async official(): Promise<OfficialQualityConfig> {
     const { data } = await apiClient.get('/model-quality/official')

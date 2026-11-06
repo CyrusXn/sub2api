@@ -191,6 +191,44 @@ func (h *ModelQualityHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"deleted": true})
 }
 
+func (h *ModelQualityHandler) BatchDelete(c *gin.Context) {
+	if _, ok := middleware.GetAuthSubjectFromContext(c); !ok {
+		response.Unauthorized(c, "请先登录")
+		return
+	}
+	role, _ := middleware.GetUserRoleFromContext(c)
+	if role != service.RoleAdmin {
+		response.Forbidden(c, "仅管理员可以删除检测记录")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16*1024)
+	var input struct {
+		IDs []int64 `json:"ids"`
+	}
+	if c.ShouldBindJSON(&input) != nil || len(input.IDs) == 0 || len(input.IDs) > 100 {
+		response.BadRequest(c, "请选择 1 至 100 条可删除记录")
+		return
+	}
+	seen := make(map[int64]struct{}, len(input.IDs))
+	ids := make([]int64, 0, len(input.IDs))
+	for _, id := range input.IDs {
+		if id <= 0 {
+			response.BadRequest(c, "检测记录编号无效")
+			return
+		}
+		if _, exists := seen[id]; !exists {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	deleted, err := h.service.BatchDelete(c.Request.Context(), ids)
+	if err != nil {
+		response.InternalError(c, "批量删除检测记录失败")
+		return
+	}
+	response.Success(c, gin.H{"deleted": deleted})
+}
+
 func (h *ModelQualityHandler) OfficialStatus(c *gin.Context) {
 	role, _ := middleware.GetUserRoleFromContext(c)
 	cfg, err := h.official.Status(c.Request.Context(), role == service.RoleAdmin)
@@ -210,15 +248,20 @@ func (h *ModelQualityHandler) ConfigureOfficial(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 	var input struct {
-		Enabled  bool   `json:"enabled"`
-		APIKeyID int64  `json:"api_key_id"`
-		Model    string `json:"model"`
+		Enabled         bool   `json:"enabled"`
+		APIKeyID        int64  `json:"api_key_id"`
+		Model           string `json:"model"`
+		IntervalSeconds *int   `json:"interval_seconds"`
 	}
 	if c.ShouldBindJSON(&input) != nil {
 		response.BadRequest(c, "无效配置")
 		return
 	}
-	if err := h.official.Configure(c.Request.Context(), subject.UserID, input.APIKeyID, input.Model, input.Enabled); err != nil {
+	interval := service.ModelQualityOfficialDefaultIntervalSeconds
+	if input.IntervalSeconds != nil {
+		interval = *input.IntervalSeconds
+	}
+	if err := h.official.ConfigureWithInterval(c.Request.Context(), subject.UserID, input.APIKeyID, input.Model, input.Enabled, interval); err != nil {
 		response.BadRequest(c, "配置失败，请检查本人密钥、模型或服务状态")
 		return
 	}

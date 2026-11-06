@@ -1482,6 +1482,91 @@ func TestGeminiMessagesHandleStreamingResponse_ClosesToolBlockBeforeText(t *test
 	require.Equal(t, -1, open, "stream ended with a content block still open")
 }
 
+func TestGeminiMessagesStreamFailsOverAfterPlaceholderBeforeSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reader, writer := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: reader}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	started := time.Now()
+	SetTextStreamRequestStart(c, started, "claude-sonnet")
+	state := ensureTextStreamTimingForRequest(c, started)
+	state.mu.Lock()
+	state.generationStarted = time.Now().Add(-TextStreamPlaceholderDelay)
+	state.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := (&GeminiMessagesCompatService{}).handleStreamingResponse(c, resp, started, "claude-sonnet")
+		done <- err
+	}()
+	require.Eventually(t, func() bool { return TextStreamFirstPacketMs(c) != nil }, time.Second, time.Millisecond*5)
+	require.True(t, TextStreamAwaitingOutput(c), "占位不能算真实回答")
+	_ = writer.CloseWithError(io.ErrUnexpectedEOF)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, <-done, &failoverErr, "真实语义输出前的断流应允许切号")
+	require.Contains(t, rec.Body.String(), ": \n\n")
+	require.NotContains(t, rec.Body.String(), "event: message_start")
+	require.NotNil(t, TextStreamFirstPacketMs(c), "占位应进入使用记录首字时间")
+}
+
+func TestGeminiMessagesStreamFailsOverAfterProtocolMetadataBeforeSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	SetTextStreamRequestStart(c, time.Now(), "claude-sonnet")
+
+	_, err := (&GeminiMessagesCompatService{}).handleStreamingResponse(c, resp, time.Now(), "claude-sonnet")
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr, "message_start 协议元数据不应阻止切号")
+	require.NotContains(t, rec.Body.String(), "event: message_start", "失败重试前不应提交本次尝试的协议生命周期")
+	require.True(t, TextStreamAwaitingOutput(c))
+}
+
+func TestGeminiMessagesStreamSemanticOutputDisablesFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := `data: {"candidates":[{"content":{"parts":[{"text":"answer"}]}}]}` + "\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       &geminiStreamErrorReader{data: []byte(upstream), err: io.ErrUnexpectedEOF},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	SetTextStreamRequestStart(c, time.Now(), "claude-sonnet")
+
+	_, err := (&GeminiMessagesCompatService{}).handleStreamingResponse(c, resp, time.Now(), "claude-sonnet")
+	var failoverErr *UpstreamFailoverError
+	require.Error(t, err)
+	require.NotErrorAs(t, err, &failoverErr, "真实语义内容发出后不能切号")
+	require.True(t, textStreamHasRealOutput(c))
+}
+
+type geminiStreamErrorReader struct {
+	data []byte
+	err  error
+}
+
+func (r *geminiStreamErrorReader) Read(p []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(p, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	return 0, r.err
+}
+
+func (r *geminiStreamErrorReader) Close() error { return nil }
+
 type anthropicContentBlockEvent struct {
 	event     string
 	index     int

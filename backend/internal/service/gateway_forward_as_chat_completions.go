@@ -406,7 +406,6 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	var usage ClaudeUsage
 	var firstTokenMs *int
-	firstChunk := true
 	writerSizeBeforeStream := c.Writer.Size()
 
 	stream := newAnthropicCompatStream(s.cfg, c, resp, "forward_as_cc", requestID)
@@ -456,8 +455,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			c.Writer.Flush()
 			return
 		}
-		if firstChunk {
-			firstChunk = false
+		if firstTokenMs == nil && anthropicEventHasSemanticOutput(event) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}

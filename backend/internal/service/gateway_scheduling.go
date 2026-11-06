@@ -456,11 +456,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 
 			if len(routingAvailable) > 0 {
-				// 排序：优先级 > 负载率 > 最后使用时间
+				// 先按账号倍率、并发容量和优先级排序，再按实时负载及最近使用时间均衡。
 				sort.SliceStable(routingAvailable, func(i, j int) bool {
 					a, b := routingAvailable[i], routingAvailable[j]
-					if a.account.Priority != b.account.Priority {
-						return a.account.Priority < b.account.Priority
+					if order := compareAccountSchedulingPreference(a.account, b.account); order != 0 {
+						return order < 0
 					}
 					if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
 						return a.loadInfo.LoadRate < b.loadInfo.LoadRate
@@ -735,15 +735,16 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// 分层过滤选择：优先级 →（可选）最早重置 → 负载率 → LRU
+		// 分层过滤选择：倍率 → 并发容量 → 优先级 →（可选）最早重置 → 负载率 → LRU
 		for len(available) > 0 {
-			// 1. 取优先级最小的集合
-			candidates := filterByMinPriority(available)
-			// 2. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
+			candidates := filterByMinRate(available)
+			candidates = filterByMaxConcurrency(candidates)
+			candidates = filterByMinPriority(candidates)
+			// （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
 			if cfg.PreferSoonestReset {
 				candidates = filterBySoonestReset(candidates)
 			}
-			// 3. 取负载率最低的集合
+			// 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
 			// 4. LRU 选择最久未用的账号
 			selected := selectByLRU(candidates, preferOAuth)
@@ -795,7 +796,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, groupID *int64, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool, error) {
 	ordered := append([]*Account(nil), candidates...)
-	sortAccountsByPriorityAndLastUsed(ordered, preferOAuth)
+	sortAccountsForSchedulingPreference(ordered, preferOAuth)
 
 	for _, acc := range ordered {
 		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)
@@ -1617,6 +1618,44 @@ func filterByMinPriority(accounts []accountWithLoad) []accountWithLoad {
 	return result
 }
 
+func filterByMinRate(accounts []accountWithLoad) []accountWithLoad {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	minRate := accounts[0].account.BillingRateMultiplier()
+	for _, item := range accounts[1:] {
+		if rate := item.account.BillingRateMultiplier(); rate < minRate {
+			minRate = rate
+		}
+	}
+	result := make([]accountWithLoad, 0, len(accounts))
+	for _, item := range accounts {
+		if item.account.BillingRateMultiplier() == minRate {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func filterByMaxConcurrency(accounts []accountWithLoad) []accountWithLoad {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	maxConcurrency := accounts[0].account.Concurrency
+	for _, item := range accounts[1:] {
+		if item.account.Concurrency > maxConcurrency {
+			maxConcurrency = item.account.Concurrency
+		}
+	}
+	result := make([]accountWithLoad, 0, len(accounts))
+	for _, item := range accounts {
+		if item.account.Concurrency == maxConcurrency {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 // filterByMinLoadRate 过滤出负载率最低的账号集合
 func filterByMinLoadRate(accounts []accountWithLoad) []accountWithLoad {
 	if len(accounts) == 0 {
@@ -1753,6 +1792,48 @@ func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 	shuffleWithinPriorityAndLastUsed(accounts, preferOAuth)
 }
 
+func compareAccountSchedulingPreference(a, b *Account) int {
+	aRate, bRate := a.BillingRateMultiplier(), b.BillingRateMultiplier()
+	if aRate < bRate {
+		return -1
+	}
+	if aRate > bRate {
+		return 1
+	}
+	if a.Concurrency > b.Concurrency {
+		return -1
+	}
+	if a.Concurrency < b.Concurrency {
+		return 1
+	}
+	if a.Priority < b.Priority {
+		return -1
+	}
+	if a.Priority > b.Priority {
+		return 1
+	}
+	return 0
+}
+
+func sortAccountsForSchedulingPreference(accounts []*Account, preferOAuth bool) {
+	sort.SliceStable(accounts, func(i, j int) bool {
+		a, b := accounts[i], accounts[j]
+		if order := compareAccountSchedulingPreference(a, b); order != 0 {
+			return order < 0
+		}
+		if a.LastUsedAt == nil && b.LastUsedAt != nil {
+			return true
+		}
+		if a.LastUsedAt != nil && b.LastUsedAt == nil {
+			return false
+		}
+		if a.LastUsedAt != nil && b.LastUsedAt != nil && !a.LastUsedAt.Equal(*b.LastUsedAt) {
+			return a.LastUsedAt.Before(*b.LastUsedAt)
+		}
+		return preferOAuth && a.Type == AccountTypeOAuth && b.Type != AccountTypeOAuth
+	})
+}
+
 // shuffleWithinSortGroups 对排序后的 accountWithLoad 切片，按 (Priority, LoadRate, LastUsedAt) 分组后组内随机打乱。
 // 防止并发请求读取同一快照时，确定性排序导致所有请求命中相同账号。
 func shuffleWithinSortGroups(accounts []accountWithLoad) {
@@ -1776,6 +1857,9 @@ func shuffleWithinSortGroups(accounts []accountWithLoad) {
 
 // sameAccountWithLoadGroup 判断两个 accountWithLoad 是否属于同一排序组
 func sameAccountWithLoadGroup(a, b accountWithLoad) bool {
+	if compareAccountSchedulingPreference(a.account, b.account) != 0 {
+		return false
+	}
 	if a.account.Priority != b.account.Priority {
 		return false
 	}
@@ -1832,10 +1916,7 @@ func shuffleWithinPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 
 // sameAccountGroup 判断两个 Account 是否属于同一排序组（Priority + LastUsedAt）
 func sameAccountGroup(a, b *Account) bool {
-	if a.Priority != b.Priority {
-		return false
-	}
-	return sameLastUsedAt(a.LastUsedAt, b.LastUsedAt)
+	return compareAccountSchedulingPreference(a, b) == 0 && sameLastUsedAt(a.LastUsedAt, b.LastUsedAt)
 }
 
 // sameLastUsedAt 判断两个 LastUsedAt 是否相同（精度到秒）
@@ -1854,12 +1935,23 @@ func sameLastUsedAt(a, b *time.Time) bool {
 // mode: "last_used"(按最后使用时间) 或 "random"(随机)
 func (s *GatewayService) sortCandidatesForFallback(accounts []*Account, preferOAuth bool, mode string) {
 	if mode == "random" {
-		// 先按优先级排序，然后在同优先级内随机打乱
-		sortAccountsByPriorityOnly(accounts, preferOAuth)
-		shuffleWithinPriority(accounts)
+		sortAccountsForSchedulingPreference(accounts, preferOAuth)
+		shuffleWithinSchedulingPreference(accounts)
 	} else {
-		// 默认按最后使用时间排序
-		sortAccountsByPriorityAndLastUsed(accounts, preferOAuth)
+		sortAccountsForSchedulingPreference(accounts, preferOAuth)
+	}
+}
+
+func shuffleWithinSchedulingPreference(accounts []*Account) {
+	for start := 0; start < len(accounts); {
+		end := start + 1
+		for end < len(accounts) && compareAccountSchedulingPreference(accounts[start], accounts[end]) == 0 {
+			end++
+		}
+		if end-start > 1 {
+			mathrand.Shuffle(end-start, func(i, j int) { accounts[start+i], accounts[start+j] = accounts[start+j], accounts[start+i] })
+		}
+		start = end
 	}
 }
 
@@ -2127,9 +2219,9 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			selected = acc
 			continue
 		}
-		if acc.Priority < selected.Priority {
+		if order := compareAccountSchedulingPreference(acc, selected); order < 0 {
 			selected = acc
-		} else if acc.Priority == selected.Priority {
+		} else if order == 0 {
 			switch {
 			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
 				selected = acc
@@ -2394,9 +2486,9 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			selected = acc
 			continue
 		}
-		if acc.Priority < selected.Priority {
+		if order := compareAccountSchedulingPreference(acc, selected); order < 0 {
 			selected = acc
-		} else if acc.Priority == selected.Priority {
+		} else if order == 0 {
 			switch {
 			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
 				selected = acc

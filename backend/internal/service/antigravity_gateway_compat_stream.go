@@ -289,6 +289,7 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStreamWithKeepaliveIn
 	c *gin.Context, resp *http.Response, startTime time.Time, originalModel string,
 	adapter antigravityCompatStreamAdapter, prefix string, interval, maxPreContentWait time.Duration,
 ) (*antigravityStreamResult, error) {
+	ensureTextStreamTimingForRequest(c, startTime)
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		return nil, errors.New("streaming not supported")
@@ -329,7 +330,14 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStreamWithKeepaliveIn
 	}
 	deadlineTimer := time.NewTimer(deadlineDelay)
 	defer deadlineTimer.Stop()
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
+	}
 	preContentTimeout := func() (*antigravityStreamResult, error) {
+		if TextStreamAwaitingOutput(c) {
+			return nil, newTextStreamReadFailoverError(errors.New("stream data interval timeout"))
+		}
 		if session.preContentKeepaliveSent {
 			writeAntigravityCompatStreamError(c, adapter, writer, "stream_timeout")
 			return session.collectResult(false), fmt.Errorf("pre-content stream timeout")
@@ -348,6 +356,9 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStreamWithKeepaliveIn
 			}
 			if !open {
 				if !session.hasMeaningfulData() && !writer.Disconnected() {
+					if TextStreamAwaitingOutput(c) {
+						return nil, newTextStreamReadFailoverError(io.EOF)
+					}
 					return handleAntigravityCompatEmptyStream(c, session)
 				}
 				return session.finish()
@@ -357,13 +368,21 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStreamWithKeepaliveIn
 			}
 			resetAntigravityCompatTimer(timeoutTimer, timeout)
 			s.observeAntigravityGeminiSSELine(c, event.line)
+			wasMeaningful := session.hasMeaningfulData()
 			session.consume(event.line)
+			if !wasMeaningful && session.hasMeaningfulData() {
+				markTextStreamRealOutput(c)
+				recordTextStreamPacket(c)
+			}
 
 		case <-timeoutCh:
 			if writer.Disconnected() {
 				return session.collectResult(true), nil
 			}
 			if !session.hasMeaningfulData() {
+				if TextStreamAwaitingOutput(c) {
+					return nil, newTextStreamReadFailoverError(errors.New("stream data interval timeout"))
+				}
 				return preContentTimeout()
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (%s)", prefix)
@@ -386,11 +405,16 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStreamWithKeepaliveIn
 			if !session.hasMeaningfulData() && !writer.Disconnected() {
 				return preContentTimeout()
 			}
+		case <-placeholderCh:
+			writeTextStreamPlaceholder(c, c.Writer)
 		}
 	}
 }
 
 func handleAntigravityCompatEmptyStream(c *gin.Context, session *antigravityCompatStreamSession) (*antigravityStreamResult, error) {
+	if TextStreamAwaitingOutput(c) {
+		return nil, newTextStreamReadFailoverError(io.EOF)
+	}
 	if session.preContentKeepaliveSent {
 		writeAntigravityCompatStreamError(c, session.adapter, session.writer, "empty_stream")
 		return session.collectResult(false), errors.New("empty Antigravity compatibility stream after keepalive")
@@ -488,6 +512,12 @@ func (s *AntigravityGatewayService) handleAntigravityCompatReadError(
 	prefix string,
 ) (*antigravityStreamResult, error) {
 	if !session.hasMeaningfulData() && !session.writer.Disconnected() {
+		if disconnect, handled := handleStreamReadError(err, false, prefix); handled {
+			return session.collectResult(disconnect), nil
+		}
+		if TextStreamAwaitingOutput(c) {
+			return nil, newTextStreamReadFailoverError(err)
+		}
 		if session.preContentKeepaliveSent {
 			writeAntigravityCompatStreamError(c, session.adapter, session.writer, "stream_read_error")
 			return session.collectResult(false), fmt.Errorf("stream read error: %w", err)

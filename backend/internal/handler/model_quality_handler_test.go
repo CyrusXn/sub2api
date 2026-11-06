@@ -29,11 +29,42 @@ type qualityRepoStub struct {
 	listedAdmin    bool
 	deletedID      int64
 	deleteError    error
+	batchIDs       []int64
+	batchDeleted   int64
+	batchError     error
 }
 
 func (r *qualityRepoStub) Delete(_ context.Context, id int64) error {
 	r.deletedID = id
 	return r.deleteError
+}
+
+func (r *qualityRepoStub) BatchDelete(_ context.Context, ids []int64) (int64, error) {
+	r.batchIDs = append([]int64(nil), ids...)
+	return r.batchDeleted, r.batchError
+}
+
+func TestModelQualityBatchDeleteRequiresAdminAndValidIDs(t *testing.T) {
+	for _, role := range []string{service.RoleUser, service.RoleAdmin} {
+		repo := &qualityRepoStub{batchDeleted: 2}
+		c, w := qualityContext("POST", "/model-quality/batch-delete", `{"ids":[17,18,17]}`, role)
+		(&ModelQualityHandler{service: service.NewModelQualityService(repo)}).BatchDelete(c)
+		if role == service.RoleAdmin {
+			require.Equal(t, http.StatusOK, w.Code)
+			require.Equal(t, []int64{17, 18}, repo.batchIDs)
+			require.Contains(t, w.Body.String(), `"deleted":2`)
+		} else {
+			require.Equal(t, http.StatusForbidden, w.Code)
+			require.Empty(t, repo.batchIDs)
+		}
+	}
+	for _, body := range []string{`{"ids":[]}`, `{"ids":[0]}`, `{"ids":[` + strings.TrimSuffix(strings.Repeat("1,", 101), ",") + `]}`} {
+		repo := &qualityRepoStub{}
+		c, w := qualityContext("POST", "/model-quality/batch-delete", body, service.RoleAdmin)
+		(&ModelQualityHandler{service: service.NewModelQualityService(repo)}).BatchDelete(c)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Empty(t, repo.batchIDs)
+	}
 }
 
 func TestModelQualityDeleteRequiresAuthenticatedAdmin(t *testing.T) {

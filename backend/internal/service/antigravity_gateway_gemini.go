@@ -469,6 +469,7 @@ handleSuccess:
 		ReasoningEffort:               extractGeminiReasoningEffortFromBody(injectedBody),
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		FirstPacketMs:                 TextStreamFirstPacketMs(c),
 		ClientDisconnect:              clientDisconnect,
 		ImageEndpoint:                 imageCount > 0,
 		ImageCount:                    imageCount,

@@ -1280,6 +1280,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
 	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
+	if reqStream && service.IsTextStreamPlaceholderEligible("/v1/messages", reqModel, body) {
+		service.SetTextStreamRequestStart(c, requestStart, reqModel)
+	}
 
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 

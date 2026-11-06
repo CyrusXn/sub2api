@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"regexp"
 	"testing"
@@ -25,6 +26,17 @@ func TestModelQualityDeleteClearsContentAndRejectsMissingRecords(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 		db.Close()
 	}
+}
+
+func TestModelQualityBatchDeleteSoftDeletesOnlyTerminalRecords(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mock.ExpectExec("UPDATE model_quality_runs SET deleted_at=NOW\\(\\),content='',prompt='',error='' WHERE id=ANY\\(\\$1::bigint\\[\\]\\) AND deleted_at IS NULL AND status <> 'running'").WithArgs(pq.Array([]int64{3, 4})).WillReturnResult(sqlmock.NewResult(0, 1))
+	deleted, err := NewModelQualityRepository(db).BatchDelete(context.Background(), []int64{3, 4})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, deleted)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestModelQualityProgressCannotOverwriteFinalOrAnotherUsersRecord(t *testing.T) {

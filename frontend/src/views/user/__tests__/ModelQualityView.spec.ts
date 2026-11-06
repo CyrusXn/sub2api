@@ -10,7 +10,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const auth = vi.hoisted(() => ({ isAdmin: false }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
-vi.mock('@/api/modelQuality', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/modelQuality')>(), modelQualityAPI: { list: vi.fn(), save: vi.fn(), update: vi.fn(), remove: vi.fn(), official: vi.fn(), configureOfficial: vi.fn() } }))
+vi.mock('@/api/modelQuality', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/modelQuality')>(), modelQualityAPI: { list: vi.fn(), save: vi.fn(), update: vi.fn(), remove: vi.fn(), removeMany: vi.fn(), official: vi.fn(), configureOfficial: vi.fn() } }))
 vi.mock('@/api/workspace', () => ({ loadWorkspaceKeys: vi.fn(), loadWorkspaceModels: vi.fn(), workspaceModelsForKey: (key: {models: string[]}) => key.models }))
 vi.mock('@/api/keyTest', () => ({ streamKeyTest: vi.fn() }))
 vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key.split('.').reduce<unknown>((value, segment) => (value as Record<string, unknown>)?.[segment], zh) || key }) }))
@@ -20,6 +20,7 @@ beforeEach(() => {
  auth.isAdmin = false
  vi.mocked(modelQualityAPI.save).mockResolvedValue({ id: 99 } as never)
  vi.mocked(modelQualityAPI.update).mockResolvedValue(undefined)
+ vi.mocked(modelQualityAPI.removeMany).mockResolvedValue(0)
  vi.mocked(modelQualityAPI.official).mockResolvedValue({ enabled: false, model: '' })
  vi.mocked(loadWorkspaceKeys).mockResolvedValue([{ id: 1, name: '我的密钥', groupName: '优选', platform: 'openai', baseUrl: '', key: 'not-a-real-key', models: ['gpt-test'], allowImageGeneration: false }])
  vi.mocked(loadWorkspaceModels).mockResolvedValue()
@@ -308,9 +309,51 @@ describe('模型智检', () => {
  it('官key仅管理员配置，普通用户可以查看结果而不能启动他人的定时密钥', async () => {
   const view = await open()
   await view.get('[data-theme=official]').trigger('click')
-  expect(view.text()).toContain('每小时')
+  expect(view.text()).toContain('按设定间隔')
   expect(view.find('[data-test=official-configure]').exists()).toBe(false)
   expect(view.find('[data-test=start]').exists()).toBe(false)
+ })
+ it('管理员可批量选择当前页已完成记录删除，运行中的记录不能选择', async () => {
+  auth.isAdmin = true
+  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [
+   { id: 11, author: 'operator', group_name: '组', model: 'model-a', theme: 'candy', prompt: '问题', status: 'completed', content: '答复', created_at: '2026-11-04T08:00:00Z' },
+   { id: 12, author: 'operator', group_name: '组', model: 'model-b', theme: 'candy', prompt: '问题', status: 'running', content: '', created_at: '2026-11-04T08:01:00Z' }
+  ], total: 2, page: 1, page_size: 12 })
+  const view = await open()
+  expect(view.findAll('.run-select input')).toHaveLength(2)
+  expect((view.findAll('.run-select input')[1].element as HTMLInputElement).disabled).toBe(true)
+  await view.get('[data-test=select-all-runs]').setValue(true)
+  expect(view.find('[data-test=batch-delete]').element.hasAttribute('disabled')).toBe(false)
+  view.getComponent(ConfirmDialog).vm.$emit('confirm')
+  expect(modelQualityAPI.removeMany).not.toHaveBeenCalled()
+  await view.get('[data-test=batch-delete]').trigger('click')
+  expect(view.getComponent(ConfirmDialog).props('show')).toBe(true)
+  vi.mocked(modelQualityAPI.removeMany).mockResolvedValueOnce(1)
+  vi.mocked(modelQualityAPI.list).mockResolvedValueOnce({ items: [{ id: 12, author: 'operator', group_name: '组', model: 'model-b', theme: 'candy', prompt: '问题', status: 'running', content: '', created_at: '2026-11-04T08:01:00Z' }], total: 1, page: 1, page_size: 12 })
+  view.getComponent(ConfirmDialog).vm.$emit('confirm')
+  await flushPromises()
+  expect(modelQualityAPI.removeMany).toHaveBeenCalledWith([11])
+  expect(view.find('[data-run-id="11"]').exists()).toBe(false)
+  expect(view.find('[data-run-id="12"]').exists()).toBe(true)
+ })
+ it('官key轮询间隔仅管理员可修改并随配置发送秒数', async () => {
+  auth.isAdmin = true
+  vi.mocked(modelQualityAPI.official).mockResolvedValue({ enabled: true, model: 'gpt-official', api_key_id: 2, interval_seconds: 3600 })
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  await flushPromises()
+  expect(view.get<HTMLInputElement>('#quality-official-interval').element.value).toBe('60')
+  await view.get<HTMLInputElement>('#quality-official-interval').setValue('15')
+  vi.mocked(modelQualityAPI.configureOfficial).mockResolvedValue({ enabled: true, model: 'gpt-official', interval_seconds: 900 })
+  await view.get('[data-test=official-save]').trigger('click')
+  await flushPromises()
+  expect(modelQualityAPI.configureOfficial).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, interval_seconds: 900 }))
+  expect(view.find('[data-test=official-disable]').exists()).toBe(true)
+  view.unmount()
+  auth.isAdmin = false
+  const publicView = await open()
+  await publicView.get('[data-theme=official]').trigger('click')
+  expect(publicView.find('#quality-official-interval').exists()).toBe(false)
  })
  it('旧后端不支持进行中记录时，最终兼容保存成功不再显示保存失败', async () => {
   vi.mocked(modelQualityAPI.save).mockRejectedValueOnce({ status: 400 }).mockResolvedValueOnce({ id: 99 } as never)
@@ -335,6 +378,9 @@ describe('模型智检', () => {
   await flushPromises()
   expect(view.findAllComponents(Select).find(select => select.props('id') === 'quality-key')?.props('modelValue')).toBe(2)
   expect(view.findAllComponents(Select).find(select => select.props('id') === 'quality-model')?.props('modelValue')).toBe('gpt-official')
+  expect(view.find('[data-test=official-configure]').exists()).toBe(false)
+  expect(view.find('[data-test=start]').exists()).toBe(false)
+  expect(view.text()).toContain('暂停检测')
  })
  it('糖果直接复用文本会话，不依赖专用创建接口，也不向模型透露答案', async () => {
   vi.mocked(modelQualityAPI.save).mockRejectedValue({ status: 404 })

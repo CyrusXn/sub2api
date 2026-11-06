@@ -29,6 +29,7 @@ func RegisterUserRoutes(
 			authenticated.GET("/model-quality", h.ModelQuality.List)
 			authenticated.POST("/model-quality", h.ModelQuality.Create)
 			authenticated.PATCH("/model-quality/:id", h.ModelQuality.Update)
+			authenticated.POST("/model-quality/batch-delete", h.ModelQuality.BatchDelete)
 			authenticated.DELETE("/model-quality/:id", h.ModelQuality.Delete)
 			authenticated.GET("/model-quality/official", h.ModelQuality.OfficialStatus)
 			authenticated.PUT("/model-quality/official", h.ModelQuality.ConfigureOfficial)
