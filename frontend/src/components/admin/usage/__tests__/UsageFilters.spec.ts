@@ -290,7 +290,7 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
     const wrapper = mountFilters()
     await flushPromises()
 
-    expect(mockListUpstreamSites).toHaveBeenCalledWith({ include_history: true })
+    expect(mockListUpstreamSites).toHaveBeenCalledWith({ include_history: false })
 
     ;(wrapper.vm as any).selectUpstreamSites(['vovo.example', 'other.example'])
 

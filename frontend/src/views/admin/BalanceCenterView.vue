@@ -120,7 +120,7 @@
                 </button>
               </div>
             </div>
-            <div v-if="!sitesLoading && sites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+            <div v-if="!sitesLoading && sortedSites.length === 0" class="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
               {{ t('admin.balanceCenter.noSites') }}
             </div>
           </div>
@@ -219,6 +219,7 @@ type ActiveTab = 'add' | 'records'
 const { t } = useI18n()
 const app = useAppStore()
 const sites = ref<BalanceCenterSite[]>([])
+const currentUpstreamHosts = ref<Set<string>>(new Set())
 const amounts = reactive<Record<number, string>>({})
 const activeTab = ref<ActiveTab>('add')
 const sitesLoading = ref(false)
@@ -241,10 +242,12 @@ const inactiveTabClass = 'border-transparent text-gray-500 hover:border-gray-300
 const summary = reactive<BalanceCenterRechargeSummary>({ total_amount: 0, items: [], sites: [], total: 0, page: 1, page_size: 20 })
 const alertSettings = reactive<BalanceCenterSettings>({ enabled: false, event_probe_enabled: false, email_enabled: false, low_balance_threshold: 5 })
 
-const sortedSites = computed(() => [...sites.value].sort((left, right) => {
-  const totalDifference = (right.historical_recharge_total ?? 0) - (left.historical_recharge_total ?? 0)
-  return totalDifference || left.normalized_domain.localeCompare(right.normalized_domain)
-}))
+const sortedSites = computed(() => [...sites.value]
+  .filter((site) => currentUpstreamHosts.value.has(site.normalized_domain.trim().toLowerCase()))
+  .sort((left, right) => {
+    const totalDifference = (right.historical_recharge_total ?? 0) - (left.historical_recharge_total ?? 0)
+    return totalDifference || left.normalized_domain.localeCompare(right.normalized_domain)
+  }))
 const sortedSummarySites = computed(() => [...summary.sites].sort((left, right) => {
   const totalDifference = right.total_amount - left.total_amount
   return totalDifference || left.site_name.localeCompare(right.site_name)
@@ -300,6 +303,14 @@ async function initial() {
   try {
     sites.value = await adminAPI.balanceCenter.sites()
   } catch (error) {
+    notifyError(error)
+  }
+
+  try {
+    const upstreamSites = await adminAPI.accounts.listUpstreamSites({ include_history: false })
+    currentUpstreamHosts.value = new Set(upstreamSites.map((site) => site.host.trim().toLowerCase()))
+  } catch (error) {
+    currentUpstreamHosts.value = new Set()
     notifyError(error)
   } finally {
     sitesLoading.value = false

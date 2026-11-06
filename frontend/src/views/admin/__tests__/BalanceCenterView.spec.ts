@@ -4,11 +4,11 @@ import BalanceCenterView from '../BalanceCenterView.vue'
 
 const api = vi.hoisted(() => ({
   sites: vi.fn(), rechargeSummary: vi.fn(), createRechargeEvent: vi.fn(), deleteRechargeEvent: vi.fn(),
-  getSettings: vi.fn(), updateSettings: vi.fn()
+  getSettings: vi.fn(), updateSettings: vi.fn(), listUpstreamSites: vi.fn()
 }))
 const notifications = vi.hoisted(() => ({ showSuccess: vi.fn(), showError: vi.fn() }))
 
-vi.mock('@/api/admin', () => ({ adminAPI: { balanceCenter: api } }))
+vi.mock('@/api/admin', () => ({ adminAPI: { balanceCenter: api, accounts: api } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => notifications }))
 vi.mock('vue-i18n', async () => ({
   ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
@@ -51,6 +51,10 @@ describe('BalanceCenterView', () => {
     vi.clearAllMocks()
     vi.stubGlobal('confirm', vi.fn(() => true))
     api.sites.mockResolvedValue(sites)
+    api.listUpstreamSites.mockResolvedValue([
+      { host: 'hby.example', website_url: 'https://hby.example', account_ids: [10], account_names: [], login_username: '', has_password: false, protocol: 'innom' },
+      { host: 'vovo.example', website_url: 'https://vovo.example', account_ids: [20], account_names: [], login_username: '', has_password: false, protocol: 'innom' }
+    ])
     api.rechargeSummary.mockResolvedValue(summary)
     api.createRechargeEvent.mockResolvedValue(summary.items[0])
     api.deleteRechargeEvent.mockResolvedValue(undefined)
@@ -63,6 +67,7 @@ describe('BalanceCenterView', () => {
     await flushPromises()
 
     expect(api.sites).toHaveBeenCalledOnce()
+    expect(api.listUpstreamSites).toHaveBeenCalledWith({ include_history: false })
     expect(api.getSettings).toHaveBeenCalledOnce()
     expect(api.rechargeSummary).not.toHaveBeenCalled()
     expect(wrapper.get('[data-test="tab-add-recharge"]').attributes('aria-selected')).toBe('true')
@@ -70,6 +75,39 @@ describe('BalanceCenterView', () => {
     expect(wrapper.find('[data-test="total-amount"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="recharge-list-scroll"]').classes()).toContain('overflow-y-auto')
     expect(wrapper.findAll('[data-test="site-recharge-row"]')[0].text()).toContain('VoVo')
+  })
+
+  it('新增充值只显示当前账号使用的站点，历史统计仍按原参数加载全部站点', async () => {
+    api.listUpstreamSites.mockResolvedValue([
+      { host: 'hby.example', website_url: 'https://hby.example', account_ids: [10], account_names: [], login_username: '', has_password: false, protocol: 'innom' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+
+    const addRows = wrapper.findAll('[data-test="site-recharge-row"]')
+    expect(addRows).toHaveLength(1)
+    expect(addRows[0].text()).toContain('HBY')
+
+    api.rechargeSummary.mockResolvedValue({
+      ...summary,
+      sites: [
+        ...summary.sites,
+        { site_id: 2, site_name: 'VoVo', total_amount: 30, record_count: 1, items: [] }
+      ]
+    })
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
+    await flushPromises()
+    expect(api.rechargeSummary).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      page_size: 20,
+      start_time: expect.any(String),
+      end_time: expect.any(String)
+    }))
+    expect(api.rechargeSummary.mock.calls[0][0]).not.toHaveProperty('site_id')
+
+    await wrapper.get('[data-test="dimension-site"]').trigger('click')
+    expect(wrapper.findAll('[data-test="site-summary-row"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('VoVo')
   })
 
   it('在余额中心直接设置低余额邮件阈值', async () => {

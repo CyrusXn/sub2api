@@ -5,4 +5,3 @@ CREATE TABLE IF NOT EXISTS upstream_site_credentials (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
