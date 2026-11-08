@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -130,18 +129,10 @@ func isResponsesWebSocketRoute(c *gin.Context) bool {
 func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, []byte, bool) {
 	body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
-		if RejectRequestBodyReadError(c, err) {
+		if RejectRequestBodyReadError(c, "middleware.group_model_allowlist", err) {
 			return nil, nil, false
 		}
-		status := http.StatusBadRequest
-		message := "Failed to read request body"
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			status = http.StatusRequestEntityTooLarge
-			message = "Request body is too large"
-		}
-		c.JSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
-		c.Abort()
+		AbortWithRequestBodyReadFailure(c, "middleware.group_model_allowlist", err)
 		return nil, nil, false
 	}
 	requestmodel.ResetRequestBody(c.Request, body)

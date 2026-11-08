@@ -2,7 +2,7 @@ export default {
   modelQuality: {
     title: '模型智检', description: '用同一道题，看看模型的真实表现', eyebrow: 'MODEL QUALITY LAB',
     intro: '一只鹈鹕，一道糖果题，或一个新想法。让模型的表现自己说话。',
-    start: '开始检测', starting: '正在提交…', key: '检测密钥', model: '检测模型', selectKey: '选择可用密钥', selectModel: '选择文本模型',
+    start: '开始检测', officialTrigger: '立即检测', starting: '正在提交…', key: '检测密钥', model: '检测模型', selectKey: '选择可用密钥', selectModel: '选择文本模型',
     billing: '按所选密钥的正常用量计费。结果对所有登录用户共享，请勿在提示词中输入隐私或敏感信息。',
     background: '回答逐段实时显示，最长等待 8 分钟。离开页面会中断本次检测，不会自动重复调用模型。',
     pelican: '鹈鹕', candy: '糖果', official: '官key', custom: '自定义',

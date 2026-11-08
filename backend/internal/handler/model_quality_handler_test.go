@@ -130,6 +130,28 @@ func TestModelQualityCreateStartsSharedRecordBeforeGeneration(t *testing.T) {
 	require.NotContains(t, w.Body.String(), "admin@example.com")
 }
 
+func TestModelQualityOfficialCreateRequiresAdminAndUsesFixedPrompt(t *testing.T) {
+	groupID := int64(2)
+	for _, role := range []string{service.RoleUser, service.RoleAdmin} {
+		repo := &qualityRepoStub{}
+		key := &service.APIKey{ID: 2, UserID: 12, Status: service.StatusActive, GroupID: &groupID, Group: &service.Group{ID: 2, Name: "官key分组"}}
+		if role == service.RoleAdmin {
+			key.User = &service.User{Email: "admin@example.com", Role: service.RoleAdmin, Status: service.StatusActive}
+		}
+		h := &ModelQualityHandler{service: service.NewModelQualityService(repo), keys: qualityKeyStub{key}}
+		c, w := qualityContext("POST", "/model-quality", `{"api_key_id":2,"model":"gpt-test","theme":"official","content":"","status":"running"}`, role)
+		h.Create(c)
+		if role == service.RoleAdmin {
+			require.Equal(t, http.StatusOK, w.Code)
+			require.Equal(t, "official", repo.createdRun.Theme)
+			require.Equal(t, "你是谁", repo.createdRun.Prompt)
+		} else {
+			require.Equal(t, http.StatusForbidden, w.Code)
+			require.Zero(t, repo.created)
+		}
+	}
+}
+
 func TestModelQualityProgressUsesAuthenticatedOwner(t *testing.T) {
 	repo := &qualityRepoStub{}
 	h := &ModelQualityHandler{service: service.NewModelQualityService(repo)}

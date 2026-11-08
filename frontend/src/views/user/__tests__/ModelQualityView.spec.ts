@@ -213,6 +213,33 @@ describe('模型智检', () => {
   expect(publicView.find('.account-line').exists()).toBe(false)
   expect(publicView.find('[data-test=delete-run]').exists()).toBe(false)
  })
+ it('官key管理员可手动触发检测，普通用户不可见入口', async () => {
+  auth.isAdmin = true
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  await flushPromises()
+  expect(view.find('[data-test=start]').exists()).toBe(true)
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-test', messages: [{ role: 'user', content: '你是谁' }] }))
+  expect(modelQualityAPI.save).toHaveBeenCalledWith(expect.objectContaining({ theme: 'official', prompt: '', status: 'running' }))
+  view.unmount()
+  auth.isAdmin = false
+  const publicView = await open()
+  await publicView.get('[data-theme=official]').trigger('click')
+  await flushPromises()
+  expect(publicView.find('[data-test=start]').exists()).toBe(false)
+ })
+ it('官key记录不展示提示词入口且选择框占用独立列表列', async () => {
+  auth.isAdmin = true
+  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [{ id: 1, author: 'operator', group_name: '官key分组', model: 'gpt-test', theme: 'official', prompt: '你是谁', status: 'completed', content: '回答', created_at: '2026-11-04T08:00:00Z' }], total: 1, page: 1, page_size: 12 })
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  await flushPromises()
+  expect(view.find('.prompt-details').exists()).toBe(false)
+  expect(view.find('.result-list-head [data-selection-column]').exists()).toBe(true)
+  expect(view.get('.result-row').classes()).toContain('has-selection-column')
+ })
  it('管理员确认后删除记录，失败保留记录并提示，重试成功后刷新共享历史', async () => {
   auth.isAdmin = true
   const view = await open()
@@ -379,7 +406,7 @@ describe('模型智检', () => {
   expect(view.findAllComponents(Select).find(select => select.props('id') === 'quality-key')?.props('modelValue')).toBe(2)
   expect(view.findAllComponents(Select).find(select => select.props('id') === 'quality-model')?.props('modelValue')).toBe('gpt-official')
   expect(view.find('[data-test=official-configure]').exists()).toBe(false)
-  expect(view.find('[data-test=start]').exists()).toBe(false)
+  expect(view.find('[data-test=start]').exists()).toBe(true)
   expect(view.text()).toContain('暂停检测')
  })
  it('糖果直接复用文本会话，不依赖专用创建接口，也不向模型透露答案', async () => {

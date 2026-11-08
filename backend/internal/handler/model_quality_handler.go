@@ -83,8 +83,13 @@ func (h *ModelQualityHandler) Create(c *gin.Context) {
 		Status    string `json:"status"`
 		RequestID string `json:"request_id"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil || input.APIKeyID <= 0 || !modelQualityTextModel(input.Model) || (input.Status != "running" && input.Status != "completed" && input.Status != "failed") || len(input.RequestID) > 100 || input.Theme == "official" {
+	if err := c.ShouldBindJSON(&input); err != nil || input.APIKeyID <= 0 || !modelQualityTextModel(input.Model) || (input.Status != "running" && input.Status != "completed" && input.Status != "failed") || len(input.RequestID) > 100 {
 		response.BadRequest(c, "检测结果信息无效")
+		return
+	}
+	role, _ := middleware.GetUserRoleFromContext(c)
+	if input.Theme == "official" && role != service.RoleAdmin {
+		response.Forbidden(c, "仅管理员可以手动检测官key")
 		return
 	}
 	prompt, err := service.ModelQualityPrompt(input.Theme, input.Prompt)
@@ -112,6 +117,10 @@ func (h *ModelQualityHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "密钥不可用或未绑定分组")
 		return
 	}
+	if input.Theme == "official" && (key.User == nil || !key.User.IsActive() || !key.User.IsAdmin()) {
+		response.Forbidden(c, "官key必须绑定到有效的管理员账号")
+		return
+	}
 	author := ""
 	if key.User != nil {
 		author = key.User.Email
@@ -125,7 +134,6 @@ func (h *ModelQualityHandler) Create(c *gin.Context) {
 		response.InternalError(c, "创建检测记录失败")
 		return
 	}
-	role, _ := middleware.GetUserRoleFromContext(c)
 	response.Success(c, run.Visible(role == service.RoleAdmin))
 }
 

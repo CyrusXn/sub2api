@@ -2,7 +2,7 @@ export default {
   modelQuality: {
     title: 'Model Quality', description: 'Same challenge. Real model performance.', eyebrow: 'MODEL QUALITY LAB',
     intro: 'A pelican, a candy puzzle, or a fresh idea. Let the results speak for themselves.',
-    start: 'Start test', starting: 'Submitting…', key: 'API key', model: 'Model', selectKey: 'Choose an available key', selectModel: 'Choose a text model',
+    start: 'Start test', officialTrigger: 'Run check now', starting: 'Submitting…', key: 'API key', model: 'Model', selectKey: 'Choose an available key', selectModel: 'Choose a text model',
     billing: 'Normal API usage charges apply. Results are shared with all signed-in users. Do not include private or sensitive information in prompts.',
     background: 'Answers appear as they stream, with an 8-minute limit. Leaving the page interrupts the test without restarting it.',
     pelican: 'Pelican', candy: 'Candy', official: 'Official key', custom: 'Custom',

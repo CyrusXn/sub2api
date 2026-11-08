@@ -3,7 +3,7 @@
     <main class="quality-page">
       <header class="quality-hero">
         <div><span class="quality-eyebrow">{{ t('modelQuality.eyebrow') }}</span><h1>{{ t('modelQuality.title') }}<span class="hero-mark">✦</span></h1><p>{{ t('modelQuality.intro') }}</p></div>
-        <button v-if="theme !== 'official' && !official.enabled" type="button" class="btn btn-primary" data-test="start" :disabled="!canStart" @click="start">{{ submitting ? t('modelQuality.starting') : t('modelQuality.start') }} <span aria-hidden="true">↗</span></button>
+        <button v-if="theme === 'official' ? auth.isAdmin : !official.enabled" type="button" class="btn btn-primary" data-test="start" :disabled="!canStart" @click="start">{{ submitting ? t('modelQuality.starting') : t(theme === 'official' ? 'modelQuality.officialTrigger' : 'modelQuality.start') }} <span aria-hidden="true">↗</span></button>
       </header>
 
       <section class="quality-settings" :aria-label="t('modelQuality.title')">
@@ -47,8 +47,8 @@
         <div v-if="loading && !runs.length" class="quality-empty">{{ t('modelQuality.loading') }}</div>
         <div v-else-if="!runs.length && !error" class="quality-empty"><span aria-hidden="true">◇</span><h3>{{ t('modelQuality.empty') }}</h3><p>{{ t('modelQuality.emptyHint') }}</p></div>
         <div v-if="runs.length" :class="officialLayout ? 'results-list' : 'results-grid'">
-          <div v-if="officialLayout" class="result-list-head"><span>{{ t('modelQuality.modelInfo') }}</span><span>{{ t('modelQuality.result') }}</span><span>{{ t('modelQuality.status') }}</span></div>
-          <article v-for="run in runs" :key="run.id" :data-run-id="run.id" class="quality-result" :class="officialLayout ? 'result-row' : 'result-card'">
+          <div v-if="officialLayout" class="result-list-head" :class="{ 'with-selection-column': auth.isAdmin }"><span v-if="auth.isAdmin" data-selection-column aria-hidden="true" /><span>{{ t('modelQuality.modelInfo') }}</span><span>{{ t('modelQuality.result') }}</span><span>{{ t('modelQuality.status') }}</span></div>
+          <article v-for="run in runs" :key="run.id" :data-run-id="run.id" class="quality-result" :class="[officialLayout ? 'result-row' : 'result-card', { 'has-selection-column': officialLayout && auth.isAdmin }]">
             <label v-if="auth.isAdmin" class="run-select"><input v-model="selectedIDs" type="checkbox" :value="run.id" :disabled="run.id <= 0 || run.status === 'running' || deleting" :aria-label="t('modelQuality.selectRecord', { model: run.model })" /></label>
             <div class="result-meta">
               <span class="group-name">{{ run.group_name }}</span><h3>{{ run.model }}</h3>
@@ -70,7 +70,7 @@
             <div v-else-if="run.status === 'completed' || (run.status === 'running' && /<svg[\s>]/i.test(run.content))" class="preview-panel"><iframe :title="t('modelQuality.previewTitle') + ' · ' + run.model" sandbox="" referrerpolicy="no-referrer" loading="lazy" :srcdoc="safeModelQualityHTML(run.content)" /><button v-if="run.status === 'completed'" type="button" class="preview-enlarge" @click="expanded = run">{{ t('modelQuality.enlarge') }} ↗</button></div>
             <div v-else-if="run.status === 'running'" class="result-placeholder" role="status"><span class="loading-spinner" aria-hidden="true" />{{ t('modelQuality.runningHint') }}</div>
             <p v-if="run.status === 'failed'" class="result-placeholder failure">{{ run.error || t('modelQuality.failed') }}</p>
-            <details class="prompt-details"><summary>{{ t('modelQuality.viewPrompt') }}</summary><p>{{ run.prompt }}</p></details>
+            <details v-if="run.theme !== 'official'" class="prompt-details"><summary>{{ t('modelQuality.viewPrompt') }}</summary><p>{{ run.prompt }}</p></details>
             </div>
           </article>
         </div>
@@ -126,7 +126,7 @@ const modelOptions = computed(() => [{ value: '', label: t('modelQuality.selectM
 const groupFilterOptions = computed(() => [{ value: '', label: t('modelQuality.allGroups') }, ...historyFilters.value.groups.map(value => ({ value, label: value }))])
 const modelFilterOptions = computed(() => [{ value: '', label: t('modelQuality.allModels') }, ...historyFilters.value.models.map(value => ({ value, label: value }))])
 const statusOptions = computed(() => [{ value: '', label: t('modelQuality.allStatuses') }, ...statuses.map(value => ({ value, label: t('modelQuality.' + value) }))])
-const canStart = computed(() => !keysLoading.value && !submitting.value && keyID.value > 0 && models.value.includes(model.value) && (theme.value !== 'custom' || prompt.value.trim().length > 0))
+const canStart = computed(() => !keysLoading.value && !submitting.value && (theme.value !== 'official' || auth.isAdmin) && keyID.value > 0 && models.value.includes(model.value) && (theme.value !== 'custom' || prompt.value.trim().length > 0))
 function selectModel() { model.value = models.value[0] || '' }
 function formatDate(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
 function accountName(run: QualityRun) { return run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }
@@ -203,7 +203,7 @@ async function loadResults() {
   }
 }
 async function start() {
-  if (!canStart.value || theme.value === 'official') return
+  if (!canStart.value) return
   submitting.value = true; error.value = ''
   const selected = keys.value.find(item => item.id === keyID.value)
   if (!selected) { submitting.value = false; return }
@@ -352,6 +352,11 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .result-list-head,.result-row{display:grid;grid-template-columns:230px minmax(0,1fr) 100px;column-gap:28px}
 .result-list-head{padding:16px 20px;background:linear-gradient(105deg,#edf7f4,#f5faf8);border-radius:15px 15px 0 0;font-size:13px;font-weight:600;line-height:1.5;color:#4e7c75;border-bottom:1px solid #dfede7}
 .result-list-head span:last-child{text-align:right}
+.result-list-head.with-selection-column,.result-row.has-selection-column{grid-template-columns:24px 230px minmax(0,1fr) 100px;column-gap:20px}
+.result-row.has-selection-column>.run-select{position:static;grid-column:1;grid-row:1;display:flex;justify-content:center;margin:0}
+.result-row.has-selection-column>.result-meta{grid-column:2}
+.result-row.has-selection-column>.result-content{grid-column:3}
+.result-row.has-selection-column>.result-actions{grid-column:4}
 .result-row{padding:26px 20px;border-bottom:1px solid #e3e9e6;min-width:0;align-items:start;scroll-margin-top:96px}
 .result-row{position:relative}
 .result-row:last-child{border-bottom:0}
@@ -381,6 +386,6 @@ onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort();
 .official-controls>.quality-error{flex-basis:100%}
 .schedule-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#9da8a1}.schedule-dot.enabled{background:#0c8a72}.schedule-model{font-family:monospace;margin-left:6px}
 :global(.dark) .results-list{background:#172524;border-color:#2b4640}:global(.dark) .result-list-head{background:linear-gradient(105deg,#1e3630,#1b2e2a);border-color:#2b4640;color:#a1c6bb}:global(.dark) .result-row{border-color:#2b3e3a}:global(.dark) .result-row .answer-panel,:global(.dark) .result-row .account-line,:global(.dark) .result-row .result-placeholder{background:transparent}
-@media(max-width:1000px){.result-list-head,.result-row{grid-template-columns:180px minmax(0,1fr) 86px;column-gap:20px}}
-@media(max-width:760px){.result-list-head{display:none}.result-row{grid-template-columns:minmax(0,1fr) auto;padding:20px 4px;row-gap:20px;column-gap:12px}.result-meta{grid-column:1;grid-row:1}.result-row>.result-actions{grid-column:2;grid-row:1}.result-content{grid-column:1/-1;grid-row:2}.result-meta h3{margin:4px 0 8px}.result-row .answer-scroll{max-height:440px}.result-row .preview-panel iframe{height:250px}.theme-bar{gap:6px}.theme-bar button{padding:10px 8px;min-width:0;white-space:nowrap}.official-controls .btn{flex:1}}
+@media(max-width:1000px){.result-list-head,.result-row{grid-template-columns:180px minmax(0,1fr) 86px;column-gap:20px}.result-list-head.with-selection-column,.result-row.has-selection-column{grid-template-columns:24px 180px minmax(0,1fr) 86px}}
+@media(max-width:760px){.result-list-head{display:none}.result-row{grid-template-columns:minmax(0,1fr) auto;padding:20px 4px;row-gap:20px;column-gap:12px}.result-row.has-selection-column{grid-template-columns:24px minmax(0,1fr) auto}.result-meta{grid-column:1;grid-row:1}.result-row>.result-actions{grid-column:2;grid-row:1}.result-content{grid-column:1/-1;grid-row:2}.result-row.has-selection-column>.run-select{grid-column:1;grid-row:1}.result-row.has-selection-column>.result-meta{grid-column:2;grid-row:1}.result-row.has-selection-column>.result-actions{grid-column:3;grid-row:1}.result-row.has-selection-column>.result-content{grid-column:2/-1;grid-row:2}.result-meta h3{margin:4px 0 8px}.result-row .answer-scroll{max-height:440px}.result-row .preview-panel iframe{height:250px}.theme-bar{gap:6px}.theme-bar button{padding:10px 8px;min-width:0;white-space:nowrap}.official-controls .btn{flex:1}}
 </style>
