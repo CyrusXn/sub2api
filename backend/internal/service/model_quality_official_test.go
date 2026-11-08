@@ -49,7 +49,7 @@ func (r *officialRepoFake) Update(_ context.Context, _, _ int64, status, content
 func (r *officialRepoFake) List(context.Context, int, string, string, string, string, ModelQualityUserFilter) ([]ModelQualityRun, int64, error) {
 	return nil, 0, nil
 }
-func (r *officialRepoFake) FilterOptions(context.Context, string) (ModelQualityFilterOptions, error) {
+func (r *officialRepoFake) FilterOptions(context.Context, string, bool) (ModelQualityFilterOptions, error) {
 	return ModelQualityFilterOptions{}, nil
 }
 func (r *officialRepoFake) Delete(context.Context, int64) error                 { return nil }

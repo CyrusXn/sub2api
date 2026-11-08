@@ -121,6 +121,10 @@ func (r *modelQualityRepository) matchingUsers(ctx context.Context, filter servi
 func (r *modelQualityRepository) List(ctx context.Context, page int, theme, status, group, model string, user service.ModelQualityUserFilter) ([]service.ModelQualityRun, int64, error) {
 	where := ` WHERE q.deleted_at IS NULL AND ($1='' OR q.theme=$1) AND ($2='' OR (` + modelQualityStatusSQL + `)=$2) AND ($3='' OR q.group_name=$3) AND ($4='' OR q.model=$4)`
 	args := []any{theme, status, group, model}
+	// 在计数和分页前排除官key，防止用户端通过直连接口或总数看到管理记录。
+	if !user.Admin {
+		where += ` AND q.theme <> 'official'`
+	}
 	if strings.TrimSpace(user.Search) != "" {
 		ids, err := r.matchingUsers(ctx, user)
 		if err != nil {
@@ -162,10 +166,10 @@ func (r *modelQualityRepository) List(ctx context.Context, page int, theme, stat
 	return result, total, rows.Err()
 }
 
-func (r *modelQualityRepository) FilterOptions(ctx context.Context, theme string) (service.ModelQualityFilterOptions, error) {
+func (r *modelQualityRepository) FilterOptions(ctx context.Context, theme string, admin bool) (service.ModelQualityFilterOptions, error) {
 	options := service.ModelQualityFilterOptions{Groups: []string{}, Models: []string{}}
 	// 筛选项来自整个分类，避免分页或当前筛选将可选分组、模型隐藏。
-	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT group_name,model FROM model_quality_runs WHERE deleted_at IS NULL AND ($1='' OR theme=$1)`, theme)
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT group_name,model FROM model_quality_runs WHERE deleted_at IS NULL AND ($1='' OR theme=$1) AND ($2 OR theme <> 'official')`, theme, admin)
 	if err != nil {
 		return options, err
 	}

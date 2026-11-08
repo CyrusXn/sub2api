@@ -99,7 +99,7 @@ import '@/styles/announcement-markdown.css'
 
 const { t } = useI18n()
 const auth = useAuthStore()
-const themes: QualityTheme[] = ['pelican', 'candy', 'official', 'custom']
+const themes = computed<QualityTheme[]>(() => auth.isAdmin ? ['pelican', 'candy', 'official', 'custom'] : ['pelican', 'candy', 'custom'])
 const statuses = ['running', 'completed', 'failed']
 const theme = ref<QualityTheme>('pelican'), prompt = ref(''), keys = ref<WorkspaceKey[]>([]), keyID = ref(0), model = ref('')
 const runs = ref<QualityRun[]>([]), total = ref(0), page = ref(1), filterGroup = ref(''), filterModel = ref(''), filterStatus = ref(''), filterUser = ref('')
@@ -192,7 +192,8 @@ async function loadResults() {
     const pending = page.value === 1 ? [...pendingRuns.values()].filter(run => run.theme === theme.value && (!filterGroup.value || run.group_name === filterGroup.value) && (!filterModel.value || run.model === filterModel.value) && (!filterStatus.value || run.status === filterStatus.value) && (!filterUser.value.trim() || receivedIDs.has(run.id))) : []
     historyFilters.value = result.filters || { groups: [], models: [] }
     const pendingIDs = new Set(pending.map(run => run.id))
-    runs.value = [...pending, ...result.items.filter(run => !pendingIDs.has(run.id))]; total.value = result.total + pending.filter(run => !receivedIDs.has(run.id)).length; ready.value = true; error.value = ''
+    const visibleItems = result.items.filter(run => auth.isAdmin || run.theme !== 'official')
+    runs.value = [...pending, ...visibleItems.filter(run => !pendingIDs.has(run.id))]; total.value = result.total - (result.items.length - visibleItems.length) + pending.filter(run => !receivedIDs.has(run.id)).length; ready.value = true; error.value = ''
   } catch (cause) {
     if (disposed || current.signal.aborted) return
     ready.value = false
@@ -310,7 +311,7 @@ function changePage(delta: number) { page.value += delta; runs.value = []; void 
 watch(expanded, async (value) => { await nextTick(); if (value && !previewDialog.value?.open) previewDialog.value?.showModal(); else if (!value && previewDialog.value?.open) previewDialog.value.close() })
 function closePreview() { previewDialog.value?.close(); expanded.value = null }
 function closeOutside(event: MouseEvent) { if (event.target === previewDialog.value) closePreview() }
-onMounted(() => { void loadKeys(); void loadResults(); void loadOfficial() })
+onMounted(() => { void loadKeys(); void loadResults(); if (auth.isAdmin) void loadOfficial() })
 onBeforeUnmount(() => { disposed = true; lifecycle.abort(); generation?.abort(); request?.abort(); clearTimeout(timer); clearTimeout(userSearchTimer) })
 </script>
 

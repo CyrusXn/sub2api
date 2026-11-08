@@ -97,3 +97,9 @@ describe('AppSidebar MCP entry', () => {
     expect(componentSource).not.toMatch(/path: '\/settings\/mcp'[^\n]*PluginIcon/)
   })
 })
+
+describe('AppSidebar 模型智检入口', () => {
+  it('在个人导航中显示模型智检', () => {
+    expect(componentSource).toMatch(/path: '\/model-quality', label: t\('modelQuality\.title'\)/)
+  })
+})

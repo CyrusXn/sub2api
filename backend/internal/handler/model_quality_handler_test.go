@@ -169,6 +169,9 @@ func TestModelQualityOfficialConfigurationRequiresAdmin(t *testing.T) {
 	c, w := qualityContext("PUT", "/model-quality/official", `{"enabled":true,"api_key_id":3,"model":"gpt-test"}`, service.RoleUser)
 	h.ConfigureOfficial(c)
 	require.Equal(t, http.StatusForbidden, w.Code)
+	c, w = qualityContext("GET", "/model-quality/official", "", service.RoleUser)
+	h.OfficialStatus(c)
+	require.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func (r *qualityRepoStub) Create(_ context.Context, run *service.ModelQualityRun) error {
@@ -182,7 +185,7 @@ func (r *qualityRepoStub) List(_ context.Context, _ int, _, _, group, model stri
 	r.listedUser, r.listedAdmin = user.Search, user.Admin
 	return append([]service.ModelQualityRun(nil), r.runs...), int64(len(r.runs)), nil
 }
-func (r *qualityRepoStub) FilterOptions(context.Context, string) (service.ModelQualityFilterOptions, error) {
+func (r *qualityRepoStub) FilterOptions(context.Context, string, bool) (service.ModelQualityFilterOptions, error) {
 	return service.ModelQualityFilterOptions{Groups: []string{"共享分组"}, Models: []string{"shared-model"}}, nil
 }
 
@@ -258,6 +261,20 @@ func TestModelQualityListForwardsGroupAndModelAndReturnsSharedOptions(t *testing
 	require.Equal(t, "gpt-test", repo.listedModel)
 	require.Contains(t, w.Body.String(), "shared-model")
 	require.Contains(t, w.Body.String(), "共享分组")
+}
+
+func TestModelQualityOfficialListRequiresAdmin(t *testing.T) {
+	for _, role := range []string{service.RoleUser, service.RoleAdmin} {
+		repo := &qualityRepoStub{}
+		h := &ModelQualityHandler{service: service.NewModelQualityService(repo)}
+		c, w := qualityContext("GET", "/model-quality?theme=official", "", role)
+		h.List(c)
+		if role == service.RoleAdmin {
+			require.Equal(t, http.StatusOK, w.Code)
+		} else {
+			require.Equal(t, http.StatusForbidden, w.Code)
+		}
+	}
 }
 
 func TestModelQualityCreatePersistsCompletedChatAnswer(t *testing.T) {

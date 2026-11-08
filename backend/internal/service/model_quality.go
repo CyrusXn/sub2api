@@ -151,7 +151,7 @@ type ModelQualityRepository interface {
 	Delete(context.Context, int64) error
 	BatchDelete(context.Context, []int64) (int64, error)
 	List(context.Context, int, string, string, string, string, ModelQualityUserFilter) ([]ModelQualityRun, int64, error)
-	FilterOptions(context.Context, string) (ModelQualityFilterOptions, error)
+	FilterOptions(context.Context, string, bool) (ModelQualityFilterOptions, error)
 }
 
 type ModelQualityService struct{ repo ModelQualityRepository }
@@ -185,6 +185,6 @@ func (s *ModelQualityService) List(ctx context.Context, page int, theme, status,
 	return runs, total, nil
 }
 
-func (s *ModelQualityService) FilterOptions(ctx context.Context, theme string) (ModelQualityFilterOptions, error) {
-	return s.repo.FilterOptions(ctx, theme)
+func (s *ModelQualityService) FilterOptions(ctx context.Context, theme string, admin bool) (ModelQualityFilterOptions, error) {
+	return s.repo.FilterOptions(ctx, theme, admin)
 }

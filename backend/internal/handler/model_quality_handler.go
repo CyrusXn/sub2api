@@ -54,12 +54,16 @@ func (h *ModelQualityHandler) List(c *gin.Context) {
 		return
 	}
 	role, _ := middleware.GetUserRoleFromContext(c)
+	if theme == "official" && role != service.RoleAdmin {
+		response.Forbidden(c, "仅管理员可以查看官key检测")
+		return
+	}
 	runs, total, err := h.service.List(c.Request.Context(), page, theme, status, group, model, user, role == service.RoleAdmin)
 	if err != nil {
 		response.InternalError(c, "读取检测记录失败")
 		return
 	}
-	filters, err := h.service.FilterOptions(c.Request.Context(), theme)
+	filters, err := h.service.FilterOptions(c.Request.Context(), theme, role == service.RoleAdmin)
 	if err != nil {
 		response.InternalError(c, "读取检测筛选项失败")
 		return
@@ -239,6 +243,10 @@ func (h *ModelQualityHandler) BatchDelete(c *gin.Context) {
 
 func (h *ModelQualityHandler) OfficialStatus(c *gin.Context) {
 	role, _ := middleware.GetUserRoleFromContext(c)
+	if role != service.RoleAdmin {
+		response.Forbidden(c, "仅管理员可以查看官key检测配置")
+		return
+	}
 	cfg, err := h.official.Status(c.Request.Context(), role == service.RoleAdmin)
 	if err != nil {
 		response.InternalError(c, "读取官key检测配置失败")

@@ -6,7 +6,7 @@ export default {
     billing: 'Normal API usage charges apply. Results are shared with all signed-in users. Do not include private or sensitive information in prompts.',
     background: 'Answers appear as they stream, with an 8-minute limit. Leaving the page interrupts the test without restarting it.',
     pelican: 'Pelican', candy: 'Candy', official: 'Official key', custom: 'Custom',
-    officialHint: 'Ask “Who are you?” with the administrator’s selected key on the configured interval. Everyone can view the recorded answers.',
+    officialHint: 'Ask “Who are you?” with the administrator’s selected key on the configured interval. Only administrators can view the recorded answers.',
     officialEnabled: 'Automatic checks enabled', officialDisabled: 'Automatic checks disabled', officialEnable: 'Bind selected key and enable', officialDisable: 'Pause checks', officialSave: 'Save check settings', officialInterval: 'Polling interval', minutes: 'minutes',
     officialUnavailable: 'The connected backend does not support official-key configuration yet. No remote polling is started by this local page.', officialSaveError: 'Could not save. Check administrator permissions, the key, and the model.',
     modelInfo: 'Model / Group / User', result: 'Test result', status: 'Status',

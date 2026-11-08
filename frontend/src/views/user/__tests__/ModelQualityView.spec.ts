@@ -127,9 +127,9 @@ describe('模型智检', () => {
    HTMLElement.prototype.scrollIntoView = originalScroll
   }
  })
- it('四个主题按顺序展示，普通查询使用卡片，糖果显示真实回答而非图片', async () => {
+ it('用户端三个主题按顺序展示，普通查询使用卡片，糖果显示真实回答而非图片', async () => {
   const view = await open()
-  expect(view.findAll('[role=tab]').map(tab => tab.text())).toEqual(['鹈鹕', '糖果', '官key', '自定义'])
+  expect(view.findAll('[role=tab]').map(tab => tab.text())).toEqual(['鹈鹕', '糖果', '自定义'])
   expect(view.find('.results-grid').exists()).toBe(true)
   expect(view.find('.result-card').exists()).toBe(true)
   expect(view.find('.results-list').exists()).toBe(false)
@@ -140,8 +140,24 @@ describe('模型智检', () => {
   expect(view.find('iframe').exists()).toBe(false)
   expect(view.text()).not.toContain('上游测试账号')
   expect(view.text()).not.toContain('耗时')
+  expect(modelQualityAPI.official).not.toHaveBeenCalled()
+ })
+ it('普通用户不能选择官key主题或看到官key记录', async () => {
+  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [{ id: 2, author: 'operator', group_name: '官key分组', model: 'gpt-official', theme: 'official', prompt: '你是谁', status: 'completed', content: '仅管理员可见', created_at: '2026-11-04T08:00:00Z' }], total: 1, page: 1, page_size: 12 })
+  const view = await open()
+  expect(view.find('[data-theme=official]').exists()).toBe(false)
+  expect(view.text()).not.toContain('官key分组')
+  expect(view.text()).not.toContain('仅管理员可见')
+ })
+ it('管理员仍可查看官key主题、记录和配置', async () => {
+  auth.isAdmin = true
+  vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 12 })
+  const view = await open()
+  expect(view.find('[data-theme=official]').exists()).toBe(true)
+  expect(modelQualityAPI.official).toHaveBeenCalledOnce()
  })
  it('只有官key查询显示列表，返回其他主题恢复卡片', async () => {
+  auth.isAdmin = true
   const view = await open()
   await view.get('[data-theme=official]').trigger('click')
   await flushPromises()
@@ -157,6 +173,7 @@ describe('模型智检', () => {
   }
  })
  it('所有分类都筛选对应记录，切换时立即清除旧分类记录', async () => {
+  auth.isAdmin = true
   const view = await open()
   for (const theme of ['candy', 'official', 'custom', 'pelican']) {
    let resolve!: (value: never) => void
@@ -207,8 +224,7 @@ describe('模型智检', () => {
   view.unmount()
   auth.isAdmin = false
   const publicView = await open()
-  await publicView.get('[data-theme=official]').trigger('click')
-  await flushPromises()
+  expect(publicView.find('[data-theme=official]').exists()).toBe(false)
   expect(publicView.find('.answer-header').exists()).toBe(false)
   expect(publicView.find('.account-line').exists()).toBe(false)
   expect(publicView.find('[data-test=delete-run]').exists()).toBe(false)
@@ -226,9 +242,8 @@ describe('模型智检', () => {
   view.unmount()
   auth.isAdmin = false
   const publicView = await open()
-  await publicView.get('[data-theme=official]').trigger('click')
-  await flushPromises()
-  expect(publicView.find('[data-test=start]').exists()).toBe(false)
+  expect(publicView.find('[data-theme=official]').exists()).toBe(false)
+  expect(publicView.find('.official-controls').exists()).toBe(false)
  })
  it('官key记录不展示提示词入口且选择框占用独立列表列', async () => {
   auth.isAdmin = true
@@ -333,12 +348,12 @@ describe('模型智检', () => {
   expect(view.find('.answer-markdown').exists()).toBe(true)
   expect(view.find('.answer-markdown').classes()).toContain('markdown-body')
  })
- it('官key仅管理员配置，普通用户可以查看结果而不能启动他人的定时密钥', async () => {
+ it('普通用户不加载官key配置且仍能发起普通主题检测', async () => {
   const view = await open()
-  await view.get('[data-theme=official]').trigger('click')
-  expect(view.text()).toContain('按设定间隔')
+  expect(view.find('[data-theme=official]').exists()).toBe(false)
   expect(view.find('[data-test=official-configure]').exists()).toBe(false)
-  expect(view.find('[data-test=start]').exists()).toBe(false)
+  expect(view.find('[data-test=start]').exists()).toBe(true)
+  expect(modelQualityAPI.official).not.toHaveBeenCalled()
  })
  it('管理员可批量选择当前页已完成记录删除，运行中的记录不能选择', async () => {
   auth.isAdmin = true
@@ -379,7 +394,7 @@ describe('模型智检', () => {
   view.unmount()
   auth.isAdmin = false
   const publicView = await open()
-  await publicView.get('[data-theme=official]').trigger('click')
+  expect(publicView.find('[data-theme=official]').exists()).toBe(false)
   expect(publicView.find('#quality-official-interval').exists()).toBe(false)
  })
  it('旧后端不支持进行中记录时，最终兼容保存成功不再显示保存失败', async () => {
