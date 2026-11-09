@@ -9,6 +9,8 @@ export class KeyTestError extends Error {
   }
 }
 
+export type KeyTestProtocol = 'openai' | 'gemini' | 'anthropic'
+
 function endpoint(baseUrl: string, path: string, version: '/v1' | '/v1beta' = '/v1'): string {
   const base = (baseUrl.trim() || window.location.origin).replace(/\/+$/, '').replace(/\/v1(?:beta)?$/i, '')
   const devTarget = import.meta.env.VITE_DEV_PROXY_TARGET?.trim().replace(/\/+$/, '')
@@ -20,11 +22,15 @@ function endpoint(baseUrl: string, path: string, version: '/v1' | '/v1beta' = '/
 }
 
 // 使用行内密钥访问网关，不能经过携带管理登录令牌的 apiClient。
-function request(baseUrl: string, apiKey: string, path: string, signal: AbortSignal, body?: unknown, version: '/v1' | '/v1beta' = '/v1') {
+function request(baseUrl: string, apiKey: string, path: string, signal: AbortSignal, body?: unknown, version: '/v1' | '/v1beta' = '/v1', protocol: KeyTestProtocol = 'openai') {
   return fetch(endpoint(baseUrl, path, version), {
     method: body ? 'POST' : 'GET',
     headers: {
-      ...(version === '/v1beta' ? { 'x-goog-api-key': apiKey } : { Authorization: `Bearer ${apiKey}` }),
+      ...(version === '/v1beta'
+        ? { 'x-goog-api-key': apiKey }
+        : protocol === 'anthropic'
+          ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+          : { Authorization: `Bearer ${apiKey}` }),
       Accept: body && (version === '/v1' || path.includes('alt=sse')) ? 'text/event-stream' : 'application/json',
       ...(body ? { 'Content-Type': 'application/json' } : {})
     },
@@ -50,7 +56,7 @@ export async function streamKeyTest(options: {
   baseUrl: string
   apiKey: string
   model: string
-  protocol?: 'openai' | 'gemini'
+  protocol?: KeyTestProtocol
   messages: TestMessage[]
   signal: AbortSignal
   onText: (text: string) => void
@@ -98,13 +104,21 @@ export async function streamKeyTest(options: {
       return
     }
   } else {
-    response = await request(options.baseUrl, options.apiKey, 'chat/completions', options.signal, {
-      model: options.model,
-      messages: options.messages,
-      stream: true,
-      max_tokens: options.maxTokens ?? 2048,
-      ...(options.toolChoice ? { tool_choice: options.toolChoice } : {})
-    })
+    const anthropic = options.protocol === 'anthropic'
+    response = await request(options.baseUrl, options.apiKey, anthropic ? 'messages' : 'chat/completions', options.signal, anthropic
+      ? {
+          model: options.model,
+          max_tokens: options.maxTokens ?? 2048,
+          stream: true,
+          messages: options.messages
+        }
+      : {
+          model: options.model,
+          messages: options.messages,
+          stream: true,
+          max_tokens: options.maxTokens ?? 2048,
+          ...(options.toolChoice ? { tool_choice: options.toolChoice } : {})
+        }, '/v1', options.protocol)
     const requestID = response.headers.get('X-Client-Request-ID')
     if (requestID) options.onRequestID?.(requestID)
   }
@@ -154,6 +168,26 @@ export async function streamKeyTest(options: {
         finished = true
         finishReason = candidate.finishReason === 'STOP' ? 'stop' : 'length'
       }
+      return
+    }
+    if (options.protocol === 'anthropic') {
+      if (payload?.type === 'message_stop') {
+        completed = true
+        return
+      }
+      if (payload?.type === 'message_delta') {
+        const stopReason = payload?.delta?.stop_reason
+        if (typeof stopReason === 'string' && stopReason.length) {
+          finished = true
+          finishReason = ['end_turn', 'stop_sequence', 'tool_use'].includes(stopReason) ? 'stop' : stopReason
+        }
+        return
+      }
+      if (payload?.type !== 'content_block_delta') return
+      const delta = payload?.delta
+      if (delta?.type !== 'text_delta' || typeof delta.text !== 'string') return
+      if (delta.text.trim()) hasText = true
+      if (delta.text.length) options.onText(delta.text)
       return
     }
     const choice = payload?.choices?.[0]

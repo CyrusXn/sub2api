@@ -245,6 +245,13 @@ describe('模型智检', () => {
   expect(publicView.find('[data-theme=official]').exists()).toBe(false)
   expect(publicView.find('.official-controls').exists()).toBe(false)
  })
+ it('Claude 模型在模型智检中使用 Anthropic Messages 协议', async () => {
+  vi.mocked(loadWorkspaceKeys).mockResolvedValue([{ id: 1, name: 'Claude Key', groupName: 'Claude 分组', platform: 'anthropic', baseUrl: '', key: 'not-a-real-key', models: ['claude-opus-5-5'], allowImageGeneration: false }])
+  const view = await open()
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-opus-5-5', protocol: 'anthropic' }))
+ })
  it('官key记录不展示提示词入口且选择框占用独立列表列', async () => {
   auth.isAdmin = true
   vi.mocked(modelQualityAPI.list).mockResolvedValue({ items: [{ id: 1, author: 'operator', group_name: '官key分组', model: 'gpt-test', theme: 'official', prompt: '你是谁', status: 'completed', content: '回答', created_at: '2026-11-04T08:00:00Z' }], total: 1, page: 1, page_size: 12 })

@@ -154,3 +154,43 @@ func TestBusinessRechargeMigrationAndAggregation(t *testing.T) {
 	_, err = tx.ExecContext(ctx, string(migration))
 	require.ErrorContains(t, err, "经营历史使用明细不完整")
 }
+
+func TestBusinessRechargeCreditIsExcludedOnceAndLaterRechargeIsCounted(t *testing.T) {
+	previousTimezone := timezone.Name()
+	require.NoError(t, timezone.Init("Asia/Shanghai"))
+	t.Cleanup(func() { require.NoError(t, timezone.Init(previousTimezone)) })
+	ctx := context.Background()
+	tx, err := integrationDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, businessRechargeFixtureSQL)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO users (id, email) VALUES (5, '1002137535@qq.com');
+INSERT INTO redeem_codes VALUES
+ (7, 5, '2026-11-02 01:00:00+08', 'used', 'admin_balance', 5000),
+ (8, 5, '2026-11-03 01:00:00+08', 'used', 'admin_balance', 2000);
+UPDATE dashboard_business_daily SET recharge_amount = 5300 WHERE bucket_date = '2026-11-02';
+UPDATE dashboard_business_daily SET recharge_amount = 2999 WHERE bucket_date = '2026-11-03';`)
+	require.NoError(t, err)
+	migration, err := migrations.FS.ReadFile("268_business_credit_recharge_exclusion.sql")
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, string(migration))
+	require.NoError(t, err)
+
+	var initialDayAmount, laterDayAmount float64
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT recharge_amount FROM dashboard_business_daily WHERE bucket_date='2026-11-02'`).Scan(&initialDayAmount))
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT recharge_amount FROM dashboard_business_daily WHERE bucket_date='2026-11-03'`).Scan(&laterDayAmount))
+	require.Equal(t, float64(300), initialDayAmount)
+	require.Equal(t, float64(2999), laterDayAmount)
+
+	_, err = tx.ExecContext(ctx, `UPDATE dashboard_business_daily SET finalized_at = NULL WHERE bucket_date >= '2026-11-02'`)
+	require.NoError(t, err)
+	repo := newDashboardAggregationRepositoryWithSQL(tx)
+	start := time.Date(2026, 11, 2, 0, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+	require.NoError(t, repo.upsertBusinessDailyAggregates(ctx, start, start.AddDate(0, 0, 2)))
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT recharge_amount FROM dashboard_business_daily WHERE bucket_date='2026-11-02'`).Scan(&initialDayAmount))
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT recharge_amount FROM dashboard_business_daily WHERE bucket_date='2026-11-03'`).Scan(&laterDayAmount))
+	require.Equal(t, float64(300), initialDayAmount)
+	require.Equal(t, float64(2999), laterDayAmount)
+}

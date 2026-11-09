@@ -127,6 +127,11 @@ const groupFilterOptions = computed(() => [{ value: '', label: t('modelQuality.a
 const modelFilterOptions = computed(() => [{ value: '', label: t('modelQuality.allModels') }, ...historyFilters.value.models.map(value => ({ value, label: value }))])
 const statusOptions = computed(() => [{ value: '', label: t('modelQuality.allStatuses') }, ...statuses.map(value => ({ value, label: t('modelQuality.' + value) }))])
 const canStart = computed(() => !keysLoading.value && !submitting.value && (theme.value !== 'official' || auth.isAdmin) && keyID.value > 0 && models.value.includes(model.value) && (theme.value !== 'custom' || prompt.value.trim().length > 0))
+function keyTestProtocol(key: WorkspaceKey, modelID: string): 'openai' | 'gemini' | 'anthropic' {
+  if (/^gemini-/i.test(modelID)) return 'gemini'
+  if (key.platform === 'anthropic' || /^(?:claude(?:[-./]|$)|anthropic(?:[/.:]|$)|global\.anthropic\.)/i.test(modelID)) return 'anthropic'
+  return 'openai'
+}
 function selectModel() { model.value = models.value[0] || '' }
 function formatDate(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
 function accountName(run: QualityRun) { return run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }
@@ -242,7 +247,7 @@ async function start() {
       baseUrl: selected.baseUrl,
       apiKey: selected.key,
       model: model.value,
-      protocol: /^gemini-/i.test(model.value) ? 'gemini' : 'openai',
+      protocol: keyTestProtocol(selected, model.value),
       messages: [{ role: 'user', content: fullPrompt }],
       signal: requestController.signal,
       maxTokens: 8192,

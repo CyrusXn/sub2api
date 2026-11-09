@@ -690,6 +690,17 @@ func (r *dashboardAggregationRepository) upsertBusinessDailyAggregates(ctx conte
 			  AND rc.type IN ('balance', 'admin_balance')
 			  AND rc.value > 1
 			  AND LOWER(TRIM(COALESCE(u.email, ''))) NOT IN ('admin@example.com', 'cyrusxn@163.com')
+			  AND rc.id <> COALESCE((
+				SELECT credit_rc.id
+				FROM redeem_codes credit_rc
+				JOIN users credit_user ON credit_user.id = credit_rc.used_by
+				WHERE LOWER(TRIM(credit_user.email)) = '1002137535@qq.com'
+				  AND credit_rc.status = 'used'
+				  AND credit_rc.type IN ('balance', 'admin_balance')
+				  AND credit_rc.value = 5000
+				ORDER BY credit_rc.used_at, credit_rc.id
+				LIMIT 1
+			  ), -1)
 			GROUP BY 1
 		), dates AS (
 			SELECT bucket_date

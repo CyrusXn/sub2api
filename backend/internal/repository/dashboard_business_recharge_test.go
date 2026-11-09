@@ -22,3 +22,16 @@ func TestBusinessRechargeSubstitutesTestAccountConsumption(t *testing.T) {
 	require.NoError(t, repo.upsertBusinessDailyAggregates(context.Background(), start, start.AddDate(0, 0, 1)))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestBusinessRechargeExcludesOnlyTheFirstCreditTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	start := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	mock.ExpectExec(`(?s)credit_user\.email\)\) = '1002137535@qq\.com'.*credit_rc\.value = 5000.*ORDER BY credit_rc\.used_at, credit_rc\.id.*LIMIT 1.*WHERE dashboard_business_daily\.finalized_at IS NULL`).
+		WithArgs(start, start.AddDate(0, 0, 1), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	require.NoError(t, repo.upsertBusinessDailyAggregates(context.Background(), start, start.AddDate(0, 0, 1)))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

@@ -18,6 +18,33 @@ const options = () => ({
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('密钥测试网关请求', () => {
+  it('Anthropic Messages 使用原生端点、鉴权头并解析文本流', async () => {
+    const response = sseResponse([encoder.encode(
+      'event: message_start\n' +
+      'data: {"type":"message_start","message":{"id":"msg_test"}}\n\n' +
+      'event: content_block_delta\n' +
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Claude 回答"}}\n\n' +
+      'event: message_delta\n' +
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n' +
+      'event: message_stop\n' +
+      'data: {"type":"message_stop"}\n\n'
+    )])
+    const fetchMock = vi.fn().mockResolvedValue(response)
+    vi.stubGlobal('fetch', fetchMock)
+    const opts = { ...options(), protocol: 'anthropic' as const, maxTokens: 8192, requireStop: true }
+    await streamKeyTest(opts)
+    expect(opts.onText).toHaveBeenCalledWith('Claude 回答')
+    expect(fetchMock).toHaveBeenCalledWith('https://relay.example/prefix/v1/messages', expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({
+        'x-api-key': opts.apiKey,
+        'anthropic-version': '2023-06-01',
+        Accept: 'text/event-stream'
+      }),
+      body: JSON.stringify({ model: opts.model, max_tokens: 8192, stream: true, messages: opts.messages })
+    }))
+  })
+
   it('Gemini 原生 SSE 在结束前交付首段正文而非等待完整 JSON', async () => {
     let controller!: ReadableStreamDefaultController<Uint8Array>
     const body = new ReadableStream<Uint8Array>({ start(value) { controller = value } })
