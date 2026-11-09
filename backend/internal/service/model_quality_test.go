@@ -11,7 +11,7 @@ import (
 func TestModelQualityPrompt(t *testing.T) {
 	official, err := ModelQualityPrompt("official", "")
 	require.NoError(t, err)
-	require.Equal(t, "你是谁", official)
+	require.Equal(t, "hi", official)
 	candy, err := ModelQualityPrompt("candy", "ignore")
 	require.NoError(t, err)
 	require.Contains(t, candy, "不使用任何外部工具")

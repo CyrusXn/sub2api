@@ -58,7 +58,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
-import { fetchKeyTestModels, KeyTestError, streamKeyTest } from '@/api/keyTest'
+import { fetchKeyTestModels, KeyTestError, protocolForKeyTestModel, streamKeyTest } from '@/api/keyTest'
 import { compareTestModelIds } from '@/utils/testModelDefaults'
 import { renderMarkdown } from '@/utils/markdown'
 import '@/styles/announcement-markdown.css'
@@ -73,7 +73,7 @@ const models = ref<string[]>([])
 const modelOptions = computed(() => models.value.map(id => ({ value: id, label: id })))
 const modelError = ref('')
 const loadingModels = ref(false)
-const testPrompt = '你是谁'
+const testPrompt = 'hi'
 const conversation = ref<HTMLElement | null>(null)
 interface Turn {
   prompt: string
@@ -136,7 +136,7 @@ async function send() {
   try {
     await streamKeyTest({
       baseUrl: props.baseUrl, apiKey: props.apiKey.key, model: selectedModel, messages, signal: controller.signal,
-      protocol: /^gemini-/i.test(selectedModel) ? 'gemini' : 'openai',
+      protocol: protocolForKeyTestModel(selectedModel),
       onText(text) {
         if (controller.signal.aborted) return
         if (turn.firstTextMs === null) turn.firstTextMs = performance.now() - startedAt

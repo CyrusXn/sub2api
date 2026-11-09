@@ -133,6 +133,7 @@ describe('创作工作台', () => {
     let clock = 0
     vi.spyOn(performance, 'now').mockImplementation(() => clock)
     for (const elapsed of [600, 1250]) {
+      if (elapsed > 600) await view.get('#workspace-prompt').setValue('继续')
       vi.mocked(fetch).mockImplementationOnce(async () => {
         clock += elapsed
         return new Response('data: {"choices":[{"delta":{"content":"你好"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
@@ -159,6 +160,7 @@ describe('创作工作台', () => {
     await view.get('[data-test="submit"]').trigger('click')
     await flushPromises()
     expect(view.get('.first-text-time').text()).toContain('"milliseconds":0')
+    await view.get('#workspace-prompt').setValue('第二次检测')
     let stream!: ReadableStreamDefaultController<Uint8Array>
     vi.mocked(fetch).mockResolvedValueOnce(new Response(new ReadableStream({ start(controller) { stream = controller } }), { headers: { 'Content-Type': 'text/event-stream' } }))
     await view.get('[data-test="submit"]').trigger('click')
@@ -177,6 +179,7 @@ describe('创作工作台', () => {
     expect(view.findAll('.message')).toHaveLength(2)
     expect(view.text()).not.toContain('未完成')
     expect(view.text()).not.toContain('迟到')
+    expect(view.get<HTMLTextAreaElement>('#workspace-prompt').element.value).toBe('第二次检测')
   })
 
   it('离开生图 Tab 隐藏完整组件并保留表单', async () => {
@@ -346,14 +349,25 @@ describe('创作工作台', () => {
     expect(view.findAll('.message')).toHaveLength(0)
   })
 
-  it('对话初始实际填入你是谁，切 Tab 保留用户修改', async () => {
+  it('对话默认填入 hi，切 Tab 保留用户修改', async () => {
     const { view } = await mountView()
-    expect(view.get<HTMLTextAreaElement>('#workspace-prompt').element.value).toBe('你是谁')
+    expect(view.get<HTMLTextAreaElement>('#workspace-prompt').element.value).toBe('hi')
     await view.get('#workspace-prompt').setValue('我的问题')
     await view.get('[data-tab="image"]').trigger('click')
     expect(view.get<HTMLTextAreaElement>('#ai-image-free-prompt').element.value).toBe('')
     await view.get('[data-tab="chat"]').trigger('click')
     expect(view.get<HTMLTextAreaElement>('#workspace-prompt').element.value).toBe('我的问题')
+  })
+
+  it('发送成功后清空输入框并保留已发送内容', async () => {
+    const { view } = await mountView()
+    expect(view.get<HTMLTextAreaElement>('#workspace-prompt').element.value).toBe('hi')
+    await view.get('[data-test="submit"]').trigger('click')
+    await flushPromises()
+    expect(view.get<HTMLTextAreaElement>('#workspace-prompt').element.value).toBe('')
+    expect(view.get('.message.user').text()).toContain('hi')
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes('/chat/completions'))!
+    expect(JSON.parse(String(call[1]?.body)).messages[0]).toEqual({ role: 'user', content: 'hi' })
   })
 
   it('默认官 key 与指定模型，手动切 Key 同样选偏好模型且不重新请求', async () => {
@@ -383,7 +397,7 @@ describe('创作工作台', () => {
     await flushPromises()
     const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes(':streamGenerateContent'))!
     expect(call[0]).toBe(window.location.origin + '/v1beta/models/gemini-4-argon-high:streamGenerateContent?alt=sse')
-    expect(JSON.parse(String(call[1]?.body))).toEqual({ contents: [{ role: 'user', parts: [{ text: '你是谁' }] }], generationConfig: { maxOutputTokens: 2048 } })
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }], generationConfig: { maxOutputTokens: 2048 } })
     expect(view.get('.message.assistant').text()).toContain('我是 Gemini')
   })
 

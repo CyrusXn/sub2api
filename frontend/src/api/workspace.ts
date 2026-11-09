@@ -1,7 +1,7 @@
 import { keysAPI } from './keys'
 import { apiClient } from './client'
 import type { ApiKey, PaginatedResponse } from '@/types'
-import { fetchKeyTestModels, streamKeyTest, type TestMessage } from './keyTest'
+import { fetchKeyTestModels, protocolForKeyTestModel, streamKeyTest, type TestMessage } from './keyTest'
 
 export type WorkspaceTab = 'chat' | 'image' | 'video'
 
@@ -146,7 +146,7 @@ export async function streamWorkspaceChat(options: {
       baseUrl: options.selection.key.baseUrl,
       apiKey: options.selection.key.key,
       model: options.selection.model,
-      protocol: /^gemini-/i.test(options.selection.model) ? 'gemini' : 'openai',
+      protocol: protocolForKeyTestModel(options.selection.model),
       messages: options.messages,
       signal: options.signal,
       onRequestID: id => { requestID = id },

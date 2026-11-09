@@ -410,7 +410,7 @@ watch(
       previewImageUrl.value = ''
       messages.value = []
       await loadAvailableModels()
-      if (!supportsImageTest.value) testPrompt.value = '你是谁'
+      if (!supportsImageTest.value) testPrompt.value = 'hi'
     } else {
       abortStream()
     }
@@ -492,7 +492,7 @@ const handleConversationKeydown = (event: KeyboardEvent) => {
 const startTest = async () => {
   if (!props.account || !selectedModelId.value || status.value === 'connecting') return
 
-  const prompt = testPrompt.value.trim() || '你是谁'
+  const prompt = testPrompt.value.trim() || 'hi'
   if (!supportsImageTest.value) {
     messages.value.push({ role: 'user', content: prompt })
     testPrompt.value = ''
@@ -672,7 +672,7 @@ onMounted(async () => {
   previewImageUrl.value = ''
   messages.value = []
   await loadAvailableModels()
-  if (!supportsImageTest.value) testPrompt.value = '你是谁'
+  if (!supportsImageTest.value) testPrompt.value = 'hi'
 })
 </script>
 

@@ -12,7 +12,7 @@ const auth = vi.hoisted(() => ({ isAdmin: false }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 vi.mock('@/api/modelQuality', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/modelQuality')>(), modelQualityAPI: { list: vi.fn(), save: vi.fn(), update: vi.fn(), remove: vi.fn(), removeMany: vi.fn(), official: vi.fn(), configureOfficial: vi.fn() } }))
 vi.mock('@/api/workspace', () => ({ loadWorkspaceKeys: vi.fn(), loadWorkspaceModels: vi.fn(), workspaceModelsForKey: (key: {models: string[]}) => key.models }))
-vi.mock('@/api/keyTest', () => ({ streamKeyTest: vi.fn() }))
+vi.mock('@/api/keyTest', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/keyTest')>(), streamKeyTest: vi.fn() }))
 vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key.split('.').reduce<unknown>((value, segment) => (value as Record<string, unknown>)?.[segment], zh) || key }) }))
 let wrapper: ReturnType<typeof mount>
 beforeEach(() => {
@@ -229,6 +229,15 @@ describe('模型智检', () => {
   expect(publicView.find('.account-line').exists()).toBe(false)
   expect(publicView.find('[data-test=delete-run]').exists()).toBe(false)
  })
+
+ it('Claude 检测沿用工作台 OpenAI 兼容协议', async () => {
+  vi.mocked(loadWorkspaceKeys).mockResolvedValue([{ id: 8, name: 'Claude Key', groupName: 'Claude 分组', platform: 'anthropic', baseUrl: 'https://relay.example', key: 'not-a-real-key', models: ['claude-opus-5-5'], allowImageGeneration: false }])
+  const view = await open()
+  await view.get('[data-theme=candy]').trigger('click')
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-opus-5-5', protocol: 'openai' }))
+ })
  it('官key管理员可手动触发检测，普通用户不可见入口', async () => {
   auth.isAdmin = true
   const view = await open()
@@ -237,7 +246,7 @@ describe('模型智检', () => {
   expect(view.find('[data-test=start]').exists()).toBe(true)
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
-  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-test', messages: [{ role: 'user', content: '你是谁' }] }))
+  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-test', messages: [{ role: 'user', content: 'hi' }] }))
   expect(modelQualityAPI.save).toHaveBeenCalledWith(expect.objectContaining({ theme: 'official', prompt: '', status: 'running' }))
   view.unmount()
   auth.isAdmin = false
@@ -245,12 +254,12 @@ describe('模型智检', () => {
   expect(publicView.find('[data-theme=official]').exists()).toBe(false)
   expect(publicView.find('.official-controls').exists()).toBe(false)
  })
- it('Claude 模型在模型智检中使用 Anthropic Messages 协议', async () => {
+ it('Claude 模型在模型智检中沿用工作台 OpenAI 兼容协议', async () => {
   vi.mocked(loadWorkspaceKeys).mockResolvedValue([{ id: 1, name: 'Claude Key', groupName: 'Claude 分组', platform: 'anthropic', baseUrl: '', key: 'not-a-real-key', models: ['claude-opus-5-5'], allowImageGeneration: false }])
   const view = await open()
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
-  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-opus-5-5', protocol: 'anthropic' }))
+  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-opus-5-5', protocol: 'openai' }))
  })
  it('官key记录不展示提示词入口且选择框占用独立列表列', async () => {
   auth.isAdmin = true

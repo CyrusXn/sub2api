@@ -20,7 +20,7 @@ let stream: ReadableStreamDefaultController<Uint8Array>
 let now = 0
 let requests: Array<{ url: string; init: RequestInit }>
 let modelIds: string[]
-const testPrompt = '你是谁'
+const testPrompt = 'hi'
 const emitData = (payload: unknown) => stream.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
 
 async function openModal() {

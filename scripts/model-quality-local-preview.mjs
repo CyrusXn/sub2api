@@ -27,7 +27,7 @@ const picture = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 250"><
 let sequence = 3
 let official = { enabled: false, model: '', api_key_id: 7 }
 const rows = [
-  { id: 3, author: 'ad***@example.com', group_name: '【GPT】真官key · 模拟', model: 'gpt-local-preview', theme: 'official', prompt: '你是谁', status: 'completed', content: identity, created_at: new Date().toISOString(), account_id: 1, account_name: '本地模拟上游账号' },
+  { id: 3, author: 'ad***@example.com', group_name: '【GPT】真官key · 模拟', model: 'gpt-local-preview', theme: 'official', prompt: 'hi', status: 'completed', content: identity, created_at: new Date().toISOString(), account_id: 1, account_name: '本地模拟上游账号' },
   { id: 2, author: '10023***@qq.com', group_name: '优选分组 · 模拟', model: 'gemini-local-preview', theme: 'candy', prompt: '本地模拟糖果题', status: 'completed', content: candy, created_at: new Date(Date.now()-3600000).toISOString(), account_id: 2, account_name: '本地模拟账号 2' },
   { id: 1, author: '测试***用户', group_name: '绘图分组 · 模拟', model: 'gpt-local-preview', theme: 'pelican', prompt: '让鹈鹕骑上自行车，用 SVG 和 CSS 动画', status: 'completed', content: picture, created_at: new Date(Date.now()-7200000).toISOString() }
 ]
@@ -70,7 +70,7 @@ async function handle(req, res, next) {
   if ((path === '/v1/chat/completions' || path.includes(':streamGenerateContent')) && req.method === 'POST') {
     const input = await body(req)
     const prompt = input.messages?.[0]?.content || input.contents?.[0]?.parts?.[0]?.text || ''
-    const content = prompt.includes('糖果') ? candy : prompt === '你是谁' ? identity : picture
+    const content = prompt.includes('糖果') ? candy : prompt === 'hi' ? identity : picture
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Client-Request-ID': 'local-preview-' + sequence })
     res.flushHeaders()
     let offset = 0

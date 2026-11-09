@@ -162,7 +162,7 @@ func (s *ModelQualityOfficialService) runOnce(parent context.Context, now time.T
 	}
 	interval := time.Duration(normalizeOfficialInterval(cfg.IntervalSeconds)) * time.Second
 	slot := now.UTC().Truncate(interval)
-	run := &ModelQualityRun{UserID: cfg.OwnerID, APIKeyID: key.ID, Model: cfg.Model, Theme: "official", Prompt: "你是谁", Status: "running", OfficialSlot: &slot}
+	run := &ModelQualityRun{UserID: cfg.OwnerID, APIKeyID: key.ID, Model: cfg.Model, Theme: "official", Prompt: "hi", Status: "running", OfficialSlot: &slot}
 	if key.User != nil {
 		run.Author = key.User.Email
 	}
@@ -185,7 +185,7 @@ func (s *ModelQualityOfficialService) runOnce(parent context.Context, now time.T
 	if !validOfficialQualityKey(key, cfg.Model) {
 		return
 	}
-	body, _ := json.Marshal(map[string]any{"model": cfg.Model, "messages": []map[string]string{{"role": "user", "content": "你是谁"}}, "stream": true, "max_tokens": 2048, "tool_choice": "none"})
+	body, _ := json.Marshal(map[string]any{"model": cfg.Model, "messages": []map[string]string{{"role": "user", "content": "hi"}}, "stream": true, "max_tokens": 2048, "tool_choice": "none"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return

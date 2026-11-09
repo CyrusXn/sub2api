@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchKeyTestModels, streamKeyTest } from '../keyTest'
+import { fetchKeyTestModels, protocolForKeyTestModel, streamKeyTest } from '../keyTest'
 
 const encoder = new TextEncoder()
 function sseResponse(chunks: Uint8Array[]) {
@@ -16,6 +16,17 @@ const options = () => ({
   signal: new AbortController().signal, onText: vi.fn()
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
+
+describe('测试协议选择', () => {
+  it.each(['claude-opus-5-5', 'anthropic/claude-opus-5-5'])('%s 沿用工作台的 OpenAI 兼容协议', model => {
+    expect(protocolForKeyTestModel(model)).toBe('openai')
+  })
+
+  it('Gemini 使用原生协议，其它型号默认 OpenAI 兼容协议', () => {
+    expect(protocolForKeyTestModel('gemini-4-argon')).toBe('gemini')
+    expect(protocolForKeyTestModel('gpt-6.1-sol')).toBe('openai')
+  })
+})
 
 describe('密钥测试网关请求', () => {
   it('Anthropic Messages 使用原生端点、鉴权头并解析文本流', async () => {

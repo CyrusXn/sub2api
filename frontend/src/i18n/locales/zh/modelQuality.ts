@@ -6,7 +6,7 @@ export default {
     billing: '按所选密钥的正常用量计费。结果对所有登录用户共享，请勿在提示词中输入隐私或敏感信息。',
     background: '回答逐段实时显示，最长等待 8 分钟。离开页面会中断本次检测，不会自动重复调用模型。',
     pelican: '鹈鹕', candy: '糖果', official: '官key', custom: '自定义',
-    officialHint: '使用管理员绑定的官 key 按设定间隔发送「你是谁」，回答按时间记录，仅管理员可查看。',
+    officialHint: '使用管理员绑定的官 key 按设定间隔发送「hi」，回答按时间记录，仅管理员可查看。',
     officialEnabled: '自动检测已开启', officialDisabled: '自动检测未开启', officialEnable: '绑定所选密钥并开启', officialDisable: '暂停检测', officialSave: '保存检测设置', officialInterval: '轮询间隔', minutes: '分钟',
     officialUnavailable: '当前后端尚未提供官key检测配置，本地页面不会启动线上轮询。', officialSaveError: '保存失败，请检查管理员权限、密钥和模型状态。',
     modelInfo: '模型 / 分组 / 用户', result: '检测结果', status: '状态',

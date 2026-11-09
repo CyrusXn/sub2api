@@ -857,7 +857,7 @@ const switchTab = (tab: 'probe' | 'chat') => {
   activeTab.value = tab
   resetState()
   clearMediaUploads()
-  testPrompt.value = isChat.value ? '你是谁' : ''
+  testPrompt.value = isChat.value ? 'hi' : ''
   pickDefaultModelForMode()
   applyDefaultPromptForMode()
 }

@@ -93,7 +93,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { loadWorkspaceKeys, loadWorkspaceModels, workspaceModelsForKey, type WorkspaceKey } from '@/api/workspace'
 import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme, type OfficialQualityConfig, type QualityStatus, type QualityFilterOptions } from '@/api/modelQuality'
-import { streamKeyTest } from '@/api/keyTest'
+import { protocolForKeyTestModel, streamKeyTest } from '@/api/keyTest'
 import { renderMarkdown } from '@/utils/markdown'
 import '@/styles/announcement-markdown.css'
 
@@ -127,11 +127,6 @@ const groupFilterOptions = computed(() => [{ value: '', label: t('modelQuality.a
 const modelFilterOptions = computed(() => [{ value: '', label: t('modelQuality.allModels') }, ...historyFilters.value.models.map(value => ({ value, label: value }))])
 const statusOptions = computed(() => [{ value: '', label: t('modelQuality.allStatuses') }, ...statuses.map(value => ({ value, label: t('modelQuality.' + value) }))])
 const canStart = computed(() => !keysLoading.value && !submitting.value && (theme.value !== 'official' || auth.isAdmin) && keyID.value > 0 && models.value.includes(model.value) && (theme.value !== 'custom' || prompt.value.trim().length > 0))
-function keyTestProtocol(key: WorkspaceKey, modelID: string): 'openai' | 'gemini' | 'anthropic' {
-  if (/^gemini-/i.test(modelID)) return 'gemini'
-  if (key.platform === 'anthropic' || /^(?:claude(?:[-./]|$)|anthropic(?:[/.:]|$)|global\.anthropic\.)/i.test(modelID)) return 'anthropic'
-  return 'openai'
-}
 function selectModel() { model.value = models.value[0] || '' }
 function formatDate(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
 function accountName(run: QualityRun) { return run.account_name || (run.account_id ? t('modelQuality.unavailableAccount') : t('modelQuality.noAccount')) }
@@ -247,7 +242,7 @@ async function start() {
       baseUrl: selected.baseUrl,
       apiKey: selected.key,
       model: model.value,
-      protocol: keyTestProtocol(selected, model.value),
+      protocol: protocolForKeyTestModel(model.value),
       messages: [{ role: 'user', content: fullPrompt }],
       signal: requestController.signal,
       maxTokens: 8192,

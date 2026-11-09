@@ -144,7 +144,7 @@ func TestModelQualityOfficialCreateRequiresAdminAndUsesFixedPrompt(t *testing.T)
 		if role == service.RoleAdmin {
 			require.Equal(t, http.StatusOK, w.Code)
 			require.Equal(t, "official", repo.createdRun.Theme)
-			require.Equal(t, "你是谁", repo.createdRun.Prompt)
+			require.Equal(t, "hi", repo.createdRun.Prompt)
 		} else {
 			require.Equal(t, http.StatusForbidden, w.Code)
 			require.Zero(t, repo.created)

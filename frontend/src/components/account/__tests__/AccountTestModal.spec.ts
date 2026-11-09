@@ -176,7 +176,7 @@ describe('AccountTestModal', () => {
     await flushPromises()
 
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-6.1-sol')
-    expect((wrapper.vm as any).testPrompt).toBe('你是谁')
+    expect((wrapper.vm as any).testPrompt).toBe('hi')
   })
 
   it('posts custom prompt and renders the actual response as an assistant message', async () => {

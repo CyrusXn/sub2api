@@ -149,6 +149,49 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="applied-range"]').text()).toBe('2026-07-09 ～ 2026-08-17')
   })
 
+  it('仅在经营历史页面排除 2026-11-08 的 5000 元充值', async () => {
+    vi.setSystemTime(new Date('2026-11-09T10:00:00+08:00'))
+    const targetDay = { ...response.daily[0], bucket_date: '2026-11-08', recharge_amount: 5215.79 }
+    const history = {
+      ...response,
+      lifetime: { ...response.lifetime, recharge_amount: 75496.87 },
+      range: { ...response.range, recharge_amount: 75496.87 },
+      daily: [
+        { ...response.daily[0], bucket_date: '2026-11-07', recharge_amount: 343.59 },
+        targetDay,
+        { ...response.daily[0], bucket_date: '2026-11-09', recharge_amount: 656.77 }
+      ]
+    }
+    const nov9Only = {
+      ...history,
+      range: { ...history.range, recharge_amount: 656.77 },
+      daily: [{ ...history.daily[2] }]
+    }
+    getBusinessSummary.mockImplementation((range?: { start_date: string; end_date: string }) =>
+      Promise.resolve(range?.start_date === '2026-11-09' ? nov9Only : history))
+
+    const wrapper = await mountView()
+    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥70,496.87')
+    expect(wrapper.findAll('[data-test="history-daily-row"]').map(row => row.findAll('td')[10].text())).toEqual([
+      '¥656.77', '¥215.79', '¥343.59'
+    ])
+    expect(wrapper.get('[data-test="history-total-row"]').findAll('td')[10].text()).toBe('¥1,216.15')
+    expect(wrapper.get('[data-test="recharge-difference"]').text()).toBe('¥61,563.90')
+
+    await wrapper.get('[data-test="history-all"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥70,496.87')
+    expect(wrapper.get('[data-test="history-total-row"]').findAll('td')[10].text()).toBe('¥1,216.15')
+    expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('¥8,932.97')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥321.45')
+    expect(history.range.recharge_amount).toBe(75496.87)
+    expect(targetDay.recharge_amount).toBe(5215.79)
+
+    await applyDates(wrapper, '2026-11-09', '2026-11-09')
+    expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥656.77')
+    expect(wrapper.get('[data-test="history-total-row"]').findAll('td')[10].text()).toBe('¥656.77')
+  })
+
   it('完整建站日期范围沿用全部历史口径，上游总消费按充值减当前余额计算', async () => {
     const wrapper = await mountView()
     expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥8,604.97')

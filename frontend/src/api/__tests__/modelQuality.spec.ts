@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { modelQualityAPI, safeModelQualityHTML } from '../modelQuality'
+import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML } from '../modelQuality'
 import { apiClient } from '../client'
 vi.mock('../client', () => ({ apiClient: { get: vi.fn() } }))
 describe('智检用户搜索协议', () => {
@@ -9,6 +9,11 @@ describe('智检用户搜索协议', () => {
   await expect(modelQualityAPI.list(params)).rejects.toMatchObject({ status: 501 })
   vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { items: [], total: 0, user_filter: 'ad***' } })
   await expect(modelQualityAPI.list(params)).resolves.toMatchObject({ items: [], total: 0 })
+ })
+})
+describe('智检默认提示词', () => {
+ it('官 key 默认探测内容为 hi', () => {
+  expect(modelQualityPrompt('official', '')).toBe('hi')
  })
 })
 describe('智检 HTML 隔离', () => {

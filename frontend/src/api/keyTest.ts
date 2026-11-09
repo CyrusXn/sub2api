@@ -11,6 +11,10 @@ export class KeyTestError extends Error {
 
 export type KeyTestProtocol = 'openai' | 'gemini' | 'anthropic'
 
+export function protocolForKeyTestModel(model: string): KeyTestProtocol {
+  return /^gemini-/i.test(model) ? 'gemini' : 'openai'
+}
+
 function endpoint(baseUrl: string, path: string, version: '/v1' | '/v1beta' = '/v1'): string {
   const base = (baseUrl.trim() || window.location.origin).replace(/\/+$/, '').replace(/\/v1(?:beta)?$/i, '')
   const devTarget = import.meta.env.VITE_DEV_PROXY_TARGET?.trim().replace(/\/+$/, '')

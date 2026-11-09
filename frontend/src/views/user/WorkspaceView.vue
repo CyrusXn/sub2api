@@ -124,7 +124,7 @@ const imageVisited = ref(tab.value === 'image')
 const imageBusy = ref(false)
 const isSeedance = computed(() => /seedance|doubao.*video/i.test(selectedModel.value))
 const states = reactive<Record<WorkspaceTab, TabState>>({
-  chat: { prompt: '你是谁', output: '', resultPrompt: '', messages: [] }, image: { prompt: '', output: '', resultPrompt: '', messages: [] }, video: { prompt: '', output: '', resultPrompt: '', messages: [] }
+  chat: { prompt: 'hi', output: '', resultPrompt: '', messages: [] }, image: { prompt: '', output: '', resultPrompt: '', messages: [] }, video: { prompt: '', output: '', resultPrompt: '', messages: [] }
 })
 const state = computed(() => states[tab.value])
 const history = reactive<Record<WorkspaceTab, HistoryItem[]>>({ chat: [], image: [], video: [] })
@@ -251,16 +251,18 @@ async function submit(): Promise<void> {
   const abort = new AbortController()
   const previousMessages = target.messages.map(message => ({ ...message }))
   let pendingMessages: WorkspaceMessage[] | undefined
-  const restorePreviousMessages = () => {
+  const restorePreviousState = () => {
     if (currentTab === 'chat' && target.messages === pendingMessages) target.messages = previousMessages
+    if (currentTab === 'chat' && !target.prompt) target.prompt = prompt
   }
-  abort.signal.addEventListener('abort', restorePreviousMessages, { once: true })
+  abort.signal.addEventListener('abort', restorePreviousState, { once: true })
   requestController = abort
   busy.value = true
   error.value = ''
   try {
     if (currentTab === 'chat') {
       const messages: TestMessage[] = [...target.messages.map(({ role, content }) => ({ role, content })), { role: 'user', content: prompt }]
+      target.prompt = ''
       target.messages = [...target.messages, { role: 'user', content: prompt }, { role: 'assistant', content: '' }]
       pendingMessages = target.messages
       const assistant = target.messages[target.messages.length - 1]
@@ -285,13 +287,13 @@ async function submit(): Promise<void> {
     releaseUnusedURLs()
   } catch (cause) {
     // 只恢复本次请求前的上下文，迟到的取消回调不能覆盖更新的对话。
-    restorePreviousMessages()
+    restorePreviousState()
     if (!abort.signal.aborted) {
       const message = cause instanceof Error ? cause.message : ''
       error.value = currentTab === 'chat' ? chatErrorText(cause) : t(message === 'video-generation-timeout' ? 'workspace.videoTimeout' : message === 'video-model-unsupported' ? 'workspace.videoModelUnsupported' : 'workspace.requestError')
     }
   } finally {
-    abort.signal.removeEventListener('abort', restorePreviousMessages)
+    abort.signal.removeEventListener('abort', restorePreviousState)
     if (requestController === abort) { busy.value = false; statusText.value = ''; requestController = undefined }
   }
 }

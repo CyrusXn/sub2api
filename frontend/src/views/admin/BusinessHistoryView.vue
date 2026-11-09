@@ -82,7 +82,7 @@
                 <Icon name="creditCard" size="sm" class="shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <p class="truncate text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.businessHistory.userTotalRecharge') }}</p>
               </div>
-              <p data-test="user-total-recharge" class="mt-2 text-xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatMoney(totals?.recharge_amount) }}</p>
+              <p data-test="user-total-recharge" class="mt-2 text-xl font-bold text-emerald-600 dark:text-emerald-400">{{ formatMoney(userRechargeAmount) }}</p>
             </div>
             <div class="min-w-0 border-l border-gray-200 pl-4 dark:border-dark-700">
               <div class="flex items-center gap-2">
@@ -318,9 +318,20 @@ const summary = ref<DashboardBusinessSummary | null>(null)
 const queriedRange = ref<{ start_date: string; end_date: string } | null>({ ...defaultRange })
 const loading = ref(false)
 const allDates = computed(() => queriedRange.value == null)
+// 仅经营历史展示排除 11 月 8 日这笔授信充值；不改交易记录、账户余额或共享汇总接口。
+const businessHistoryRechargeExclusion = { bucketDate: '2026-11-08', amount: 5000 } as const
 // 早于建站起点且覆盖至今才是完整历史，提前结束的历史区间不能混入当前余额。
 const usesLifetimeConsumption = computed(() => allDates.value || (queriedRange.value!.start_date <= defaultRange.start_date && queriedRange.value!.end_date >= businessToday.value))
 const totals = computed(() => allDates.value ? summary.value?.lifetime : summary.value?.range)
+const userRechargeAmount = computed(() => {
+  const amount = totals.value?.recharge_amount
+  if (amount == null) return amount
+  const rangeIncludesExcludedRecharge = !queriedRange.value || (
+    queriedRange.value.start_date <= businessHistoryRechargeExclusion.bucketDate &&
+    queriedRange.value.end_date >= businessHistoryRechargeExclusion.bucketDate
+  )
+  return Math.max(0, amount - (rangeIncludesExcludedRecharge ? businessHistoryRechargeExclusion.amount : 0))
+})
 const upstreamRechargeTotal = computed(() => usesLifetimeConsumption.value ? summary.value?.upstream_recharge_total : summary.value?.range_upstream_recharge_total)
 const readOnlyPreview = import.meta.env.VITE_READ_ONLY_PREVIEW === 'true'
 const balances = ref<BusinessBalanceRefresh | null>(null)
@@ -336,7 +347,11 @@ const trendMetrics: TrendMetric[] = ['requests', 'tokens', 'consumption', 'profi
 const selectedMetricClass = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900'
 const normalMetricClass = 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-gray-200'
 
-const daily = computed(() => [...(summary.value?.daily ?? [])].sort((a, b) => a.bucket_date.localeCompare(b.bucket_date)))
+const daily = computed(() => [...(summary.value?.daily ?? [])]
+  .map(point => formatDate(point.bucket_date) === businessHistoryRechargeExclusion.bucketDate
+    ? { ...point, recharge_amount: Math.max(0, point.recharge_amount - businessHistoryRechargeExclusion.amount) }
+    : point)
+  .sort((a, b) => a.bucket_date.localeCompare(b.bucket_date)))
 const dailyDescending = computed(() => [...daily.value].reverse())
 const allDaily = ref<DashboardBusinessDailyPoint[]>([])
 const profitHistory = computed(() => {
@@ -415,7 +430,7 @@ const totalProfitAllAccounts = computed(() => {
   return totals.value!.actual_cost - rangeUpstreamConsumption.value
 })
 const rechargeDifference = computed(() => summary.value
-  ? (totals.value?.recharge_amount ?? 0) - (upstreamRechargeTotal.value ?? 0) : null)
+  ? (userRechargeAmount.value ?? 0) - (upstreamRechargeTotal.value ?? 0) : null)
 const ledgerStatusHint = computed(() => {
   if (usesLifetimeConsumption.value) return t('admin.businessHistory.lifetimeConsumptionFormula')
   if (usesRechargeBalanceFallback.value) return rechargeBalanceFallbackHint.value

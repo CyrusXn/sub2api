@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -81,6 +82,13 @@ func TestModelQualityOfficialHourlyClaimAndStream(t *testing.T) {
 		calls++
 		require.Equal(t, "/v1/chat/completions", r.URL.Path)
 		require.Equal(t, "Bearer test-only-secret", r.Header.Get("Authorization"))
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "hi", body.Messages[0].Content)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Client-Request-ID", "test-request-id")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"我是\"}}]}\n\n"))
@@ -95,7 +103,7 @@ func TestModelQualityOfficialHourlyClaimAndStream(t *testing.T) {
 	s.runOnce(context.Background(), now)
 	s.runOnce(context.Background(), now.Add(20*time.Minute))
 	require.Equal(t, 1, calls)
-	require.Equal(t, "你是谁", repo.runs[0].Prompt)
+	require.Equal(t, "hi", repo.runs[0].Prompt)
 	require.Equal(t, "official", repo.runs[0].Theme)
 	require.Contains(t, repo.updates, "completed:我是测试模型")
 	s.runOnce(context.Background(), now.Add(time.Hour))

@@ -33,7 +33,7 @@ const modelQualityHTMLInstruction = "不使用任何外部工具。请创建一�
 func ModelQualityPrompt(theme, custom string) (string, error) {
 	switch theme {
 	case "official":
-		return "你是谁", nil
+		return "hi", nil
 	case "candy":
 		return ModelQualityCandyPrompt, nil
 	case "pelican":
