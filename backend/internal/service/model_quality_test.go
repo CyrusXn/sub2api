@@ -19,7 +19,7 @@ func TestModelQualityPrompt(t *testing.T) {
 	require.NotContains(t, candy, "21")
 	pelican, err := ModelQualityPrompt("pelican", "")
 	require.NoError(t, err)
-	require.Contains(t, pelican, "鹈鹕")
+	require.Equal(t, "画一个鹈鹕骑自行车的svg 用h5展示", pelican)
 	custom, err := ModelQualityPrompt("custom", "  天空之城  ")
 	require.NoError(t, err)
 	require.Contains(t, custom, "天空之城")
@@ -57,6 +57,18 @@ func TestModelQualityResult(t *testing.T) {
 	require.Error(t, err)
 	_, err = ModelQualityOutput("candy", " ")
 	require.Error(t, err)
+}
+
+func TestModelQualityExtractHTML(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"前言\n```html\n<!doctype html><html><body><svg></svg></body></html>\n```\n后记", "<!doctype html><html><body><svg></svg></body></html>"},
+		{"前言\n<SVG><text>作品</text></SVG>\n后记", "<SVG><text>作品</text></SVG>"},
+		{"```html\n<style>svg{color:red}</style><div><svg></svg></div>\n```", "<style>svg{color:red}</style><div><svg></svg></div>"},
+	} {
+		got, err := ModelQualityOutput("pelican", tc.input)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, got)
+	}
 }
 
 func TestModelQualityPublicProjection(t *testing.T) {

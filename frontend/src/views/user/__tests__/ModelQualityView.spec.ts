@@ -30,6 +30,43 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.clearAllMocks() })
 async function open() { wrapper = mount(ModelQualityView, { global: { stubs: { AppLayout: { template: '<div><slot /></div>' } } } }); await flushPromises(); return wrapper }
 describe('模型智检', () => {
+ it.each([
+  ['claude-opus-5-5', 'anthropic', 'openai'],
+  ['grok-4.7', 'grok', 'openai'],
+  ['gemini-4-argon-high', 'gemini', 'gemini']
+ ])('%s 鹈鹕检测不附加工具参数，并只保存 HTML 作品', async (model, platform, protocol) => {
+  const html = '<!doctype html><html><body><svg><text>鹈鹕</text></svg></body></html>'
+  vi.mocked(loadWorkspaceKeys).mockResolvedValue([{ id: 1, name: '测试密钥', groupName: '测试分组', platform, baseUrl: '', key: 'not-a-real-key', models: [model], allowImageGeneration: false }])
+  vi.mocked(streamKeyTest).mockImplementation(async options => { options.onText('页面如下：\n```html\n' + html + '\n```\n以上是代码。') })
+  const view = await open()
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  const sent = vi.mocked(streamKeyTest).mock.calls[0][0]
+  expect(sent).toMatchObject({ model, protocol, messages: [{ role: 'user', content: '画一个鹈鹕骑自行车的svg 用h5展示' }] })
+  expect(sent).not.toHaveProperty('toolChoice')
+  expect(modelQualityAPI.update).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'completed', content: html }))
+  const preview = view.findAll('iframe')[0].attributes('srcdoc')
+  expect(preview).toContain('鹈鹕')
+  expect(preview).not.toContain('```')
+  expect(preview).not.toContain('页面如下')
+ })
+ it('Grok 糖果测试与工作台一样不附加工具参数', async () => {
+  vi.mocked(loadWorkspaceKeys).mockResolvedValue([{ id: 1, name: 'Grok Key', groupName: 'Grok', platform: 'grok', baseUrl: '', key: 'not-a-real-key', models: ['grok-4.7'], allowImageGeneration: false }])
+  const view = await open()
+  await view.get('[data-theme=candy]').trigger('click')
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  expect(vi.mocked(streamKeyTest).mock.calls[0][0]).not.toHaveProperty('toolChoice')
+  expect(modelQualityAPI.update).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'completed', content: '实际回答是 28 个。' }))
+ })
+ it('官key的正常文字回答不要求包含 HTML', async () => {
+  auth.isAdmin = true
+  const view = await open()
+  await view.get('[data-theme=official]').trigger('click')
+  await view.get('[data-test=start]').trigger('click')
+  await flushPromises()
+  expect(modelQualityAPI.update).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'completed', content: '实际回答是 28 个。' }))
+ })
  it('用户搜索合并输入、回到第一页，并可清空搜索恢复记录', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   try {
@@ -447,8 +484,10 @@ describe('模型智检', () => {
   await view.get('[data-test=start]').trigger('click')
   await flushPromises()
   expect(modelQualityAPI.save).toHaveBeenCalledTimes(2)
-  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'not-a-real-key', model: 'gpt-test', maxTokens: 8192 }))
+  expect(streamKeyTest).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'not-a-real-key', model: 'gpt-test' }))
   const sent = vi.mocked(streamKeyTest).mock.calls[0][0]
+  expect(sent.maxTokens).toBeNull()
+  expect(sent).not.toHaveProperty('toolChoice')
   expect(sent.messages[0].content).toContain('五角星形')
   expect(sent.messages[0].content).not.toContain('21')
   expect(view.text()).toContain('实际回答是 28 个。')

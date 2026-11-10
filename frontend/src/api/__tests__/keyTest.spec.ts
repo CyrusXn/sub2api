@@ -29,6 +29,16 @@ describe('测试协议选择', () => {
 })
 
 describe('密钥测试网关请求', () => {
+  it.each(['openai', 'gemini'] as const)('%s 智检可省略输出上限，避免回落到工作台的短回复上限', async protocol => {
+    const fetchMock = vi.fn().mockResolvedValue(protocol === 'gemini'
+      ? Response.json({ candidates: [{ content: { parts: [{ text: '作品正文' }] }, finishReason: 'STOP' }] })
+      : sseResponse([encoder.encode('data: {"choices":[{"delta":{"content":"作品正文"}}]}\n\ndata: [DONE]\n\n')]))
+    vi.stubGlobal('fetch', fetchMock)
+    await streamKeyTest({ ...options(), protocol, maxTokens: null, requireStop: true })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body).not.toHaveProperty('max_tokens')
+    expect(body).not.toHaveProperty('generationConfig.maxOutputTokens')
+  })
   it('Anthropic Messages 使用原生端点、鉴权头并解析文本流', async () => {
     const response = sseResponse([encoder.encode(
       'event: message_start\n' +
@@ -217,6 +227,15 @@ describe('密钥测试网关请求', () => {
       encoder.encode('data: {"error":{"message":"stream failed"}}\n\n')
     ])))
     await expect(streamKeyTest(options())).rejects.toMatchObject({ code: 'streamError' })
+  })
+
+  it('兼容以 DONE 结束但未提供 finish_reason 的 OpenAI 兼容流', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([encoder.encode(
+      'data: {"choices":[{"delta":{"content":"糖果答案：29。"}}]}\n\ndata: [DONE]\n\n'
+    )])))
+    const opts = { ...options(), requireStop: true }
+    await expect(streamKeyTest(opts)).resolves.toBeUndefined()
+    expect(opts.onText).toHaveBeenCalledWith('糖果答案：29。')
   })
 
   it('智检拒绝被 token 上限截断的生成结果', async () => {

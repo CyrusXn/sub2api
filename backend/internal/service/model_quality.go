@@ -37,7 +37,7 @@ func ModelQualityPrompt(theme, custom string) (string, error) {
 	case "candy":
 		return ModelQualityCandyPrompt, nil
 	case "pelican":
-		return modelQualityHTMLInstruction + "一只鹈鹕骑着自行车，双脚踩动踏板，车轮转动，沿着海边前行。", nil
+		return "画一个鹈鹕骑自行车的svg 用h5展示", nil
 	case "custom":
 		custom = strings.TrimSpace(custom)
 		if custom == "" || utf8.RuneCountInString(custom) > 2000 {
@@ -70,17 +70,41 @@ func ModelQualityOutput(theme, output string) (string, error) {
 	if theme == "candy" || theme == "official" {
 		return output, nil
 	}
-	// 只剥离代码围栏，不将解释文字误当作可预览作品。
-	if strings.HasPrefix(output, "```") {
-		if i := strings.IndexByte(output, '\n'); i >= 0 {
-			output = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(output[i+1:]), "```"))
-		}
-	}
+	output = extractModelQualityHTML(output)
 	lower := strings.ToLower(output)
-	if !strings.Contains(lower, "<svg") || (!strings.Contains(lower, "<html") && !strings.HasPrefix(lower, "<svg")) {
+	if !strings.Contains(lower, "<svg") {
 		return "", errors.New("模型未返回有效的 SVG / HTML 作品")
 	}
 	return output, nil
+}
+
+func extractModelQualityHTML(output string) string {
+	output = strings.TrimSpace(output)
+	if start := strings.Index(output, "```"); start >= 0 {
+		fenceStart := start + 3
+		if newline := strings.IndexByte(output[fenceStart:], '\n'); newline >= 0 {
+			bodyStart := fenceStart + newline + 1
+			if end := strings.Index(output[bodyStart:], "```"); end >= 0 {
+				output = strings.TrimSpace(output[bodyStart : bodyStart+end])
+			}
+		}
+	}
+	lower := strings.ToLower(output)
+	start := -1
+	root := "svg"
+	for _, candidate := range []struct{ tag, root string }{{"<!doctype html", "html"}, {"<html", "html"}, {"<svg", "svg"}, {"<style", "div"}, {"<div", "div"}} {
+		if index := strings.Index(lower, candidate.tag); index >= 0 && (start < 0 || index < start) {
+			start, root = index, candidate.root
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	output = strings.TrimSpace(output[start:])
+	if end := strings.LastIndex(strings.ToLower(output), "</"+root+">"); end >= 0 {
+		output = output[:end+len(root)+3]
+	}
+	return strings.TrimSpace(output)
 }
 
 type ModelQualityRun struct {

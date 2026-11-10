@@ -28,8 +28,8 @@ export function modelQualityPrompt(theme: QualityTheme, custom: string): string 
           苹果味  桃子味  西瓜味
 圆形         7      9      8
 五角星形     7      6      4`
-  const instruction = '不使用任何外部工具。请创建一个完整的 HTML，使用内联 SVG 和 CSS 动画绘制以下场景。要求画面细腻、动作自然，只返回 HTML 代码；不要外部资源、JavaScript、链接、表单或嵌入页面。场景：'
-  return instruction + (theme === 'pelican' ? '一只鹈鹕骑着自行车，双脚踩动踏板，车轮转动，沿着海边前行。' : custom.trim())
+  if (theme === 'pelican') return '画一个鹈鹕骑自行车的svg 用h5展示'
+  return '不使用任何外部工具。请创建一个完整的 HTML，使用内联 SVG 和 CSS 动画绘制以下场景。要求画面细腻、动作自然，只返回 HTML 代码；不要外部资源、JavaScript、链接、表单或嵌入页面。场景：' + custom.trim()
 }
 export const modelQualityAPI = {
   async list(params: {page: number; theme: QualityTheme; status: string; group: string; model: string; user?: string}, signal?: AbortSignal): Promise<QualityPage> {
@@ -66,8 +66,25 @@ export const modelQualityAPI = {
   }
 }
 
+export function extractModelQualityHTML(content: string): string {
+  let output = content.trim()
+  const fence = output.match(/```(?:html|svg)?\s*([\s\S]*?)```/i)
+  if (fence) output = fence[1].trim()
+  const start = output.search(/<!doctype\s+html\b|<html\b|<svg\b|<style\b|<div\b/i)
+  if (start < 0) return ''
+  output = output.slice(start).trim()
+  const root = /^<!doctype\s+html\b/i.test(output) || /^<html\b/i.test(output) ? 'html' : /^<(?:style|div)\b/i.test(output) ? 'div' : 'svg'
+  const closingTag = new RegExp(`</${root}\\s*>`, 'ig')
+  let closing: RegExpExecArray | null
+  let lastClosing: RegExpExecArray | null = null
+  while ((closing = closingTag.exec(output))) lastClosing = closing
+  if (lastClosing) output = output.slice(0, lastClosing.index + lastClosing[0].length)
+  return output.trim()
+}
+
 export function safeModelQualityHTML(content: string): string {
-  const clean = DOMPurify.sanitize(content, {
+  const extracted = extractModelQualityHTML(content)
+  const clean = DOMPurify.sanitize(extracted, {
     USE_PROFILES: { html: true, svg: true, svgFilters: true },
     ADD_TAGS: ['use'],
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'foreignObject', 'base', 'meta', 'link', 'form', 'input', 'button', 'a', 'audio', 'video'],

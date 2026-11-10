@@ -92,7 +92,7 @@ import Select from '@/components/common/Select.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { loadWorkspaceKeys, loadWorkspaceModels, workspaceModelsForKey, type WorkspaceKey } from '@/api/workspace'
-import { modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme, type OfficialQualityConfig, type QualityStatus, type QualityFilterOptions } from '@/api/modelQuality'
+import { extractModelQualityHTML, modelQualityAPI, modelQualityPrompt, safeModelQualityHTML, type QualityRun, type QualityTheme, type OfficialQualityConfig, type QualityStatus, type QualityFilterOptions } from '@/api/modelQuality'
 import { protocolForKeyTestModel, streamKeyTest } from '@/api/keyTest'
 import { renderMarkdown } from '@/utils/markdown'
 import '@/styles/announcement-markdown.css'
@@ -245,17 +245,18 @@ async function start() {
       protocol: protocolForKeyTestModel(model.value),
       messages: [{ role: 'user', content: fullPrompt }],
       signal: requestController.signal,
-      maxTokens: 8192,
-      toolChoice: 'none',
+      maxTokens: null,
       requireStop: true,
       onRequestID: id => { requestID = id; persist('running') },
       onText: text => {
-        content += text; localRun.content = content
+        content += text
+        localRun.content = selectedTheme === 'pelican' || selectedTheme === 'custom' ? extractModelQualityHTML(content) : content
         if (!progressTimer) progressTimer = setTimeout(() => { progressTimer = undefined; persist('running') }, 750)
       }
     })
     content = content.trim()
-    if (!content || (selectedTheme !== 'candy' && !/<svg|<html/i.test(content))) throw new Error('invalid-model-output')
+    if (selectedTheme === 'pelican' || selectedTheme === 'custom') content = extractModelQualityHTML(content)
+    if (!content || ((selectedTheme === 'pelican' || selectedTheme === 'custom') && !/<svg\b/i.test(content))) throw new Error('invalid-model-output')
     localRun.content = content
     localRun.status = 'completed'
   } catch {

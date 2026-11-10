@@ -65,7 +65,8 @@ export async function streamKeyTest(options: {
   signal: AbortSignal
   onText: (text: string) => void
   onRequestID?: (id: string) => void
-  maxTokens?: number
+  // 智检传 null 时沿用模型默认输出长度，避免 SVG 被聊天测试的短回复上限截断。
+  maxTokens?: number | null
   toolChoice?: 'none'
   requireStop?: boolean
 }): Promise<void> {
@@ -76,7 +77,7 @@ export async function streamKeyTest(options: {
       contents: options.messages.map(message => ({
         role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }]
       })),
-      generationConfig: { maxOutputTokens: options.maxTokens ?? 2048 }
+      generationConfig: options.maxTokens === null ? {} : { maxOutputTokens: options.maxTokens ?? 2048 }
     }, '/v1beta')
     options.signal.throwIfAborted()
     const requestID = response.headers.get('X-Client-Request-ID')
@@ -97,7 +98,7 @@ export async function streamKeyTest(options: {
       if (!payload.candidates.length) throw new KeyTestError('empty')
       const candidate = payload.candidates[0]
       if (!candidate || typeof candidate !== 'object') throw new KeyTestError('invalidResponse')
-      if (options.requireStop && candidate.finishReason !== 'STOP') throw new KeyTestError('incomplete')
+      if (options.requireStop && candidate.finishReason != null && candidate.finishReason !== 'STOP') throw new KeyTestError('incomplete')
       if (candidate.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) throw new KeyTestError('streamError')
       const parts = candidate.content?.parts
       if (!Array.isArray(parts)) throw new KeyTestError('invalidResponse')
@@ -120,7 +121,7 @@ export async function streamKeyTest(options: {
           model: options.model,
           messages: options.messages,
           stream: true,
-          max_tokens: options.maxTokens ?? 2048,
+          ...(options.maxTokens === null ? {} : { max_tokens: options.maxTokens ?? 2048 }),
           ...(options.toolChoice ? { tool_choice: options.toolChoice } : {})
         }, '/v1', options.protocol)
     const requestID = response.headers.get('X-Client-Request-ID')
@@ -221,7 +222,7 @@ export async function streamKeyTest(options: {
     }
     options.signal.throwIfAborted()
     if (!completed && !finished) throw new KeyTestError('incomplete')
-    if (options.requireStop && finishReason !== 'stop') throw new KeyTestError('incomplete')
+    if (options.requireStop && finishReason && finishReason !== 'stop') throw new KeyTestError('incomplete')
     if (!hasText) throw new KeyTestError('empty')
   } finally {
     await reader.cancel().catch(() => {})
