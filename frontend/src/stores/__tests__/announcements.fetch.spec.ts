@@ -3,8 +3,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAnnouncementStore } from '../announcements'
 import type { UserAnnouncement } from '@/types'
 
-const list = vi.hoisted(() => vi.fn())
-vi.mock('@/api', () => ({ announcementsAPI: { list } }))
+const { list, markRead } = vi.hoisted(() => ({ list: vi.fn(), markRead: vi.fn() }))
+vi.mock('@/api', () => ({ announcementsAPI: { list, markRead } }))
 
 const notice = (id: number): UserAnnouncement => ({
   id, title: `Notice ${id}`, content: 'Content', notify_mode: 'popup',
@@ -102,5 +102,54 @@ describe('announcement fetch ownership', () => {
     current.resolve([])
     await request
     expect(store.loading).toBe(false)
+  })
+
+  it('keeps every active announcement and sorts newest first by creation time', async () => {
+    const notices = Array.from({ length: 25 }, (_, index) => ({
+      ...notice(index + 1),
+      created_at: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    })).reverse()
+    list.mockResolvedValueOnce(notices)
+
+    const store = useAnnouncementStore()
+    await store.fetchAnnouncements()
+
+    expect(store.announcements).toHaveLength(25)
+    expect(store.announcements[0].id).toBe(25)
+    expect(store.announcements[store.announcements.length - 1]?.id).toBe(1)
+  })
+
+  it('marks displayed popup notices read together and clears their queued popups', async () => {
+    const store = useAnnouncementStore()
+    const oldest = notice(1)
+    const newest = notice(2)
+    list.mockResolvedValueOnce([oldest, newest])
+    markRead.mockResolvedValue({ message: 'ok' })
+    vi.useFakeTimers()
+
+    await store.fetchAnnouncements()
+    await store.dismissPopup()
+    await vi.advanceTimersByTimeAsync(350)
+
+    expect(markRead).toHaveBeenCalledTimes(2)
+    expect(markRead).toHaveBeenNthCalledWith(1, newest.id)
+    expect(markRead).toHaveBeenNthCalledWith(2, oldest.id)
+    expect(store.currentPopup).toBeNull()
+    expect(store.announcements.every((item) => item.read_at)).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it('does not replay previously shown popup notices in the same session after a read failure', async () => {
+    const store = useAnnouncementStore()
+    const notices = [notice(1), notice(2)]
+    list.mockResolvedValue(notices)
+    markRead.mockRejectedValue(new Error('offline'))
+
+    await store.fetchAnnouncements()
+    await store.dismissPopup()
+    await store.fetchAnnouncements(true)
+
+    expect(store.currentPopup).toBeNull()
+    expect(store.announcements.every((item) => !item.read_at)).toBe(true)
   })
 })

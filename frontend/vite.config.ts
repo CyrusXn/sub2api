@@ -4,6 +4,7 @@ import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
 import { globalAgent as httpAgent } from 'node:http'
 import { globalAgent as httpsAgent } from 'node:https'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -26,6 +27,37 @@ function isSafeImageUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+function getDevelopmentProxyAgent(backendUrl: string, env: Record<string, string>): typeof httpAgent | typeof httpsAgent | HttpsProxyAgent<string> {
+  let target: URL
+  try {
+    target = new URL(backendUrl)
+  } catch {
+    return httpAgent
+  }
+
+  const hostname = target.hostname.toLowerCase()
+  const noProxy = env.NO_PROXY || env.no_proxy || ''
+  const bypassProxy = ['localhost', '127.0.0.1', '::1'].includes(hostname) || noProxy.split(',').some((entry) => {
+    const rule = entry.trim().toLowerCase()
+    if (!rule) return false
+    if (rule === '*') return true
+
+    const separator = rule.lastIndexOf(':')
+    const ruleHasPort = separator > 0 && !rule.startsWith('[')
+    const ruleHost = (ruleHasPort ? rule.slice(0, separator) : rule).replace(/^\[|\]$/g, '').replace(/^\./, '')
+    const rulePort = ruleHasPort ? rule.slice(separator + 1) : ''
+    if (rulePort && target.port !== rulePort) return false
+    return hostname === ruleHost || hostname.endsWith(`.${ruleHost}`)
+  })
+
+  if (bypassProxy) return target.protocol === 'https:' ? httpsAgent : httpAgent
+
+  const proxyUrl = target.protocol === 'https:' ? env.HTTPS_PROXY || env.https_proxy : undefined
+  if (!proxyUrl) return target.protocol === 'https:' ? httpsAgent : httpAgent
+
+  return new HttpsProxyAgent(proxyUrl)
 }
 
 function injectBranding(html: string, config: { site_name?: string; site_logo?: string }): string {
@@ -83,8 +115,8 @@ export default defineConfig(({ mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
-  // 复用 Node 的环境代理；Vite 默认 agent=false 会绕过系统配置的出站代理。
-  const backendAgent = backendUrl.startsWith('https:') ? httpsAgent : httpAgent
+  // Vite 不会自动继承 shell 代理环境；本地联调生产 API 时使用显式代理 Agent。
+  const backendAgent = getDevelopmentProxyAgent(backendUrl, env)
 
   return {
     plugins: [

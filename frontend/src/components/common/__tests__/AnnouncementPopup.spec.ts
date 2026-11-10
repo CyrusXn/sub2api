@@ -45,7 +45,7 @@ describe('AnnouncementPopup', () => {
 
   it('renders mixed Markdown and HTML inside the shared styled container', async () => {
     const store = useAnnouncementStore()
-    store.currentPopup = {
+    const popup = {
       id: 1,
       title: 'Mixed content announcement',
       content: [
@@ -56,10 +56,14 @@ describe('AnnouncementPopup', () => {
         '<table><thead><tr><th>Status</th></tr></thead><tbody><tr><td>OK</td></tr></tbody></table>',
         '<script>window.__announcementXss = true</script>',
       ].join('\n'),
-      notify_mode: 'popup',
+      notify_mode: 'popup' as const,
       created_at: '2026-07-24T07:30:00Z',
       updated_at: '2026-07-24T07:30:00Z',
     }
+    store.currentPopup = {
+      ...popup,
+    }
+    store.announcements = [popup]
 
     const wrapper = mount(AnnouncementPopup)
     await wrapper.vm.$nextTick()
@@ -99,6 +103,7 @@ describe('AnnouncementPopup', () => {
     const dismissButton = document.body.querySelector<HTMLButtonElement>(
       '[data-testid="announcement-popup-dismiss"]',
     )
+    expect(dismissButton?.className).toContain('btn-primary')
     dismissButton?.click()
     await wrapper.vm.$nextTick()
 
@@ -110,9 +115,50 @@ describe('AnnouncementPopup', () => {
     wrapper.unmount()
   })
 
+  it('shows the draft status while previewing a draft announcement', () => {
+    const wrapper = mount(AnnouncementPopup, {
+      props: {
+        announcement: { ...announcement, status: 'draft' },
+        preview: true,
+      },
+    })
+
+    expect(document.body.textContent).toContain('admin.announcements.statusLabels.draft')
+    expect(document.body.querySelectorAll('[data-testid="announcement-timeline-item"]')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('renders all announcements in newest-first timeline order', async () => {
+    const store = useAnnouncementStore()
+    const oldest = { ...announcement, id: 1, title: 'Old announcement', created_at: '2026-07-22T00:00:00Z' }
+    const newest = { ...announcement, id: 2, title: 'New announcement', created_at: '2026-07-24T00:00:00Z' }
+    store.announcements = [oldest, newest]
+    store.currentPopup = newest
+    const wrapper = mount(AnnouncementPopup)
+
+    const items = [...document.body.querySelectorAll('[data-testid="announcement-timeline-item"]')]
+    expect(items.map((item) => item.querySelector('h3')?.textContent)).toEqual([
+      'New announcement',
+      'Old announcement',
+    ])
+    expect(document.body.querySelector('.announcement-popup-dialog')?.className).toContain('1280px')
+    wrapper.unmount()
+  })
+
+  it('does not open automatically for silent announcements without a popup trigger', () => {
+    const store = useAnnouncementStore()
+    store.announcements = [{ ...announcement, notify_mode: 'silent' }]
+    store.currentPopup = null
+    const wrapper = mount(AnnouncementPopup)
+
+    expect(document.body.querySelector('.announcement-popup-dialog')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('keeps the existing user popup dismissal behavior', async () => {
     const store = useAnnouncementStore()
     store.currentPopup = announcement
+    store.announcements = [announcement]
     const dismissPopup = vi.spyOn(store, 'dismissPopup').mockResolvedValue()
     const wrapper = mount(AnnouncementPopup)
 

@@ -91,6 +91,7 @@ export default {
   // Announcements Page
   announcements: {
     title: 'Announcements',
+    centerTitle: 'Notification Center',
     description: 'View system announcements',
     unreadOnly: 'Show unread only',
     markRead: 'Mark as read',

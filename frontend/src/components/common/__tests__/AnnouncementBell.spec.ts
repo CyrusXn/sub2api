@@ -19,6 +19,23 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); document.body.style.overflow = '' })
 
 describe('announcement read confirmation', () => {
+  it('shows all announcements as a wide newest-first timeline when opened from the top bell', async () => {
+    const store = useAnnouncementStore()
+    store.announcements = [
+      { id: 1, title: 'Older notice', content: 'Older content', notify_mode: 'silent', created_at: '2026-09-29T00:00:00Z', updated_at: '2026-09-29T00:00:00Z' },
+      { id: 2, title: 'Newer notice', content: 'Newer content', notify_mode: 'silent', created_at: '2026-09-30T00:00:00Z', updated_at: '2026-09-30T00:00:00Z' },
+    ]
+    const wrapper = mount(AnnouncementBell, { global: { stubs: { Teleport: true, Transition: true, Icon: true } } })
+
+    await wrapper.get('button').trigger('click')
+
+    const items = wrapper.findAll('[data-testid="announcement-timeline-item"]')
+    expect(items.map(item => item.find('h3').text())).toEqual(['Newer notice', 'Older notice'])
+    expect(wrapper.text()).toContain('Newer content')
+    expect(wrapper.find('[data-testid="announcement-center-dialog"]').classes()).toContain('max-w-[1280px]')
+    expect(wrapper.find('[data-testid="announcement-center-close"]').classes()).toContain('btn-primary')
+  })
+
   it('keeps a failed read confirmation open and only reports success after retry', async () => {
     markRead.mockRejectedValue(new Error('offline'))
     const wrapper = mount(AnnouncementBell, { global: { stubs: { Teleport: true, Transition: true, Icon: true } } })
@@ -36,7 +53,7 @@ describe('announcement read confirmation', () => {
     await confirm().trigger('click')
     await flushPromises()
     expect(showSuccess).toHaveBeenCalledWith('announcements.markedAsRead')
-    expect(wrapper.find('.markdown-body').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="announcement-detail-dialog"]').exists()).toBe(false)
     expect(useAnnouncementStore().unreadCount).toBe(0)
   })
 })

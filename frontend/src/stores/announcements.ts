@@ -37,7 +37,9 @@ export const useAnnouncementStore = defineStore('announcements', () => {
       loading.value = true
       const all = await announcementsAPI.list(false)
       if (generation !== fetchGeneration) return
-      announcements.value = all.slice(0, 20)
+      announcements.value = [...all].sort((a, b) =>
+        Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id
+      )
       enqueueNewPopups()
     } catch (err: any) {
       if (generation !== fetchGeneration) return
@@ -77,16 +79,14 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
   async function dismissPopup() {
     if (!currentPopup.value) return
-    const id = currentPopup.value.id
     currentPopup.value = null
+    popupQueue.value = []
 
-    // Mark as read (fire-and-forget, UI already updated)
-    markAsRead(id)
-
-    // Show next popup after a short delay
-    if (popupQueue.value.length > 0) {
-      setTimeout(() => showNextPopup(), 300)
-    }
+    const popupUnreadIds = announcements.value
+      .filter((a) => a.notify_mode === 'popup' && !a.read_at)
+      .map((a) => a.id)
+    popupUnreadIds.forEach((id) => shownPopupIds.add(id))
+    await Promise.all(popupUnreadIds.map((id) => markAsRead(id)))
   }
 
   async function markAsRead(id: number) {
