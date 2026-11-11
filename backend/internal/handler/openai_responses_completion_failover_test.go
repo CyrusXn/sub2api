@@ -24,6 +24,7 @@ type completionFailoverUpstream struct {
 	delayHeaders   bool
 	emptyStructure bool
 	directFailure  bool
+	delayed503     bool
 }
 
 func (u *completionFailoverUpstream) Do(_ *http.Request, _ string, id int64, _ int) (*http.Response, error) {
@@ -41,6 +42,21 @@ func (u *completionFailoverUpstream) Do(_ *http.Request, _ string, id int64, _ i
 	}
 	if u.directFailure {
 		data = "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"temporary failure\"}}}\n\n"
+	}
+	if u.delayed503 && id == 9910 {
+		reader, writer := io.Pipe()
+		go func() {
+			defer writer.Close()
+			timer := time.NewTimer(service.TextStreamPlaceholderDelay + 200*time.Millisecond)
+			defer timer.Stop()
+			<-timer.C
+			_, _ = io.WriteString(writer, "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"invalid_request_error\",\"status\":503,\"message\":\"All lines for this model are temporarily busy\"}}}\n\n")
+		}()
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: reader}, nil
+	}
+	if u.delayed503 && id == 9911 {
+		data = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"healthy-output\"}\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_healthy\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
 	}
 	if id == 9913 && !u.failAll {
 		data = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"healthy-output\"}\n\n" +
@@ -68,10 +84,10 @@ func (u *completionFailoverUpstream) DoWithTLS(r *http.Request, proxy string, id
 
 func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, scenario := range []struct{ keepalive, failAll, delayHeaders, emptyStructure, directFailure bool }{{}, {keepalive: true}, {keepalive: true, failAll: true}, {keepalive: true, delayHeaders: true}, {emptyStructure: true}, {directFailure: true}} {
+	for _, scenario := range []struct{ keepalive, failAll, delayHeaders, emptyStructure, directFailure, delayed503 bool }{{}, {keepalive: true}, {keepalive: true, failAll: true}, {keepalive: true, delayHeaders: true}, {emptyStructure: true}, {directFailure: true}, {keepalive: true, delayed503: true}} {
 		keepalive := scenario.keepalive
 		for _, passthrough := range []bool{false, true} {
-			t.Run(map[bool]string{false: "native", true: "passthrough"}[passthrough]+map[bool]string{false: "", true: "/keepalive"}[keepalive]+map[bool]string{false: "", true: "/exhausted"}[scenario.failAll]+map[bool]string{false: "", true: "/slow-headers"}[scenario.delayHeaders]+map[bool]string{false: "", true: "/empty-structure"}[scenario.emptyStructure]+map[bool]string{false: "", true: "/direct-failure"}[scenario.directFailure], func(t *testing.T) {
+			t.Run(map[bool]string{false: "native", true: "passthrough"}[passthrough]+map[bool]string{false: "", true: "/keepalive"}[keepalive]+map[bool]string{false: "", true: "/exhausted"}[scenario.failAll]+map[bool]string{false: "", true: "/slow-headers"}[scenario.delayHeaders]+map[bool]string{false: "", true: "/empty-structure"}[scenario.emptyStructure]+map[bool]string{false: "", true: "/direct-failure"}[scenario.directFailure]+map[bool]string{false: "", true: "/generic-503"}[scenario.delayed503], func(t *testing.T) {
 				groupID := int64(4204)
 				accounts := []service.Account{}
 				for i, id := range []int64{9910, 9911, 9912, 9913} {
@@ -88,7 +104,7 @@ func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 					cfg.Gateway.StreamKeepaliveInterval = 1
 				}
 				repo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
-				upstream := &completionFailoverUpstream{delayFailure: keepalive, failAll: scenario.failAll, delayHeaders: scenario.delayHeaders, emptyStructure: scenario.emptyStructure, directFailure: scenario.directFailure}
+				upstream := &completionFailoverUpstream{delayFailure: keepalive && !scenario.delayed503, failAll: scenario.failAll, delayHeaders: scenario.delayHeaders, emptyStructure: scenario.emptyStructure, directFailure: scenario.directFailure, delayed503: scenario.delayed503}
 				cache := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 				t.Cleanup(cache.Stop)
 				gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, cache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
@@ -100,7 +116,11 @@ func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 				c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 1804, GroupID: &groupID, User: &service.User{ID: 1704, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}})
 				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1704, Concurrency: 0})
 				h.Responses(c)
-				require.Equal(t, []int64{9910, 9911, 9912, 9913}, upstream.calls)
+				if scenario.delayed503 {
+					require.Equal(t, []int64{9910, 9911}, upstream.calls, "占位后真实上游 503 仍应切到下一个账号")
+				} else {
+					require.Equal(t, []int64{9910, 9911, 9912, 9913}, upstream.calls)
+				}
 				require.Equal(t, http.StatusOK, rec.Code)
 				require.NotContains(t, rec.Body.String(), "fake-first-output")
 				if scenario.failAll {

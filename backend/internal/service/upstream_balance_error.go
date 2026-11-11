@@ -33,6 +33,14 @@ func isUpstreamInsufficientBalanceError(statusCode int, body []byte) bool {
 
 // 明确的来源和错误语义优先于 HTTP 包装状态；不能将上游欠费伪装成用户欠费。
 func allowsOpenAINextAccount(status int, message string, body []byte) bool {
+	// Generic invalid_request_error labels from compatibility gateways must not
+	// hide an explicit upstream 5xx. Keep definitive client errors non-retryable.
+	if status >= http.StatusInternalServerError && status <= 599 && hasOpenAIGenericInvalidRequestType(body) &&
+		!hasOpenAIExplicitRequestErrorCode(body) && !hasOpenAIRequestErrorParam(body) && !isOpenAIContextWindowError(message, body) {
+		if hit, _, _ := detectOpenAICyberPolicy(body); !hit {
+			return true
+		}
+	}
 	if isOpenAIRequestError(status, message, body) {
 		return false
 	}
@@ -74,6 +82,9 @@ func isOpenAIRequestError(status int, message string, body []byte) bool {
 	if isOpenAIContextWindowError(message, body) {
 		return true
 	}
+	if hasOpenAIRequestErrorParam(body) {
+		return true
+	}
 	if hit, _, _ := detectOpenAICyberPolicy(body); hit {
 		return true
 	}
@@ -88,6 +99,12 @@ func isOpenAIRequestError(status int, message string, body []byte) bool {
 		case "rate_limit_exceeded", "rate_limit_error", "too_many_requests", "server_is_overloaded", "slow_down", "invalid_api_key", "invalid_token":
 			return false
 		}
+	}
+	// Compatibility gateways may label upstream 5xx responses as invalid_request_error.
+	// Only that generic label yields to the explicit server status; other error types
+	// retain their existing policy and request-error handling.
+	if status >= http.StatusInternalServerError && status <= 599 && hasOpenAIGenericInvalidRequestType(body) {
+		return false
 	}
 	for _, value := range upstreamErrorStringValues(body, "error.type", "response.error.type", "detail.type", "type") {
 		switch strings.ToLower(strings.TrimSpace(value)) {
@@ -105,6 +122,27 @@ func hasOpenAIExplicitRequestErrorCode(body []byte) bool {
 	for _, code := range upstreamErrorStringValues(body, "error.code", "response.error.code", "detail.code", "code") {
 		switch strings.ToLower(strings.TrimSpace(code)) {
 		case "invalid_parameter", "missing_required_parameter", "invalid_argument", "invalid_value", "unsupported_parameter", "context_length_exceeded", "context_too_large", "content_policy_violation", "content_filter":
+			return true
+		}
+	}
+	return false
+}
+
+func hasOpenAIRequestErrorParam(body []byte) bool {
+	if !hasOpenAIGenericInvalidRequestType(body) {
+		return false
+	}
+	for _, param := range upstreamErrorStringValues(body, "error.param", "response.error.param", "detail.param", "param") {
+		if strings.TrimSpace(param) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOpenAIGenericInvalidRequestType(body []byte) bool {
+	for _, errType := range upstreamErrorStringValues(body, "error.type", "response.error.type", "detail.type", "type") {
+		if strings.EqualFold(strings.TrimSpace(errType), "invalid_request_error") {
 			return true
 		}
 	}

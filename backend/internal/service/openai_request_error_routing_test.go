@@ -110,6 +110,43 @@ func TestOpenAIStreamExplicitRequestErrorsDoNotSwitchAccounts(t *testing.T) {
 	}
 }
 
+func TestOpenAIStream503OverridesGenericInvalidRequestType(t *testing.T) {
+	for _, shape := range []string{"error", "response.failed"} {
+		t.Run(shape, func(t *testing.T) {
+			payload := []byte(`{"type":"error","error":{"type":"invalid_request_error","status":503,"message":"All lines for this model are temporarily busy"}}`)
+			if shape == "response.failed" {
+				payload = []byte(`{"type":"response.failed","response":{"error":{"type":"invalid_request_error","status":503,"message":"All lines for this model are temporarily busy"}}}`)
+			}
+
+			require.Equal(t, http.StatusServiceUnavailable, openAIStreamFailedEventSemanticStatus(payload, "All lines for this model are temporarily busy"))
+			require.Equal(t, http.StatusServiceUnavailable, openAIStreamFailureStatus(payload, "All lines for this model are temporarily busy"))
+			require.True(t, openAIStreamFailedEventShouldFailover(payload, "All lines for this model are temporarily busy"))
+			require.True(t, openAIStreamErrorEventShouldFailover(payload, "All lines for this model are temporarily busy"))
+
+			repo := &modelNotFoundAccountRepoStub{}
+			rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+			svc := &OpenAIGatewayService{rateLimitService: rateLimits, accountRepo: repo}
+			rateLimits.SetAccountRuntimeBlocker(svc)
+			account := &Account{ID: 1058, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+			err := svc.newOpenAIStreamFailoverErrorWithModel(
+				nil, account, false, "", payload, "All lines for this model are temporarily busy", "gpt-6.1-sol",
+			)
+			require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
+			require.False(t, err.RetryableOnSameAccount, "真实上游账号 503 应冷却后切号")
+			require.False(t, err.RequestScopedTransient)
+			require.Len(t, repo.modelRateLimitCalls, 1, "真实上游 503 应冷却本账号的请求模型")
+			require.Equal(t, "gpt-6.1-sol", repo.modelRateLimitCalls[0].scope)
+		})
+	}
+}
+
+func TestOpenAIStream503KeepsExplicitRequestErrorNonRetryable(t *testing.T) {
+	payload := []byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_parameter","status":503,"message":"invalid prompt"}}`)
+	require.Equal(t, http.StatusBadRequest, openAIStreamFailedEventSemanticStatus(payload, "invalid prompt"))
+	require.False(t, openAIStreamFailedEventShouldFailover(payload, "invalid prompt"))
+	require.False(t, openAIStreamErrorEventShouldFailover(payload, "invalid prompt"))
+}
+
 func TestOpenAIStreamModel404CoolsOnlyRequestedModel(t *testing.T) {
 	for _, transport := range []string{"sse", "ws"} {
 		t.Run(transport, func(t *testing.T) {

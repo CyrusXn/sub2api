@@ -1476,6 +1476,18 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 		return http.StatusBadRequest
 	}
 	if isOpenAIRequestError(http.StatusBadGateway, message, payload) {
+		// OpenAI-compatible gateways may label an upstream 5xx as the generic
+		// invalid_request_error type. Preserve an explicit server status unless
+		// the payload also carries a definitive client-side error code/policy.
+		if hasOpenAIGenericInvalidRequestType(payload) && !hasOpenAIExplicitRequestErrorCode(payload) && !hasOpenAIRequestErrorParam(payload) {
+			if hit, _, _ := detectOpenAICyberPolicy(payload); !hit {
+				for _, path := range openAIStreamErrorStatusPaths {
+					if status := int(gjson.GetBytes(payload, path).Int()); status >= 500 && status <= 599 {
+						return status
+					}
+				}
+			}
+		}
 		for _, path := range openAIStreamErrorStatusPaths {
 			if status := int(gjson.GetBytes(payload, path).Int()); status >= 400 && status < 500 {
 				return status
@@ -1528,9 +1540,7 @@ func openAIStreamFailureStatus(payload []byte, message string) int {
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests, 529:
 		return semanticStatus
 	case http.StatusServiceUnavailable:
-		if isOpenAIUpstreamCapacityShedEvent(payload) {
-			return semanticStatus
-		}
+		return semanticStatus
 	}
 	return http.StatusBadGateway
 }
@@ -1688,7 +1698,8 @@ func openAIStreamTerminalClientStatus(payload []byte, message string) int {
 }
 
 func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool {
-	if !allowsOpenAINextAccount(openAIStreamFailedEventSemanticStatus(payload, message), message, payload) {
+	status := openAIStreamFailedEventSemanticStatus(payload, message)
+	if !allowsOpenAINextAccount(status, message, payload) {
 		return false
 	}
 	if isUpstreamInsufficientBalanceError(http.StatusBadGateway, payload) {
@@ -1707,6 +1718,10 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 		return true
 	}
 	semanticStatus := openAIStreamFailureStatus(payload, message)
+	if semanticStatus >= http.StatusInternalServerError && hasOpenAIGenericInvalidRequestType(payload) &&
+		!hasOpenAIExplicitRequestErrorCode(payload) && !hasOpenAIRequestErrorParam(payload) {
+		return true
+	}
 	if semanticStatus == http.StatusForbidden {
 		// 明确请求错误已在入口排除，其余上游 403 在正文输出前允许切号。
 		return true
@@ -1750,7 +1765,8 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 }
 
 func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
-	if !allowsOpenAINextAccount(openAIStreamFailedEventSemanticStatus(payload, message), message, payload) {
+	status := openAIStreamFailedEventSemanticStatus(payload, message)
+	if !allowsOpenAINextAccount(status, message, payload) {
 		return false
 	}
 	if isUpstreamInsufficientBalanceError(http.StatusBadGateway, payload) {

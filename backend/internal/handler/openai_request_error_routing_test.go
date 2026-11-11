@@ -89,6 +89,7 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 		for _, scenario := range []string{
 			"six_last_ok", "six_all_fail", "six_403_last_ok", "six_403_all_fail", "upstream_auth", "unsupported_then_valid", "only_second_supports",
 			"balance", "balance_400", "sse_balance", "context_limit", "sse_context_limit", "request_403", "request_502", "sse_request_403", "sse_request_502",
+			"sse_503_then_valid", "sse_all_503",
 			"upstream_403", "edge_403", "sse_403", "sse_upstream_403", "all_403", "all_502", "all_503",
 			"404_then_valid", "all_404", "sse_404_then_valid", "sse_all_404", "401", "402", "403", "405", "413", "422", "429", "502", "503", "sse_402", "sse_405", "sse_413", "sse_422",
 		} {
@@ -148,6 +149,10 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					_, _ = fmt.Sscan(strings.TrimPrefix(scenario, "all_"), &upstream.status)
 					upstream.allAccounts = true
 					upstream.body = `{"error":{"type":"upstream_error","message":"temporary upstream failure"}}`
+				case "sse_503_then_valid", "sse_all_503":
+					upstream.status, upstream.sse = 503, true
+					upstream.allAccounts = scenario == "sse_all_503"
+					upstream.body = `{"type":"response.failed","response":{"error":{"type":"invalid_request_error","status":503,"message":"All lines for this model are temporarily busy"}}}`
 				case "context_limit", "sse_context_limit":
 					upstream.status, upstream.body = 400, `{"error":{"type":"invalid_request_error","param":"input","message":"The request exceeds the context limit."}}`
 				case "request_502", "sse_request_502":
@@ -174,7 +179,7 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 				}
 				if scenario == "sse_context_limit" || scenario == "sse_request_502" || scenario == "sse_request_403" {
 					upstream.sse = true
-					upstream.body = fmt.Sprintf(`{"type":"response.failed","response":{"error":{"status_code":%d,"type":"invalid_request_error","message":%q}}}`, upstream.status, gjson.Get(upstream.body, "error.message").String())
+					upstream.body = fmt.Sprintf(`{"type":"response.failed","response":{"error":{"status_code":%d,"type":"invalid_request_error","param":%q,"message":%q}}}`, upstream.status, gjson.Get(upstream.body, "error.param").String(), gjson.Get(upstream.body, "error.message").String())
 				}
 				billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 				t.Cleanup(billing.Stop)
@@ -278,6 +283,20 @@ func TestOpenAIRequestErrorRoutingSiteHTTP(t *testing.T) {
 					require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
 					require.Equal(t, []int64{9910, 9911}, upstream.calls, "同分组故障全部遍历后才结束，不能回到 A")
 					require.Empty(t, repo.accountErrors, "瞬时故障耗尽也不能永久关号")
+					require.ElementsMatch(t, []int64{9910, 9911}, repo.modelCooldowns)
+				case "sse_503_then_valid":
+					rec := request("gpt-5.2")
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9910, 9911}, upstream.calls, "流内 503 应冷却首账号并切到下一账号")
+					require.Equal(t, []int64{9910}, repo.modelCooldowns)
+					upstream.status, upstream.sse, upstream.calls = 0, false, nil
+					rec = request("gpt-5.2")
+					require.Equal(t, 200, rec.Code, rec.Body.String())
+					require.Equal(t, []int64{9911}, upstream.calls, "同一模型再次请求不能立即回到刚报错账号")
+				case "sse_all_503":
+					rec := request("gpt-5.2")
+					require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
+					require.Equal(t, []int64{9910, 9911}, upstream.calls, "全组流内 503 应逐账号切换且不重复请求")
 					require.ElementsMatch(t, []int64{9910, 9911}, repo.modelCooldowns)
 				case "404_then_valid", "sse_404_then_valid":
 					rec := request("gpt-6-luna")
