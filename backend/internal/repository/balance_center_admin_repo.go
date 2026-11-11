@@ -306,14 +306,71 @@ FROM balance_center_recharge_events s`+where+` ORDER BY occurred_at DESC, id DES
 }
 
 func (r *balanceCenterRepository) CreateBalanceCenterRechargeEvent(ctx context.Context, item *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, error) {
+	created, _, err := r.CreateBalanceCenterRechargeEventWithReminder(ctx, item)
+	return created, err
+}
+
+func (r *balanceCenterRepository) CreateBalanceCenterRechargeEventWithReminder(ctx context.Context, item *service.BalanceCenterRechargeEvent) (_ *service.BalanceCenterRechargeEvent, _ *service.UpstreamSiteBalanceReminder, err error) {
+	if item == nil {
+		return nil, nil, errors.New("充值记录内容无效")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
 	result := *item
-	err := r.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, account_id, amount, currency, occurred_at, note, record_type)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (source, source_key) DO UPDATE SET site_id=EXCLUDED.site_id, site_label=EXCLUDED.site_label, account_id=EXCLUDED.account_id,
 amount=EXCLUDED.amount, currency=EXCLUDED.currency, occurred_at=EXCLUDED.occurred_at, note=EXCLUDED.note, record_type=EXCLUDED.record_type, updated_at=NOW()
 RETURNING id`, item.Source, item.SourceKey, item.SiteID, item.SiteLabel, item.AccountID, item.Amount, item.Currency, item.OccurredAt, item.Note, item.RecordType).Scan(&result.ID)
-	return &result, err
+	if err != nil {
+		return nil, nil, err
+	}
+	var reminder *service.UpstreamSiteBalanceReminder
+	if item.RecordType == "recharge" && item.SiteID != nil {
+		var host, displayName string
+		err = tx.QueryRowContext(ctx, `SELECT normalized_domain, COALESCE(NULLIF(display_name,''),name) FROM balance_center_sites WHERE id=$1`, *item.SiteID).Scan(&host, &displayName)
+		if err != nil {
+			return nil, nil, err
+		}
+		var existing service.UpstreamSiteBalanceReminder
+		err = tx.QueryRowContext(ctx, `
+SELECT host, display_name, alert_old_balance, alert_new_balance, alert_delta, alert_currency, alert_detected_at, alert_version
+FROM upstream_site_balance_observations
+WHERE host=$1 AND alert_active=TRUE
+FOR UPDATE`, host).Scan(
+			&existing.Host, &existing.DisplayName, &existing.OldBalance, &existing.NewBalance,
+			&existing.Delta, &existing.Currency, &existing.DetectedAt, &existing.Version,
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, err
+		}
+		if err == nil {
+			existing.Host = host
+			existing.DisplayName = displayName
+			reminder = &existing
+			_, err = tx.ExecContext(ctx, `
+UPDATE upstream_site_balance_observations
+SET alert_active=FALSE, alert_old_balance=NULL, alert_new_balance=NULL, alert_delta=NULL,
+    alert_currency='USD', alert_detected_at=NULL, alert_version=alert_version+1, updated_at=NOW()
+WHERE host=$1 AND alert_active=TRUE`, host)
+			if err != nil {
+				return nil, nil, err
+			}
+			reminder.Version++
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return &result, reminder, nil
 }
 
 func canonicalBalanceCenterSiteLabel(value string) string {

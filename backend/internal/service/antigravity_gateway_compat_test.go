@@ -35,7 +35,8 @@ func TestAntigravityCompatFailsOverAfterPlaceholderBeforeSemanticOutput(t *testi
 		newAntigravityResponsesStreamAdapter("claude-sonnet-4-5"), "test", time.Second, 10*time.Second)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.Contains(t, recorder.Body.String(), ": \n\n")
+	require.Contains(t, recorder.Body.String(), "event: response.output_text.delta\n")
+	require.Contains(t, recorder.Body.String(), `"delta":" "`)
 	require.NotNil(t, TextStreamFirstPacketMs(c), "placeholder starts the usage-log first-character timer")
 	require.True(t, TextStreamAwaitingOutput(c), "placeholder must not mark semantic output")
 }

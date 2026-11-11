@@ -63,6 +63,9 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	if len(body) == 0 {
 		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Request body is empty")
 	}
+	if stream && textStreamRequestEligible("/v1beta/models", originalModel, body) {
+		ensureTextStreamTimingForRequest(c, startTime)
+	}
 
 	// 解析请求以获取 image_size（用于图片计费）
 	imageInputSize := s.extractImageInputSize(body)
@@ -157,6 +160,10 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	upstreamAction := "streamGenerateContent"
 
 	// 执行带重试的请求
+	stopHeaderKeepalive := func() {}
+	if stream {
+		stopHeaderKeepalive = withAntigravityTextStreamHeaderKeepalive(c)
+	}
 	result, err := s.antigravityRetryLoop(antigravityRetryLoopParams{
 		ctx:             ctx,
 		prefix:          prefix,
@@ -175,6 +182,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		groupID:         forwardOpts.groupID,
 		sessionHash:     forwardOpts.sessionHash,
 	})
+	stopHeaderKeepalive()
 	if err != nil {
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
 		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {

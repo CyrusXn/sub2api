@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -104,9 +105,11 @@ func TestBalanceCenterAdminRechargeUpsertIsIdempotent(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now().UTC()
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("ON CONFLICT (source, source_key) DO UPDATE")).
 		WithArgs("manual", "tx-1", nil, "", nil, 10.0, "CNY", now, "备注", "subscription").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9))
+	mock.ExpectCommit()
 
 	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
 	item, err := repo.CreateBalanceCenterRechargeEvent(context.Background(), &service.BalanceCenterRechargeEvent{
@@ -114,6 +117,82 @@ func TestBalanceCenterAdminRechargeUpsertIsIdempotent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(9), item.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterAdminRechargeResolvesMatchingSiteReminderInSameTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	siteID := int64(7)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO balance_center_recharge_events")).
+		WithArgs("manual", "recharge-7", siteID, "站点", nil, 100.0, "CNY", now, "充值", "recharge").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(31))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT normalized_domain, COALESCE(NULLIF(display_name,''),name) FROM balance_center_sites WHERE id=$1")).
+		WithArgs(siteID).
+		WillReturnRows(sqlmock.NewRows([]string{"normalized_domain", "display_name"}).AddRow("site.example", "站点"))
+	detectedAt := now.Add(-time.Hour)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT host, display_name, alert_old_balance, alert_new_balance, alert_delta, alert_currency, alert_detected_at, alert_version")).
+		WithArgs("site.example").
+		WillReturnRows(sqlmock.NewRows([]string{"host", "display_name", "alert_old_balance", "alert_new_balance", "alert_delta", "alert_currency", "alert_detected_at", "alert_version"}).
+			AddRow("site.example", "原站点名", 10.0, 20.0, 10.0, "USD", detectedAt, 1))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE upstream_site_balance_observations")).
+		WithArgs("site.example").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	created, reminder, err := repo.(interface {
+		CreateBalanceCenterRechargeEventWithReminder(context.Context, *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, *service.UpstreamSiteBalanceReminder, error)
+	}).CreateBalanceCenterRechargeEventWithReminder(context.Background(), &service.BalanceCenterRechargeEvent{
+		Source: "manual", SourceKey: "recharge-7", SiteID: &siteID, SiteLabel: "站点", Amount: 100,
+		Currency: "CNY", OccurredAt: now, Note: "充值", RecordType: "recharge",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(31), created.ID)
+	require.Equal(t, &service.UpstreamSiteBalanceReminder{
+		Host: "site.example", DisplayName: "站点", OldBalance: 10, NewBalance: 20,
+		Delta: 10, Currency: "USD", DetectedAt: detectedAt, Version: 2,
+	}, reminder)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterAdminRechargeReminderResolutionFailureRollsBackEvent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	siteID := int64(7)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO balance_center_recharge_events")).
+		WithArgs("manual", "recharge-8", siteID, "站点", nil, 100.0, "CNY", now, "充值", "recharge").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(32))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT normalized_domain, COALESCE(NULLIF(display_name,''),name) FROM balance_center_sites WHERE id=$1")).
+		WithArgs(siteID).
+		WillReturnRows(sqlmock.NewRows([]string{"normalized_domain", "display_name"}).AddRow("site.example", "站点"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT host, display_name, alert_old_balance, alert_new_balance, alert_delta, alert_currency, alert_detected_at, alert_version")).
+		WithArgs("site.example").
+		WillReturnRows(sqlmock.NewRows([]string{"host", "display_name", "alert_old_balance", "alert_new_balance", "alert_delta", "alert_currency", "alert_detected_at", "alert_version"}).
+			AddRow("site.example", "站点", 10.0, 20.0, 10.0, "USD", now.Add(-time.Hour), 1))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE upstream_site_balance_observations")).
+		WithArgs("site.example").
+		WillReturnError(errors.New("resolve failed"))
+	mock.ExpectRollback()
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	_, _, err = repo.(interface {
+		CreateBalanceCenterRechargeEventWithReminder(context.Context, *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, *service.UpstreamSiteBalanceReminder, error)
+	}).CreateBalanceCenterRechargeEventWithReminder(context.Background(), &service.BalanceCenterRechargeEvent{
+		Source: "manual", SourceKey: "recharge-8", SiteID: &siteID, SiteLabel: "站点", Amount: 100,
+		Currency: "CNY", OccurredAt: now, Note: "充值", RecordType: "recharge",
+	})
+
+	require.Error(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

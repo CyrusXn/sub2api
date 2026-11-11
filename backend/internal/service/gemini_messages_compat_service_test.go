@@ -1507,8 +1507,8 @@ func TestGeminiMessagesStreamFailsOverAfterPlaceholderBeforeSemanticOutput(t *te
 
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, <-done, &failoverErr, "真实语义输出前的断流应允许切号")
-	require.Contains(t, rec.Body.String(), ": \n\n")
-	require.NotContains(t, rec.Body.String(), "event: message_start")
+	require.Contains(t, rec.Body.String(), "event: message_start")
+	require.Contains(t, rec.Body.String(), `"text":" "`)
 	require.NotNil(t, TextStreamFirstPacketMs(c), "占位应进入使用记录首字时间")
 }
 

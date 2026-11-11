@@ -162,7 +162,7 @@ func TestTextStreamSlowResponsesHasPacketBeforeRealOutput(t *testing.T) {
 	require.GreaterOrEqual(t, *result.firstTokenMs, int(TextStreamPlaceholderDelay.Milliseconds()))
 	require.NotNil(t, TextStreamFirstPacketMs(c))
 	require.Less(t, *TextStreamFirstPacketMs(c), *result.firstTokenMs)
-	require.Equal(t, 1, strings.Count(rec.Body.String(), ": \n\n"))
+	require.Equal(t, 1, strings.Count(rec.Body.String(), `"delta":" "`))
 	require.Contains(t, rec.Body.String(), "hello")
 }
 
@@ -173,7 +173,8 @@ func TestTextStreamWhitespaceDeduplicatesOnlyBeforeRealOutput(t *testing.T) {
 	ensureTextStreamTiming(c, time.Now())
 	payload := `{"type":"response.output_text.delta","delta":" \n"}`
 	require.True(t, forwardTextStreamWhitespace(c, payload, "response.output_text.delta"))
-	require.Equal(t, ": \n\n", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "event: response.output_text.delta\n")
+	require.Contains(t, rec.Body.String(), `"delta":" "`)
 	firstBody := rec.Body.String()
 	require.True(t, forwardTextStreamWhitespace(c, payload, "response.output_text.delta"))
 	require.Equal(t, firstBody, rec.Body.String())
@@ -189,7 +190,9 @@ func TestTextStreamRealOutputCancelsPlaceholder(t *testing.T) {
 	markTextStreamRealOutput(c)
 	require.False(t, writeTextStreamPlaceholder(c, c.Writer))
 	require.Nil(t, TextStreamFirstPacketMs(c), "尚未实际交付时不能提前记首包")
-	recordTextStreamPacket(c)
+	_, err := c.Writer.WriteString("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
+	require.NoError(t, err)
+	c.Writer.Flush()
 	require.NotNil(t, TextStreamFirstPacketMs(c))
 }
 
@@ -271,7 +274,7 @@ func TestTextStreamHTTPDeliveryAcrossProtocols(t *testing.T) {
 				require.True(t, strings.HasPrefix(firstLine, "data: "))
 				require.Equal(t, " ", gjson.Get(strings.TrimPrefix(firstLine, "data: "), "choices.0.delta.content").String())
 			} else {
-				require.Equal(t, ": \n", firstLine)
+				require.Equal(t, "event: response.created\n", firstLine)
 			}
 			require.Less(t, time.Since(started), TextStreamPlaceholderDelay+200*time.Millisecond, "占位应在正文之前通过真实HTTP交付")
 			body, err := io.ReadAll(reader)
@@ -315,7 +318,7 @@ func TestTextStreamWhitespaceFailureRemainsRetryable(t *testing.T) {
 			require.ErrorAs(t, err, &failover)
 			require.False(t, openAIStreamClientOutputStarted(c, false))
 			require.NotNil(t, TextStreamFirstPacketMs(c))
-			require.Equal(t, 1, strings.Count(rec.Body.String(), ": \n\n"))
+			require.Equal(t, 1, strings.Count(rec.Body.String(), `"delta":" "`))
 			require.NotContains(t, rec.Body.String(), "response.failed")
 			require.False(t, writeTextStreamPlaceholder(c, c.Writer), "切号沿用请求级占位")
 		})

@@ -35,15 +35,16 @@ const (
 	UpstreamBillingRateSyncEnabledExtraKey = "upstream_billing_rate_sync_enabled"
 
 	// 默认五分钟兜底探测空闲账号；到期队列每十秒检查一次，活跃账号仍通过一分钟合并事件优先触发。
-	upstreamBillingProbeDefaultIntervalMinutes = 5
-	upstreamBillingProbeMinIntervalMinutes     = 5
-	upstreamBillingProbeMaxIntervalMinutes     = 24 * 60
-	upstreamBillingProbeCycleInterval          = 10 * time.Second
-	upstreamBillingProbeRequestTimeout         = 10 * time.Second
-	upstreamBillingProbeMaxBodyBytes           = 64 * 1024
-	upstreamBillingProbeMaxPerCycle            = 20
-	upstreamBillingProbeConcurrency            = 4
-	upstreamBillingProbeMaxDelay               = 24 * time.Hour
+	upstreamBillingProbeDefaultIntervalMinutes  = 5
+	upstreamBillingProbeMinIntervalMinutes      = 5
+	upstreamBillingProbeMaxIntervalMinutes      = 24 * 60
+	upstreamBillingProbeCycleInterval           = 10 * time.Second
+	upstreamSiteBalanceReminderMaxSitesPerCycle = 20
+	upstreamBillingProbeRequestTimeout          = 10 * time.Second
+	upstreamBillingProbeMaxBodyBytes            = 64 * 1024
+	upstreamBillingProbeMaxPerCycle             = 20
+	upstreamBillingProbeConcurrency             = 4
+	upstreamBillingProbeMaxDelay                = 24 * time.Hour
 	// unsupported 账号的重探间隔倍数：上游不是 sub2api 中转就不会突然长出
 	// /v1/sub2api/billing，按常规 interval 重排只会持续占满每周期
 	// upstreamBillingProbeMaxPerCycle 个名额。
@@ -299,12 +300,26 @@ type UpstreamBillingProbeService struct {
 	balanceCenterStore  interface {
 		PersistSnapshot(context.Context, *BalanceCenterSnapshot) (*BalanceCenterSnapshot, error)
 	}
+	upstreamSiteBalanceReminderRepo UpstreamSiteBalanceReminderRepository
+	upstreamSiteBalanceReminderBus  UpstreamSiteBalanceReminderBus
+	upstreamSiteBalanceTokenMu      sync.Mutex
+	upstreamSiteBalanceTokens       map[string]cachedWebAccountToken
+	upstreamSiteBalanceAccounts     map[string]*Account
+	upstreamSiteBalanceRefreshAt    time.Time
 }
 
 type cachedWebAccountToken struct {
 	token     string
 	userID    int
 	expiresAt time.Time
+}
+
+func (s *UpstreamBillingProbeService) SetUpstreamSiteBalanceReminderDependencies(repo UpstreamSiteBalanceReminderRepository, bus UpstreamSiteBalanceReminderBus) {
+	if s == nil {
+		return
+	}
+	s.upstreamSiteBalanceReminderRepo = repo
+	s.upstreamSiteBalanceReminderBus = bus
 }
 
 type upstreamBillingProbeSnapshotWriter interface {
@@ -326,15 +341,16 @@ func NewUpstreamBillingProbeService(
 ) *UpstreamBillingProbeService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &UpstreamBillingProbeService{
-		accountRepo:        accountRepo,
-		accountTestService: accountTestService,
-		settingService:     settingService,
-		parentCtx:          ctx,
-		parentCancel:       cancel,
-		probeSlots:         make(chan struct{}, upstreamBillingProbeConcurrency),
-		now:                time.Now,
-		instanceID:         uuid.NewString(),
-		webTokens:          make(map[string]cachedWebAccountToken),
+		accountRepo:               accountRepo,
+		accountTestService:        accountTestService,
+		settingService:            settingService,
+		parentCtx:                 ctx,
+		parentCancel:              cancel,
+		probeSlots:                make(chan struct{}, upstreamBillingProbeConcurrency),
+		now:                       time.Now,
+		instanceID:                uuid.NewString(),
+		webTokens:                 make(map[string]cachedWebAccountToken),
+		upstreamSiteBalanceTokens: make(map[string]cachedWebAccountToken),
 	}
 }
 
@@ -385,11 +401,14 @@ func ProvideUpstreamBillingProbeService(
 	lockCache LeaderLockCache,
 	db *sql.DB,
 	cfg *config.Config,
+	upstreamSiteBalanceReminderRepo UpstreamSiteBalanceReminderRepository,
+	upstreamSiteBalanceReminderBus UpstreamSiteBalanceReminderBus,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetUpstreamSiteCredentialService(upstreamSites)
 	svc.SetBalanceCenterEventService(balanceCenterEvents)
 	svc.SetBalanceCenterRepository(balanceCenterService)
+	svc.SetUpstreamSiteBalanceReminderDependencies(upstreamSiteBalanceReminderRepo, upstreamSiteBalanceReminderBus)
 	svc.SetLeaderLock(lockCache, db)
 	if cfg.ShouldStartBackgroundTask(config.BackgroundTaskPeriodicSideEffect) {
 		svc.Start()
@@ -454,6 +473,7 @@ func (s *UpstreamBillingProbeService) RunDue(ctx context.Context) error {
 
 	// 订阅到期与请求活跃度无关，按自身开关定期同步，不依赖某个模型账号被探测。
 	s.syncDueBalanceCenterSubscriptions(ctx)
+	s.probeDueUpstreamSiteBalances(ctx)
 	s.consumeBalanceCenterDueEvents(ctx)
 
 	settings, err := s.getSettings(ctx)
@@ -675,10 +695,14 @@ func upstreamBillingProbeLeaderLockKeyAt(now time.Time) string {
 }
 
 func (s *UpstreamBillingProbeService) tryAcquireLeaderLock(ctx context.Context, key string) (func(), bool, error) {
+	return s.tryAcquireLeaderLockWithTTL(ctx, key, upstreamBillingProbeLeaderLockTTL)
+}
+
+func (s *UpstreamBillingProbeService) tryAcquireLeaderLockWithTTL(ctx context.Context, key string, ttl time.Duration) (func(), bool, error) {
 	lockCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if s.lockCache != nil {
-		acquired, err := s.lockCache.TryAcquireLeaderLock(lockCtx, key, s.instanceID, upstreamBillingProbeLeaderLockTTL)
+		acquired, err := s.lockCache.TryAcquireLeaderLock(lockCtx, key, s.instanceID, ttl)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1418,6 +1442,9 @@ func (s *UpstreamBillingProbeService) fetchNewAPIAccountBalance(
 	}
 	var selfRoot map[string]any
 	if err := json.Unmarshal(selfBody, &selfRoot); err != nil || selfRoot["success"] == false {
+		if isUpstreamSiteLoginExpired(statusCode, selfBody) {
+			return failedUpstreamAccountBalance(now, statusCode, "web_auth_failed")
+		}
 		return failedUpstreamAccountBalance(now, statusCode, "invalid_response")
 	}
 	selfData, _ := selfRoot["data"].(map[string]any)
@@ -1607,7 +1634,13 @@ func (s *UpstreamBillingProbeService) fetchInnomAccountBalance(
 		return failedUpstreamAccountBalance(now, statusCode, reason)
 	}
 	var root map[string]any
-	if err := json.Unmarshal(body, &root); err != nil || intFromAny(root["code"]) != 0 {
+	if err := json.Unmarshal(body, &root); err != nil {
+		return failedUpstreamAccountBalance(now, statusCode, "invalid_response")
+	}
+	if intFromAny(root["code"]) != 0 {
+		if isUpstreamSiteLoginExpired(statusCode, body) {
+			return failedUpstreamAccountBalance(now, statusCode, "web_auth_failed")
+		}
 		return failedUpstreamAccountBalance(now, statusCode, "invalid_response")
 	}
 	payload, _ := root["data"].(map[string]any)
@@ -1852,8 +1885,14 @@ func (s *UpstreamBillingProbeService) doWebAccountRequest(
 	if len(body) > upstreamBillingProbeMaxBodyBytes {
 		return resp, resp.StatusCode, "response_too_large", retryAfter(resp.Header, now), nil
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return resp, resp.StatusCode, "web_auth_failed", retryAfter(resp.Header, now), body
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		if isUpstreamSiteLoginExpired(resp.StatusCode, body) {
+			return resp, resp.StatusCode, "web_auth_failed", retryAfter(resp.Header, now), body
+		}
+		return resp, resp.StatusCode, "web_forbidden", retryAfter(resp.Header, now), body
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return resp, resp.StatusCode, "http_error", retryAfter(resp.Header, now), body

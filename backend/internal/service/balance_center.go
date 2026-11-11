@@ -43,8 +43,10 @@ type BalanceCenterSuccessfulSnapshot struct {
 }
 
 type BalanceCenterAlertState struct {
-	LowBalanceActive   bool
-	MultiplierBaseline *float64
+	LowBalanceActive        bool
+	LowBalanceThreshold     *float64
+	NextLowBalanceThreshold *float64
+	MultiplierBaseline      *float64
 }
 
 type BalanceCenterAlertDecision struct {
@@ -55,12 +57,13 @@ type BalanceCenterAlertDecision struct {
 }
 
 type BalanceCenterService struct {
-	repository        BalanceCenterRepository
-	settingRepo       SettingRepository
-	emailSender       BalanceCenterEmailSender
-	alertEmailOutbox  AlertEmailOutboxEnqueuer
-	liandongEncryptor SecretEncryptor
-	liandongClient    *http.Client
+	repository         BalanceCenterRepository
+	settingRepo        SettingRepository
+	emailSender        BalanceCenterEmailSender
+	alertEmailOutbox   AlertEmailOutboxEnqueuer
+	upstreamBalanceBus UpstreamSiteBalanceReminderBus
+	liandongEncryptor  SecretEncryptor
+	liandongClient     *http.Client
 }
 
 type BalanceCenterEmailSender interface {
@@ -114,6 +117,7 @@ type BalanceCenterRepository interface {
 type BalanceCenterAlertRepository interface {
 	GetAlertState(context.Context, string, int64, *int64) (BalanceCenterAlertState, error)
 	SaveAlertState(context.Context, string, int64, *int64, int64, BalanceCenterAlertState, *BalanceCenterAlertDecision, time.Time) error
+	SetNextLowBalanceThreshold(context.Context, string, int64, float64) error
 	RecordAlertDelivery(context.Context, *BalanceCenterAlertDeliveryInput) error
 }
 
@@ -121,10 +125,11 @@ func NewBalanceCenterService(repository BalanceCenterRepository, settingRepo Set
 	return &BalanceCenterService{repository: repository, settingRepo: settingRepo}
 }
 
-func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository, emailService *EmailService, encryptor SecretEncryptor, alertOutbox *AlertEmailOutboxService) *BalanceCenterService {
+func ProvideBalanceCenterService(repository BalanceCenterRepository, settingRepo SettingRepository, emailService *EmailService, encryptor SecretEncryptor, alertOutbox *AlertEmailOutboxService, reminderBus UpstreamSiteBalanceReminderBus) *BalanceCenterService {
 	service := NewBalanceCenterService(repository, settingRepo)
 	service.SetEmailSender(emailService)
 	service.SetAlertEmailOutbox(alertOutbox)
+	service.SetUpstreamSiteBalanceReminderBus(reminderBus)
 	service.SetLiandongDependencies(encryptor, nil)
 	return service
 }
@@ -370,12 +375,42 @@ func (s *BalanceCenterService) UpdateSettings(ctx context.Context, settings *Bal
 	})
 }
 
+func (s *BalanceCenterService) SetNextLowBalanceThreshold(ctx context.Context, accountID int64, threshold float64) error {
+	if accountID <= 0 || threshold < 0 || math.IsInf(threshold, 0) || math.IsNaN(threshold) {
+		return errors.New("账号或下一提醒阈值无效")
+	}
+	if s == nil {
+		return errors.New("余额中心服务不可用")
+	}
+	alertRepo, ok := s.repository.(BalanceCenterAlertRepository)
+	if !ok {
+		return errors.New("余额告警仓储不可用")
+	}
+	return alertRepo.SetNextLowBalanceThreshold(ctx, fmt.Sprintf("account:%d", accountID), accountID, threshold)
+}
+
 func EvaluateBalanceCenterAlerts(state BalanceCenterAlertState, snapshot BalanceCenterSuccessfulSnapshot, threshold float64) ([]BalanceCenterAlertDecision, BalanceCenterAlertState) {
 	next := cloneBalanceCenterAlertState(state)
 	decisions := make([]BalanceCenterAlertDecision, 0, 2)
 	if snapshot.ConvertedBalance != nil {
-		if *snapshot.ConvertedBalance >= threshold {
+		resetThreshold := threshold
+		if state.LowBalanceActive && state.LowBalanceThreshold != nil {
+			resetThreshold = *state.LowBalanceThreshold
+		}
+		if *snapshot.ConvertedBalance >= resetThreshold {
 			next.LowBalanceActive = false
+			next.LowBalanceThreshold = nil
+			next.NextLowBalanceThreshold = nil
+		} else if state.LowBalanceActive {
+			if state.NextLowBalanceThreshold != nil && *snapshot.ConvertedBalance <= *state.NextLowBalanceThreshold {
+				value := *snapshot.ConvertedBalance
+				thresholdValue := *state.NextLowBalanceThreshold
+				decisions = append(decisions, BalanceCenterAlertDecision{
+					Type:      BalanceCenterAlertLowBalance,
+					NewValue:  &value,
+					Threshold: &thresholdValue,
+				})
+			}
 		} else if !state.LowBalanceActive {
 			value := *snapshot.ConvertedBalance
 			thresholdValue := threshold
@@ -412,7 +447,14 @@ func AcceptBalanceCenterAlert(state BalanceCenterAlertState, decision BalanceCen
 	next := cloneBalanceCenterAlertState(state)
 	switch decision.Type {
 	case BalanceCenterAlertLowBalance:
+		if !next.LowBalanceActive && decision.Threshold != nil {
+			value := *decision.Threshold
+			next.LowBalanceThreshold = &value
+		}
 		next.LowBalanceActive = true
+		if next.NextLowBalanceThreshold != nil && decision.Threshold != nil && *next.NextLowBalanceThreshold == *decision.Threshold {
+			next.NextLowBalanceThreshold = nil
+		}
 	case BalanceCenterAlertMultiplierChanged:
 		if decision.NewValue != nil {
 			value := *decision.NewValue
@@ -424,6 +466,14 @@ func AcceptBalanceCenterAlert(state BalanceCenterAlertState, decision BalanceCen
 
 func cloneBalanceCenterAlertState(state BalanceCenterAlertState) BalanceCenterAlertState {
 	next := state
+	if state.LowBalanceThreshold != nil {
+		value := *state.LowBalanceThreshold
+		next.LowBalanceThreshold = &value
+	}
+	if state.NextLowBalanceThreshold != nil {
+		value := *state.NextLowBalanceThreshold
+		next.NextLowBalanceThreshold = &value
+	}
 	if state.MultiplierBaseline != nil {
 		value := *state.MultiplierBaseline
 		next.MultiplierBaseline = &value

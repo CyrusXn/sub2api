@@ -40,6 +40,9 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	if reqStream && textStreamRequestEligible("/v1/responses", originalModel, body) {
+		ensureTextStreamTimingForRequest(c, startTime)
+	}
 	if account.Type != AccountTypeOAuth && account.Type != AccountTypeAPIKey {
 		return nil, fmt.Errorf("grok account type %s is not supported by Responses forwarding", account.Type)
 	}
@@ -115,7 +118,9 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, buildErr
 		}
 
+		stopHeaderKeepalive := startOpenAIResponsesHeaderKeepalive(c, reqStream, account)
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		stopHeaderKeepalive()
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -263,6 +268,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		ResponseHeaders:               resp.Header.Clone(),
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		FirstPacketMs:                 TextStreamFirstPacketMs(c),
 	}
 	// Propagate search/image counters from the shared Responses handler — without
 	// this, stream/JSON counting runs but search_price_per_1k / image bills never apply.

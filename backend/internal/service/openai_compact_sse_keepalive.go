@@ -156,13 +156,15 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 		frame = k.timing.placeholderFrame
 	}
 	n, err := k.writer.Write([]byte(frame))
-	k.bytes += n
+	if !placeholder {
+		k.bytes += n
+	}
 	if err != nil {
 		k.stopped = true
 		return false
 	}
 	k.writer.Flush()
-	if placeholder {
+	if placeholder && !k.timing.protocolWriter {
 		k.timing.recordPacket()
 	}
 	return true

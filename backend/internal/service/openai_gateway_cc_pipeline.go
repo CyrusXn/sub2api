@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -250,7 +251,12 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	stopHeaderKeepalive := func() {}
+	if stream && textStreamTimingFromContext(c) != nil {
+		stopHeaderKeepalive = startOpenAISSEKeepalive(c, TextStreamPlaceholderDelay)
+	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	stopHeaderKeepalive()
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
@@ -270,6 +276,8 @@ type ccStreamScanState struct {
 	// 非 nil 时调用方必须跳过 finalize 并返回 usage-incomplete 错误，避免
 	// 把上游截断伪装成正常收尾。
 	Err error
+	// RealOutput 只在扫描到真实文本或工具输出时置位；空白占位不算输出。
+	RealOutput bool
 }
 
 // scanCCStream 驱动两条 CC 回退路径共享的 SSE 读循环：提取 data 行、在 [DONE]
@@ -287,19 +295,66 @@ func (s *OpenAIGatewayService) scanCCStream(
 	var st ccStreamScanState
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
+	pump := newAnthropicNativeLinePump(scanner, 0, s.cfg)
+	defer pump.stop()
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
+	}
+	eventName := ""
+	for {
+		var line string
+		select {
+		case <-placeholderCh:
+			writeTextStreamPlaceholder(c, c.Writer)
+			placeholderCh = nil
+			continue
+		case ev, ok := <-pump.events:
+			var readErr error
+			line, readErr = pump.deliver(ev, ok)
+			if readErr != nil {
+				if readErr != io.EOF {
+					st.Err = readErr
+					if !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) {
+						logger.L().Warn(logPrefix+": stream read error", zap.Error(readErr), zap.String("request_id", requestID))
+					}
+				}
+				if !st.RealOutput && textStreamTimingFromContext(c) != nil {
+					st.Err = newTextStreamReadFailoverError(readErr)
+				}
+				return st
+			}
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
 		payload, ok := extractOpenAISSEDataLine(line)
 		if !ok {
 			continue
 		}
 		payload = strings.TrimSpace(payload)
+		if eventName == "error" || gjson.Get(payload, "error").Exists() {
+			message := extractOpenAISSEErrorMessage([]byte(payload))
+			if message == "" {
+				message = "upstream stream returned an error event"
+			}
+			st.Err = fmt.Errorf("upstream stream error: %s", sanitizeUpstreamErrorMessage(message))
+			if !st.RealOutput {
+				st.Err = newTextStreamReadFailoverError(st.Err)
+			}
+			return st
+		}
+		eventName = ""
 		if payload == "" {
 			continue
 		}
 		if payload == "[DONE]" {
 			st.SawDone = true
-			break
+			if !st.RealOutput && textStreamTimingFromContext(c) != nil {
+				st.Err = newTextStreamReadFailoverError(io.EOF)
+			}
+			return st
 		}
 		// 观察上游 CC chunk 回显的 model / service_tier（计费以回显为准）。
 		// CC chunk 无 type 字段，按 untyped payload 观察（上游约束：只有终止
@@ -320,23 +375,16 @@ func (s *OpenAIGatewayService) scanCCStream(
 			)
 			continue
 		}
-		if st.FirstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
+		realOutput, _ := chatStreamPayloadOutput(payload)
+		if realOutput {
+			st.RealOutput = true
+		}
+		if st.FirstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && realOutput {
 			ms := int(time.Since(startTime).Milliseconds())
 			st.FirstTokenMs = &ms
 		}
 		emit(&chunk)
 	}
-
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn(logPrefix+": stream read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
-		}
-		st.Err = err
-	}
-	return st
 }
 
 // logCCStreamMissingDoneSentinel 记录"上游未发 [DONE] 哨兵即结束"的 debug 日志。

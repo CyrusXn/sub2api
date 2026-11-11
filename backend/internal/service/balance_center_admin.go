@@ -284,6 +284,10 @@ func (s *BalanceCenterService) CreateRechargeEvent(ctx context.Context, event *B
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := s.repository.(balanceCenterUpstreamReminderRepository); ok {
+		created, _, err := s.CreateBalanceCenterRechargeEventWithReminder(ctx, event)
+		return created, err
+	}
 	return repository.CreateBalanceCenterRechargeEvent(ctx, event)
 }
 

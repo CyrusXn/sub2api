@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -50,6 +51,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	}
 	applyOpenAICompatModelNormalization(&anthropicReq)
 	clientStream := anthropicReq.Stream
+	if clientStream {
+		ensureTextStreamTimingForRequest(c, startTime)
+	}
 
 	// 2. Anthropic → Chat Completions (direct, no Responses intermediary)
 	chatReq, err := apicompat.AnthropicToChatCompletionsRequestWithMinOutputTokens(
@@ -194,6 +198,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	serviceTier *string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	ensureTextStreamTimingForRequest(c, startTime)
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 
@@ -228,6 +233,10 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	usage := scan.Usage
 
 	if scan.Err != nil {
+		var failover *UpstreamFailoverError
+		if errors.As(scan.Err, &failover) {
+			return nil, failover
+		}
 		// Broken upstream read: skip finalization so no synthetic message_stop
 		// masks the truncation, and surface the error to flag usage incomplete
 		// (mirrors forwardResponsesViaRawChatCompletions).
@@ -244,6 +253,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			Stream:                      true,
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
+			FirstPacketMs:               TextStreamFirstPacketMs(c),
 			ClientDisconnect:            clientDisconnected,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
@@ -281,6 +291,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 		Stream:                      true,
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                scan.FirstTokenMs,
+		FirstPacketMs:               TextStreamFirstPacketMs(c),
 		ClientDisconnect:            clientDisconnected,
 	}, nil
 }

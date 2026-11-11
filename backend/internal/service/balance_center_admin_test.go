@@ -14,6 +14,31 @@ type balanceCenterAdminRepositoryStub struct {
 	createdEvent *BalanceCenterRechargeEvent
 }
 
+type balanceCenterRechargeReminderRepositoryStub struct {
+	*balanceCenterAdminRepositoryStub
+	UpstreamSiteBalanceReminderRepository
+	reminder *UpstreamSiteBalanceReminder
+}
+
+func (r *balanceCenterRechargeReminderRepositoryStub) CreateBalanceCenterRechargeEventWithReminder(_ context.Context, item *BalanceCenterRechargeEvent) (*BalanceCenterRechargeEvent, *UpstreamSiteBalanceReminder, error) {
+	created := *item
+	r.createdEvent = &created
+	return &created, r.reminder, nil
+}
+
+type balanceCenterReminderBusStub struct {
+	events []UpstreamSiteBalanceReminderEvent
+}
+
+func (b *balanceCenterReminderBusStub) PublishUpstreamSiteBalanceReminder(_ context.Context, event UpstreamSiteBalanceReminderEvent) error {
+	b.events = append(b.events, event)
+	return nil
+}
+
+func (*balanceCenterReminderBusStub) SubscribeUpstreamSiteBalanceReminders(context.Context) (<-chan UpstreamSiteBalanceReminderEvent, error) {
+	return make(chan UpstreamSiteBalanceReminderEvent), nil
+}
+
 func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterOverview(context.Context) ([]BalanceCenterOverviewItem, error) {
 	return nil, nil
 }
@@ -118,6 +143,26 @@ func TestBalanceCenterCreateRechargeEventAcceptsSubscription(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "subscription", repo.createdEvent.RecordType)
+}
+
+func TestBalanceCenterCreateRechargeEventPublishesResolutionForMatchingReminder(t *testing.T) {
+	host := "site.example"
+	repo := &balanceCenterRechargeReminderRepositoryStub{
+		balanceCenterAdminRepositoryStub: &balanceCenterAdminRepositoryStub{},
+		reminder:                         &UpstreamSiteBalanceReminder{Host: host},
+	}
+	bus := &balanceCenterReminderBusStub{}
+	svc := NewBalanceCenterService(repo, nil)
+	svc.SetUpstreamSiteBalanceReminderBus(bus)
+	siteID := int64(7)
+
+	_, err := svc.CreateRechargeEvent(context.Background(), &BalanceCenterRechargeEvent{
+		SourceKey: "recharge-1", SiteID: &siteID, Amount: 10,
+		OccurredAt: time.Now().UTC(), RecordType: "recharge",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []UpstreamSiteBalanceReminderEvent{{Type: "resolved", Host: host}}, bus.events)
 }
 
 func TestBalanceCenterCreateRechargeEventRejectsUnknownRecordType(t *testing.T) {

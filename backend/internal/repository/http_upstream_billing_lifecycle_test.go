@@ -53,6 +53,10 @@ func (w *lifecycleDisconnectedWriter) Write([]byte) (int, error) {
 	return 0, errors.New("client disconnected")
 }
 
+func (w *lifecycleDisconnectedWriter) WriteString(value string) (int, error) {
+	return w.Write([]byte(value))
+}
+
 // Exercise the real forwarding and RecordUsage services with the real HTTP
 // upstream. Only the persistence boundary is replaced: closing an attempt must
 // not cancel the detached stream before its final usage reaches billing.

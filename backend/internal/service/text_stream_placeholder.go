@@ -33,6 +33,7 @@ type textStreamTiming struct {
 	realOutput         bool
 	firstPacketMs      *int
 	bytes              int
+	protocolWriter     bool
 }
 
 // SetTextStreamRequestStart 只保存计时元数据；通过鉴权并进入生成时才启用占位。
@@ -94,7 +95,11 @@ func ensureTextStreamTiming(c *gin.Context, started time.Time) *textStreamTiming
 		})
 		state.placeholderFrame = "data: " + string(payload) + "\n\n"
 	}
+	if c.Request != nil && strings.Contains(c.Request.URL.Path, "/v1beta/models/") {
+		state.placeholderFrame = "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" \"}]}}]}\n\n"
+	}
 	c.Set(textStreamTimingKey, state)
+	installTextStreamProtocolWriter(c, state)
 	return state
 }
 
@@ -245,7 +250,9 @@ func startTextStreamReadDeadline(c *gin.Context, body io.Closer, started time.Ti
 
 func recordTextStreamPacket(c *gin.Context) {
 	if state := textStreamTimingFromContext(c); state != nil {
-		state.recordPacket()
+		if !state.protocolWriter {
+			state.recordPacket()
+		}
 	}
 }
 
@@ -264,6 +271,34 @@ func writeTextStreamPlaceholder(c *gin.Context, w gin.ResponseWriter) bool {
 	return writeTextStreamPlaceholderFrame(c, w, state.placeholderFrame)
 }
 
+// 等待响应头阶段复用现有串行移交写入权的保活器，避免并发写 Gin。
+func withTextStreamHeaderKeepalive(c *gin.Context, send func() (*http.Response, error)) (*http.Response, error) {
+	if state := textStreamTimingFromContext(c); state != nil {
+		state.mu.Lock()
+		pending := state.placeholderEnabled && !state.placeholder && !state.realOutput
+		state.mu.Unlock()
+		if pending {
+			stop := startOpenAISSEKeepalive(c, TextStreamPlaceholderDelay)
+			defer stop()
+		}
+	}
+	return send()
+}
+
+func withAntigravityTextStreamHeaderKeepalive(c *gin.Context) func() {
+	state := textStreamTimingFromContext(c)
+	if state == nil {
+		return func() {}
+	}
+	state.mu.Lock()
+	pending := state.placeholderEnabled && !state.placeholder && !state.realOutput
+	state.mu.Unlock()
+	if !pending {
+		return func() {}
+	}
+	return startOpenAISSEKeepalive(c, TextStreamPlaceholderDelay)
+}
+
 func writeTextStreamPlaceholderFrame(c *gin.Context, w gin.ResponseWriter, frame string) bool {
 	state := textStreamTimingFromContext(c)
 	if state == nil || !state.reservePlaceholder() {
@@ -273,14 +308,21 @@ func writeTextStreamPlaceholderFrame(c *gin.Context, w gin.ResponseWriter, frame
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	n, err := w.WriteString(frame)
-	state.mu.Lock()
-	state.bytes += n
-	state.mu.Unlock()
+	if !state.protocolWriter {
+		state.mu.Lock()
+		state.bytes += n
+		state.mu.Unlock()
+	}
 	if err != nil {
 		return false
 	}
 	w.Flush()
-	state.recordPacket()
+	if n != len(frame) {
+		return false
+	}
+	if !state.protocolWriter {
+		state.recordPacket()
+	}
 	return true
 }
 

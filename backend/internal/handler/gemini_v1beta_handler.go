@@ -388,7 +388,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 	if stream {
-		service.SetTextStreamSemanticTrackingStart(c, requestStart, modelName)
+		service.SetTextStreamRequestStart(c, requestStart, modelName)
 	}
 
 	setOpsRequestContext(c, modelName, stream)

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -11,10 +12,12 @@ import (
 )
 
 type balanceCenterServiceRepositoryStub struct {
-	mu         sync.Mutex
-	snapshotID int64
-	state      BalanceCenterAlertState
-	deliveries []*BalanceCenterAlertDeliveryInput
+	mu                 sync.Mutex
+	snapshotID         int64
+	state              BalanceCenterAlertState
+	deliveries         []*BalanceCenterAlertDeliveryInput
+	thresholdAccountID int64
+	thresholdValue     float64
 }
 
 func (r *balanceCenterServiceRepositoryStub) persistedCount() int64 {
@@ -43,6 +46,17 @@ func (r *balanceCenterServiceRepositoryStub) SaveAlertState(_ context.Context, _
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state = cloneBalanceCenterAlertState(state)
+	return nil
+}
+
+func (r *balanceCenterServiceRepositoryStub) SetNextLowBalanceThreshold(_ context.Context, identityKey string, accountID int64, threshold float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if identityKey != fmt.Sprintf("account:%d", accountID) {
+		return errors.New("identity mismatch")
+	}
+	r.thresholdAccountID = accountID
+	r.thresholdValue = threshold
 	return nil
 }
 
@@ -133,6 +147,70 @@ func TestEvaluateBalanceCenterAlertsLowBalanceLifecycle(t *testing.T) {
 	}, 5)
 	require.Empty(t, decisions, "阈值边界不属于低余额")
 	require.False(t, next.LowBalanceActive, "恢复后只静默重置")
+}
+
+func TestEvaluateBalanceCenterAlertsUsesNextLowBalanceThresholdOnce(t *testing.T) {
+	baseThreshold := 10.0
+	nextThreshold := 5.0
+	state := BalanceCenterAlertState{LowBalanceActive: true, LowBalanceThreshold: &baseThreshold, NextLowBalanceThreshold: &nextThreshold}
+
+	decisions, next := EvaluateBalanceCenterAlerts(state, BalanceCenterSuccessfulSnapshot{
+		ConvertedBalance: float64Ptr(5),
+	}, 10)
+	require.Len(t, decisions, 1)
+	require.Equal(t, BalanceCenterAlertLowBalance, decisions[0].Type)
+	require.Equal(t, 5.0, *decisions[0].Threshold)
+	require.Equal(t, 5.0, *next.NextLowBalanceThreshold)
+	require.True(t, next.LowBalanceActive)
+	next = AcceptBalanceCenterAlert(next, decisions[0])
+	require.Nil(t, next.NextLowBalanceThreshold)
+	require.Equal(t, 10.0, *next.LowBalanceThreshold)
+
+	decisions, unchanged := EvaluateBalanceCenterAlerts(next, BalanceCenterSuccessfulSnapshot{
+		ConvertedBalance: float64Ptr(4),
+	}, 10)
+	require.Empty(t, decisions)
+	require.True(t, unchanged.LowBalanceActive)
+}
+
+func TestEvaluateBalanceCenterAlertsDoesNotRepeatWithoutNextThreshold(t *testing.T) {
+	state := BalanceCenterAlertState{LowBalanceActive: true, LowBalanceThreshold: float64Ptr(10)}
+	decisions, next := EvaluateBalanceCenterAlerts(state, BalanceCenterSuccessfulSnapshot{
+		ConvertedBalance: float64Ptr(1),
+	}, 10)
+	require.Empty(t, decisions)
+	require.True(t, next.LowBalanceActive)
+}
+
+func TestEvaluateBalanceCenterAlertsClearsNextThresholdAfterBalanceRecovers(t *testing.T) {
+	state := BalanceCenterAlertState{LowBalanceActive: true, LowBalanceThreshold: float64Ptr(10), NextLowBalanceThreshold: float64Ptr(5)}
+	decisions, next := EvaluateBalanceCenterAlerts(state, BalanceCenterSuccessfulSnapshot{
+		ConvertedBalance: float64Ptr(10),
+	}, 10)
+	require.Empty(t, decisions)
+	require.False(t, next.LowBalanceActive)
+	require.Nil(t, next.LowBalanceThreshold)
+	require.Nil(t, next.NextLowBalanceThreshold)
+}
+
+func TestEvaluateBalanceCenterAlertsKeepsActiveCycleThresholdWhenGlobalSettingChanges(t *testing.T) {
+	state := BalanceCenterAlertState{LowBalanceActive: true, LowBalanceThreshold: float64Ptr(10), NextLowBalanceThreshold: float64Ptr(5)}
+	decisions, next := EvaluateBalanceCenterAlerts(state, BalanceCenterSuccessfulSnapshot{
+		ConvertedBalance: float64Ptr(8),
+	}, 7)
+	require.Empty(t, decisions)
+	require.True(t, next.LowBalanceActive)
+	require.Equal(t, 5.0, *next.NextLowBalanceThreshold)
+}
+
+func TestBalanceCenterServiceSchedulesNextThresholdForSpecificAccount(t *testing.T) {
+	repo := &balanceCenterServiceRepositoryStub{}
+	svc := NewBalanceCenterService(repo, nil)
+	require.NoError(t, svc.SetNextLowBalanceThreshold(context.Background(), 17, 5))
+	require.Equal(t, int64(17), repo.thresholdAccountID)
+	require.Equal(t, 5.0, repo.thresholdValue)
+	require.Error(t, svc.SetNextLowBalanceThreshold(context.Background(), 0, 5))
+	require.Error(t, svc.SetNextLowBalanceThreshold(context.Background(), 17, -1))
 }
 
 func TestEvaluateBalanceCenterAlertsMultiplierLifecycle(t *testing.T) {

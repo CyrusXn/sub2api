@@ -3,13 +3,16 @@ package admin
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 type balanceCenterAdminService interface {
@@ -40,13 +43,111 @@ type balanceCenterAccountProber interface {
 
 // BalanceCenterHandler 提供只面向管理员的余额中心接口。
 type BalanceCenterHandler struct {
-	service      balanceCenterAdminService
-	prober       balanceCenterAccountProber
-	interactions *service.GeminiInteractionService
+	service       balanceCenterAdminService
+	prober        balanceCenterAccountProber
+	interactions  *service.GeminiInteractionService
+	reminders     balanceCenterUpstreamReminderService
+	nextThreshold balanceCenterNextThresholdService
+}
+
+type balanceCenterUpstreamReminderService interface {
+	ListUpstreamSiteBalanceReminderSnapshot(context.Context) ([]service.UpstreamSiteBalanceReminder, map[string]int64, error)
+	SubscribeUpstreamSiteBalanceReminders(context.Context) (<-chan service.UpstreamSiteBalanceReminderEvent, error)
+}
+
+type balanceCenterNextThresholdService interface {
+	SetNextLowBalanceThreshold(context.Context, int64, float64) error
+}
+
+var balanceCenterReminderUpgrader = websocket.Upgrader{
+	CheckOrigin:  func(r *http.Request) bool { return isAllowedOpsWSOrigin(r) },
+	Subprotocols: []string{"sub2api-admin"},
 }
 
 func NewBalanceCenterHandler(balanceService *service.BalanceCenterService, prober *service.UpstreamBillingProbeService, interactions *service.GeminiInteractionService) *BalanceCenterHandler {
-	return &BalanceCenterHandler{service: balanceService, prober: prober, interactions: interactions}
+	return &BalanceCenterHandler{service: balanceService, prober: prober, interactions: interactions, reminders: balanceService, nextThreshold: balanceService}
+}
+
+func (h *BalanceCenterHandler) SetNextLowBalanceThreshold(c *gin.Context) {
+	if h == nil || h.nextThreshold == nil {
+		response.Error(c, http.StatusServiceUnavailable, "余额提醒服务不可用")
+		return
+	}
+	var input struct {
+		AccountID int64    `json:"account_id"`
+		Threshold *float64 `json:"threshold"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil || input.AccountID <= 0 || input.Threshold == nil {
+		response.BadRequest(c, "账号或下一提醒阈值无效")
+		return
+	}
+	if err := h.nextThreshold.SetNextLowBalanceThreshold(c.Request.Context(), input.AccountID, *input.Threshold); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"account_id": input.AccountID, "threshold": *input.Threshold, "scheduled": true})
+}
+
+func (h *BalanceCenterHandler) UpstreamSiteBalanceReminderWS(c *gin.Context) {
+	if h == nil || h.reminders == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "余额提醒服务不可用"})
+		return
+	}
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	events, err := h.reminders.SubscribeUpstreamSiteBalanceReminders(ctx)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "余额提醒推送暂不可用"})
+		return
+	}
+	active, versions, err := h.reminders.ListUpstreamSiteBalanceReminderSnapshot(ctx)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "余额提醒状态暂不可用"})
+		return
+	}
+	conn, err := balanceCenterReminderUpgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(service.UpstreamSiteBalanceReminderEvent{Type: "snapshot", Reminders: active, Versions: versions}); err != nil {
+		return
+	}
+
+	readDone := make(chan struct{})
+	conn.SetReadLimit(1024)
+	_ = conn.SetReadDeadline(time.Now().Add(70 * time.Second))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(70 * time.Second)) })
+	go func() {
+		defer close(readDone)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-readDone:
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if err := conn.WriteJSON(event); err != nil {
+				logger.LegacyPrintf("handler.admin.balance_center", "upstream_balance_reminder_ws_write_failed: error_type=%T", err)
+				return
+			}
+		case <-ping.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (h *BalanceCenterHandler) Overview(c *gin.Context) {

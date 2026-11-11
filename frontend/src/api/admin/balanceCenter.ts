@@ -1,4 +1,100 @@
-import { apiClient } from '../client'
+import { apiClient, buildGatewayUrl } from '../client'
+
+export interface UpstreamSiteBalanceReminder {
+  host: string
+  display_name: string
+  old_balance: number
+  new_balance: number
+  delta: number
+  currency: string
+  detected_at: string
+  version: number
+}
+
+export interface UpstreamSiteBalanceReminderEvent {
+  type: 'snapshot' | 'upsert' | 'resolved'
+  reminders?: UpstreamSiteBalanceReminder[]
+  versions?: Record<string, number>
+  reminder?: UpstreamSiteBalanceReminder
+  host?: string
+  version?: number
+}
+
+export interface SubscribeUpstreamSiteBalanceRemindersOptions {
+  token?: string | null
+  onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting' | 'offline') => void
+  reconnectBaseDelayMs?: number
+  reconnectMaxDelayMs?: number
+  wsBaseUrl?: string
+}
+
+export function subscribeUpstreamSiteBalanceReminders(
+  onEvent: (event: UpstreamSiteBalanceReminderEvent) => void,
+  options: SubscribeUpstreamSiteBalanceRemindersOptions = {}
+): () => void {
+  let socket: WebSocket | null = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectAttempts = 0
+  let stopped = false
+  const baseDelay = options.reconnectBaseDelayMs ?? 1000
+  const maxDelay = options.reconnectMaxDelayMs ?? 30000
+
+  const connect = () => {
+    if (stopped) return
+    options.onStatusChange?.(reconnectAttempts === 0 ? 'connecting' : 'reconnecting')
+    const wsBaseUrl = options.wsBaseUrl || import.meta.env.VITE_WS_BASE_URL
+    const url = wsBaseUrl
+      ? new URL(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${wsBaseUrl}/api/v1/admin/balance-center/upstream-site-reminders/ws`)
+      : new URL(buildGatewayUrl('/api/v1/admin/balance-center/upstream-site-reminders/ws').replace(/^http/, 'ws'))
+    const token = String(options.token ?? localStorage.getItem('auth_token') ?? '').trim()
+    const protocols = ['sub2api-admin']
+    if (token) protocols.push(`jwt.${token}`)
+    socket = new WebSocket(url.toString(), protocols)
+    socket.onopen = () => {
+      reconnectAttempts = 0
+      options.onStatusChange?.('connected')
+    }
+    socket.onmessage = (message) => {
+      try {
+        const event = JSON.parse(String(message.data)) as UpstreamSiteBalanceReminderEvent
+        if (event.type === 'snapshot' || event.type === 'resolved' || (event.type === 'upsert' && event.reminder)) {
+          onEvent(event)
+        }
+      } catch {
+        // 忽略格式异常的通知帧；活动状态会在下次连接时从服务端快照恢复。
+      }
+    }
+    socket.onclose = () => {
+      socket = null
+      if (stopped) return
+      if (typeof navigator !== 'undefined' && 'onLine' in navigator && !navigator.onLine) {
+        options.onStatusChange?.('offline')
+        return
+      }
+      const delay = Math.min(baseDelay * 2 ** Math.min(reconnectAttempts, 8), maxDelay)
+      reconnectAttempts += 1
+      reconnectTimer = setTimeout(connect, delay + Math.floor(Math.random() * 250))
+    }
+    socket.onerror = () => socket?.close()
+  }
+
+  const handleOnline = () => {
+    if (stopped || (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING))) return
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = null
+    connect()
+  }
+
+  window.addEventListener('online', handleOnline)
+  connect()
+  return () => {
+    stopped = true
+    window.removeEventListener('online', handleOnline)
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    socket?.close()
+    socket = null
+  }
+}
 
 export interface BalanceCenterSettings {
   enabled: boolean
@@ -151,6 +247,12 @@ export interface BalanceCenterAsset {
 }
 
 export const balanceCenterAPI = {
+  async setNextLowBalanceThreshold(accountId: number, threshold: number) {
+    return (await apiClient.post(`${base}/alerts/next-threshold`, {
+      account_id: accountId,
+      threshold,
+    })).data
+  },
   async assets() {
     return (await apiClient.get<BalanceCenterAsset[]>(`${base}/assets`)).data
   },

@@ -4,6 +4,7 @@
     <div class="app-atmosphere pointer-events-none fixed inset-0"></div>
 
     <AdminQuickActions v-if="isAdmin" />
+    <UpstreamBalanceReminder v-if="isAdmin" />
 
     <!-- Sidebar -->
     <AppSidebar />
@@ -34,6 +35,7 @@ import { useOnboardingStore } from '@/stores/onboarding'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
 import AdminQuickActions from './AdminQuickActions.vue'
+import UpstreamBalanceReminder from '@/components/admin/balance/UpstreamBalanceReminder.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()

@@ -345,8 +345,8 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				// Can't failover if streaming content already sent
-				if c.Writer.Size() != writerSizeBeforeForward {
+				// 协议空格只提交占位首字；真实语义内容到达前仍允许切号。
+				if c.Writer.Size() != writerSizeBeforeForward && !service.TextStreamAwaitingOutput(c) {
 					h.handleResponsesFailoverExhausted(c, failoverErr, true)
 					return
 				}

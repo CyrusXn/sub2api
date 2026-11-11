@@ -143,7 +143,12 @@ func handleStreamReadError(err error, clientDisconnected bool, prefix string) (d
 }
 
 func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time) (*antigravityStreamResult, error) {
-	SetTextStreamSemanticTrackingStart(c, startTime, "")
+	SetTextStreamRequestStart(c, startTime, "")
+	ensureTextStreamTimingForRequest(c, startTime)
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
+	}
 	if upstreamResponseModelObserverFromContext(c) == nil {
 		beginUpstreamResponseModelObservation(c)
 	}
@@ -368,6 +373,10 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity)")
 			sendErrorEvent("stream_timeout")
 			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+
+		case <-placeholderCh:
+			writeGeminiWhitespacePlaceholder(c, false, flusher)
+			placeholderCh = nil
 
 		case <-keepaliveCh:
 			if cw.Disconnected() {

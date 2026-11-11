@@ -148,6 +148,8 @@ func registerBalanceCenterRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	balanceCenter := admin.Group("/balance-center")
 	{
 		balanceCenter.GET("/overview", h.Admin.BalanceCenter.Overview)
+		balanceCenter.POST("/alerts/next-threshold", h.Admin.BalanceCenter.SetNextLowBalanceThreshold)
+		balanceCenter.GET("/upstream-site-reminders/ws", h.Admin.BalanceCenter.UpstreamSiteBalanceReminderWS)
 		balanceCenter.GET("/interactions", h.Admin.BalanceCenter.InteractionReviews)
 		balanceCenter.POST("/interactions/:id/resolve", h.Admin.BalanceCenter.ResolveInteractionReview)
 		// 资产校正与订阅查询仅开放给管理员，保持充值记录独立。

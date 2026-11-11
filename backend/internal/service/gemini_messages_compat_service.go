@@ -545,6 +545,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("missing model")
 	}
+	if req.Stream && textStreamRequestEligible("/v1/messages", req.Model, body) {
+		ensureTextStreamTimingForRequest(c, startTime)
+	}
 
 	originalModel := req.Model
 	mappedModel := req.Model
@@ -738,7 +741,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		}
 		requestIDHeader = idHeader
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = withTextStreamHeaderKeepalive(c, func() (*http.Response, error) {
+			return s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		})
 		if err != nil {
 			return nil, s.handleUpstreamTransportError(ctx, c, account, err)
 		}
@@ -1097,6 +1102,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	beginUpstreamResponseModelObservation(c)
 	beginGeminiImageOutputObservation(c)
 	startTime := time.Now()
+	if stream && textStreamRequestEligible("/v1beta/models", originalModel, body) {
+		ensureTextStreamTimingForRequest(c, startTime)
+	}
 
 	if strings.TrimSpace(originalModel) == "" {
 		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Missing model in URL")
@@ -1292,7 +1300,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		}
 		requestIDHeader = idHeader
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = withTextStreamHeaderKeepalive(c, func() (*http.Response, error) {
+			return s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		})
 		if err != nil {
 			transportErr := s.handleUpstreamTransportError(ctx, c, account, err)
 			// countTokens 不因上游链路故障而失败：本地估算兜底，不换号。
@@ -2365,10 +2375,6 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 						firstTokenMs = &ms
 					}
 				}
-				if strings.TrimSpace(delta) != "" {
-					markTextStreamRealOutput(c)
-				}
-				recordTextStreamPacket(c)
 				writeSSE(c.Writer, "content_block_delta", map[string]any{
 					"type":  "content_block_delta",
 					"index": openBlockIndex,
@@ -2378,6 +2384,10 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					},
 				})
 				flusher.Flush()
+				if strings.TrimSpace(delta) != "" {
+					markTextStreamRealOutput(c)
+				}
+				recordTextStreamPacket(c)
 				continue
 			}
 			if text, ok := part["text"].(string); ok && text != "" {
@@ -2429,10 +2439,6 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 						firstTokenMs = &ms
 					}
 				}
-				if strings.TrimSpace(delta) != "" {
-					markTextStreamRealOutput(c)
-				}
-				recordTextStreamPacket(c)
 				writeSSE(c.Writer, "content_block_delta", map[string]any{
 					"type":  "content_block_delta",
 					"index": openBlockIndex,
@@ -2442,6 +2448,10 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					},
 				})
 				flusher.Flush()
+				if strings.TrimSpace(delta) != "" {
+					markTextStreamRealOutput(c)
+				}
+				recordTextStreamPacket(c)
 				continue
 			}
 
@@ -2480,8 +2490,6 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					nextBlockIndex++
 					sawToolUse = true
 					writeMessageStart()
-					markTextStreamRealOutput(c)
-					recordTextStreamPacket(c)
 					if firstTokenMs == nil {
 						ms := int(time.Since(startTime).Milliseconds())
 						firstTokenMs = &ms
@@ -2497,6 +2505,9 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 							"input": map[string]any{},
 						},
 					})
+					flusher.Flush()
+					markTextStreamRealOutput(c)
+					recordTextStreamPacket(c)
 				}
 
 				argsJSONText := "{}"
@@ -2959,6 +2970,10 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Co
 
 func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, isOAuth bool, account *Account, upstreamRequestID string) (*geminiNativeStreamResult, error) {
 	ensureTextStreamTimingForRequest(c, startTime)
+	placeholderTimer, placeholderCh := textStreamPlaceholderTimer(c)
+	if placeholderTimer != nil {
+		defer placeholderTimer.Stop()
+	}
 	if s.cfg != nil && s.cfg.Gateway.GeminiDebugResponseHeaders {
 		logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] ========== Streaming Response Headers ==========")
 		for key, values := range resp.Header {
@@ -2990,6 +3005,26 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	}
 
 	reader := newBoundedSSELineReader(resp.Body, s.cfg)
+	type nativeReadResult struct {
+		line string
+		err  error
+	}
+	lines := make(chan nativeReadResult)
+	readDone := make(chan struct{})
+	defer close(readDone)
+	go func() {
+		for {
+			line, err := reader.ReadLineString()
+			select {
+			case lines <- nativeReadResult{line, err}:
+			case <-readDone:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	usage := &ClaudeUsage{}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -3003,7 +3038,16 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	finished := false
 
 	for {
-		line, err := reader.ReadLineString()
+		var line string
+		var err error
+		select {
+		case result := <-lines:
+			line, err = result.line, result.err
+		case <-placeholderCh:
+			writeGeminiWhitespacePlaceholder(c, isOAuth, flusher)
+			placeholderCh = nil
+			continue
+		}
 		// 读错误时 line 是未以换行结尾的残行，不透传也不参与用量统计；EOF 时的末行完整有效。
 		if len(line) > 0 && (err == nil || errors.Is(err, io.EOF)) {
 			trimmed := strings.TrimRight(line, "\r\n")
@@ -3046,14 +3090,6 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					}
 
 					semanticOutput := geminiPayloadHasSemanticOutput(rawBytes)
-					if semanticOutput {
-						markTextStreamRealOutput(c)
-						if firstTokenMs == nil {
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
-						}
-					}
-					recordTextStreamPacket(c)
 
 					if isOAuth {
 						// SSE format requires double newline (\n\n) to separate events
@@ -3063,6 +3099,14 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 						_, _ = io.WriteString(c.Writer, line)
 					}
 					flusher.Flush()
+					if semanticOutput {
+						markTextStreamRealOutput(c)
+						if firstTokenMs == nil {
+							ms := int(time.Since(startTime).Milliseconds())
+							firstTokenMs = &ms
+						}
+						recordTextStreamPacket(c)
+					}
 				}
 			} else {
 				if !sawDataEvent {
@@ -3095,6 +3139,22 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	s.finalizeGeminiSSESignal(c, account, true, upstreamRequestID, best, sawDataEvent, fallback)
 
 	return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnect, finished: finished}, nil
+}
+
+func writeGeminiWhitespacePlaceholder(c *gin.Context, isOAuth bool, flusher http.Flusher) {
+	_ = isOAuth
+	state := textStreamTimingFromContext(c)
+	if state == nil || !state.reservePlaceholder() {
+		return
+	}
+	payload := `{"candidates":[{"content":{"role":"model","parts":[{"text":" "}]}}]}`
+	frame := "data: " + payload + "\n\n"
+	n, err := io.WriteString(c.Writer, frame)
+	if err != nil || n != len(frame) {
+		return
+	}
+	flusher.Flush()
+	state.recordPacket()
 }
 
 func geminiPayloadHasSemanticOutput(raw []byte) bool {

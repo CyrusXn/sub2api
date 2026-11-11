@@ -34,7 +34,12 @@ func (s *GatewayService) ForwardAsResponses(
 	account *Account,
 	body []byte,
 	parsed *ParsedRequest,
-) (*ForwardResult, error) {
+) (result *ForwardResult, err error) {
+	defer func() {
+		if result != nil && result.Stream {
+			result.FirstPacketMs = TextStreamFirstPacketMs(c)
+		}
+	}()
 	startTime := time.Now()
 
 	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngressWithConfig(s.cfg, body)
@@ -146,7 +151,12 @@ func (s *GatewayService) ForwardAsResponses(
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
 
 	// 11. Send request
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if clientStream && textStreamRequestEligible("/v1/responses", originalModel, body) {
+		ensureTextStreamTimingForRequest(c, startTime)
+	}
+	resp, err := withTextStreamHeaderKeepalive(c, func() (*http.Response, error) {
+		return s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	})
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
@@ -195,7 +205,6 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 13. Handle normal response (convert Anthropic → Responses)
-	var result *ForwardResult
 	var handleErr error
 	if clientStream {
 		writerSizeBeforeStream := c.Writer.Size()
@@ -645,6 +654,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 		if len(events) > 0 {
 			c.Writer.Flush()
+			if anthropicEventHasSemanticOutput(event) {
+				recordTextStreamPacket(c)
+			}
 		}
 	}
 

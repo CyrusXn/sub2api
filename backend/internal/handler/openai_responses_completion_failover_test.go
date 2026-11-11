@@ -112,7 +112,7 @@ func TestOpenAIResponsesSwitchesAccountAfterFakeFirstOutput(t *testing.T) {
 				require.Contains(t, rec.Body.String(), "healthy-output")
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
 				if keepalive {
-					require.True(t, strings.HasPrefix(rec.Body.String(), ":"), "已提交心跳仍应成功切号")
+					require.True(t, strings.Contains(rec.Body.String(), `"delta":" "`), "占位空格已交付后仍应成功切号")
 				}
 			})
 		}

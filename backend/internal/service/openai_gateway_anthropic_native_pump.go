@@ -31,6 +31,8 @@ var errAnthropicNativeStreamIdle = errors.New("stream data interval timeout")
 // 调用方可继续读取。
 var errAnthropicNativeClientGone = errors.New("client gone")
 
+var errAnthropicNativePlaceholderTick = errors.New("text placeholder due")
+
 // anthropicNativeLineEvent 是行泵交付的单次读取结果：line 为一行 SSE 文本，
 // err 为 scanner 读错误（流自然结束时 next 返回 io.EOF，不经过本字段）。
 type anthropicNativeLineEvent struct {
@@ -96,6 +98,10 @@ func (p *anthropicNativeLinePump) next() (string, error) {
 // nextOrClientGone 与 next 相同，另在等待期间 clientGone 关闭时返回
 // errAnthropicNativeClientGone。clientGone 为 nil 时不监听。
 func (p *anthropicNativeLinePump) nextOrClientGone(clientGone <-chan struct{}) (string, error) {
+	return p.nextOrPlaceholder(clientGone, nil)
+}
+
+func (p *anthropicNativeLinePump) nextOrPlaceholder(clientGone <-chan struct{}, placeholder <-chan time.Time) (string, error) {
 	var timeoutCh <-chan time.Time
 	if p.timer != nil {
 		timeoutCh = p.timer.C
@@ -112,6 +118,8 @@ func (p *anthropicNativeLinePump) nextOrClientGone(clientGone <-chan struct{}) (
 		}
 	case <-clientGone:
 		return "", errAnthropicNativeClientGone
+	case <-placeholder:
+		return "", errAnthropicNativePlaceholderTick
 	}
 }
 

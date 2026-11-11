@@ -32,7 +32,12 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	account *Account,
 	body []byte,
 	parsed *ParsedRequest,
-) (*ForwardResult, error) {
+) (result *ForwardResult, err error) {
+	defer func() {
+		if result != nil && result.Stream {
+			result.FirstPacketMs = TextStreamFirstPacketMs(c)
+		}
+	}()
 	startTime := time.Now()
 
 	// 1. Parse Chat Completions request
@@ -135,7 +140,12 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
 
 	// 11. Send request
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if clientStream && textStreamRequestEligible("/v1/chat/completions", originalModel, body) {
+		ensureTextStreamTimingForRequest(c, startTime)
+	}
+	resp, err := withTextStreamHeaderKeepalive(c, func() (*http.Response, error) {
+		return s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	})
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
@@ -184,7 +194,6 @@ func (s *GatewayService) ForwardAsChatCompletions(
 
 	// 13. Handle normal response
 	// Read Anthropic SSE → convert to Responses events → convert to CC format
-	var result *ForwardResult
 	var handleErr error
 	if clientStream {
 		writerSizeBeforeStream := c.Writer.Size()
@@ -489,6 +498,10 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			}
 		}
 		c.Writer.Flush()
+		if anthropicEventHasSemanticOutput(event) {
+			markTextStreamRealOutput(c)
+			recordTextStreamPacket(c)
+		}
 	}
 
 	for {

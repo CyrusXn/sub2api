@@ -46,7 +46,10 @@ type anthropicCompatStream struct {
 	upstreamErrMessage string
 	upstreamErrPayload string
 	// readErr 是上游流结束的原因（io.EOF、读错误或 errAnthropicNativeStreamIdle）。
-	readErr error
+	readErr          error
+	c                *gin.Context
+	placeholderTimer *time.Timer
+	placeholderCh    <-chan time.Time
 }
 
 // anthropicCompatStreamFailure 描述客户端在线时上游流未正常结束的原因：
@@ -76,10 +79,15 @@ func newAnthropicCompatStream(cfg *config.Config, c *gin.Context, resp *http.Res
 	if c.Request != nil {
 		stream.clientGone = c.Request.Context().Done()
 	}
+	stream.c = c
+	stream.placeholderTimer, stream.placeholderCh = textStreamPlaceholderTimer(c)
 	return stream
 }
 
 func (st *anthropicCompatStream) stop() {
+	if st.placeholderTimer != nil {
+		st.placeholderTimer.Stop()
+	}
 	st.pump.stop()
 }
 
@@ -102,7 +110,14 @@ func (st *anthropicCompatStream) markClientDisconnected() {
 // 上游流结束时请求 ctx 已取消的，按客户端已断开收尾。
 func (st *anthropicCompatStream) nextLine() (string, bool) {
 	for {
-		line, err := st.pump.nextOrClientGone(st.clientGone)
+		line, err := st.pump.nextOrPlaceholder(st.clientGone, st.placeholderCh)
+		if errors.Is(err, errAnthropicNativePlaceholderTick) {
+			st.placeholderCh = nil
+			if !st.clientDisconnected {
+				writeTextStreamPlaceholder(st.c, st.c.Writer)
+			}
+			continue
+		}
 		if err == nil {
 			if payload, ok := extractOpenAISSEDataLine(line); ok && strings.TrimSpace(payload) == "[DONE]" {
 				st.sawTerminal = true
@@ -219,6 +234,9 @@ func (st *anthropicCompatStream) failure() *anthropicCompatStreamFailure {
 // handler 换号重试。其余失败写出终止错误，并带上已观测到的 usage；未观测到任何
 // usage 时结果为 nil。
 func finishAnthropicCompatStreamFailure(c *gin.Context, writerSizeBeforeStream int, failure *anthropicCompatStreamFailure, result *ForwardResult, writeFailure func()) (*ForwardResult, error) {
+	if TextStreamAwaitingOutput(c) || (textStreamPlaceholderCommitted(c) && !textStreamHasRealOutput(c)) {
+		return nil, newTextStreamReadFailoverError(failure.err)
+	}
 	var sseErr *sseStreamErrorEventError
 	if errors.As(failure.err, &sseErr) {
 		if c.Writer.Size() != writerSizeBeforeStream {

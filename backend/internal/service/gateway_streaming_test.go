@@ -230,7 +230,7 @@ func TestHandleStreamingResponse_FailsOverAfterPlaceholderBeforeSemanticOutput(t
 
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr, "占位属于首字计时，不应阻止首字前切号")
-	require.Contains(t, rec.Body.String(), ": \n\n", "等待期间应发送一次占位")
+	require.Contains(t, rec.Body.String(), `"text":" "`, "等待期间应发送协议内空格占位")
 	require.True(t, TextStreamAwaitingOutput(c), "占位不能标记为语义回答")
 }
 

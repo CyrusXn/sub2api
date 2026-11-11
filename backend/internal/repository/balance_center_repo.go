@@ -134,11 +134,11 @@ func (r *balanceCenterRepository) GetAlertState(ctx context.Context, identityKey
 		return service.BalanceCenterAlertState{}, errors.New("余额中心仓储未初始化")
 	}
 	var lowBalanceActive bool
-	var multiplier sql.NullFloat64
+	var lowBalanceThreshold, nextLowBalanceThreshold, multiplier sql.NullFloat64
 	err := r.db.QueryRowContext(ctx, `
-SELECT low_balance_active, multiplier_baseline
+SELECT low_balance_active, low_balance_threshold, next_low_balance_threshold, multiplier_baseline
 FROM balance_center_alert_states
-WHERE identity_key = $1`, identityKey).Scan(&lowBalanceActive, &multiplier)
+WHERE identity_key = $1`, identityKey).Scan(&lowBalanceActive, &lowBalanceThreshold, &nextLowBalanceThreshold, &multiplier)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.BalanceCenterAlertState{}, nil
 	}
@@ -146,6 +146,14 @@ WHERE identity_key = $1`, identityKey).Scan(&lowBalanceActive, &multiplier)
 		return service.BalanceCenterAlertState{}, fmt.Errorf("读取余额告警状态失败: %w", err)
 	}
 	state := service.BalanceCenterAlertState{LowBalanceActive: lowBalanceActive}
+	if lowBalanceThreshold.Valid {
+		value := lowBalanceThreshold.Float64
+		state.LowBalanceThreshold = &value
+	}
+	if nextLowBalanceThreshold.Valid {
+		value := nextLowBalanceThreshold.Float64
+		state.NextLowBalanceThreshold = &value
+	}
 	if multiplier.Valid {
 		value := multiplier.Float64
 		state.MultiplierBaseline = &value
@@ -167,33 +175,71 @@ func (r *balanceCenterRepository) SaveAlertState(
 		return errors.New("余额中心仓储未初始化")
 	}
 	var alertType any
+	var alertThreshold any
 	if decision != nil && strings.TrimSpace(decision.Type) != "" {
 		alertType = decision.Type
+		alertThreshold = decision.Threshold
 	}
 	// CASE 的时间参数必须显式声明类型，避免 PostgreSQL 按文本推断而阻断后续邮件入队。
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO balance_center_alert_states (
-    identity_key, site_id, account_id, low_balance_active, multiplier_baseline,
+    identity_key, site_id, account_id, low_balance_active, low_balance_threshold,
+    next_low_balance_threshold, multiplier_baseline,
     last_success_snapshot_id, low_balance_notified_at, multiplier_notified_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6,
-    CASE WHEN $7::text = 'low_balance' THEN $8::timestamptz ELSE NULL END,
-    CASE WHEN $7::text = 'multiplier_changed' THEN $8::timestamptz ELSE NULL END
+    $1, $2, $3, $4, $5, $6, $7, $8,
+    CASE WHEN $9::text = 'low_balance' THEN $10::timestamptz ELSE NULL END,
+    CASE WHEN $9::text = 'multiplier_changed' THEN $10::timestamptz ELSE NULL END
 )
 ON CONFLICT (identity_key) DO UPDATE SET
     site_id = EXCLUDED.site_id,
     account_id = EXCLUDED.account_id,
     low_balance_active = EXCLUDED.low_balance_active,
+    low_balance_threshold = EXCLUDED.low_balance_threshold,
+    next_low_balance_threshold = CASE
+        WHEN $9::text = 'low_balance'
+         AND balance_center_alert_states.next_low_balance_threshold = $11
+        THEN NULL
+        WHEN EXCLUDED.low_balance_active = FALSE THEN NULL
+        ELSE balance_center_alert_states.next_low_balance_threshold
+    END,
     multiplier_baseline = EXCLUDED.multiplier_baseline,
     last_success_snapshot_id = EXCLUDED.last_success_snapshot_id,
-    low_balance_notified_at = CASE WHEN $7::text = 'low_balance' THEN $8::timestamptz ELSE balance_center_alert_states.low_balance_notified_at END,
-    multiplier_notified_at = CASE WHEN $7::text = 'multiplier_changed' THEN $8::timestamptz ELSE balance_center_alert_states.multiplier_notified_at END,
+    low_balance_notified_at = CASE WHEN $9::text = 'low_balance' THEN $10::timestamptz ELSE balance_center_alert_states.low_balance_notified_at END,
+    multiplier_notified_at = CASE WHEN $9::text = 'multiplier_changed' THEN $10::timestamptz ELSE balance_center_alert_states.multiplier_notified_at END,
     updated_at = NOW()`,
-		identityKey, siteID, accountID, state.LowBalanceActive, state.MultiplierBaseline,
-		snapshotID, alertType, now,
+		identityKey, siteID, accountID, state.LowBalanceActive, state.LowBalanceThreshold,
+		state.NextLowBalanceThreshold, state.MultiplierBaseline, snapshotID, alertType, now, alertThreshold,
 	)
 	if err != nil {
 		return fmt.Errorf("保存余额告警状态失败: %w", err)
+	}
+	return nil
+}
+
+func (r *balanceCenterRepository) SetNextLowBalanceThreshold(ctx context.Context, identityKey string, accountID int64, threshold float64) error {
+	if r == nil || r.db == nil {
+		return errors.New("余额中心仓储未初始化")
+	}
+	result, err := r.db.ExecContext(ctx, `
+UPDATE balance_center_alert_states AS alert
+SET next_low_balance_threshold = $3, updated_at = NOW()
+FROM balance_center_current_states AS balance_snapshot
+WHERE alert.identity_key = $1
+  AND alert.account_id = $2
+  AND alert.low_balance_active = TRUE
+  AND balance_snapshot.identity_key = alert.identity_key
+  AND balance_snapshot.converted_balance > $3
+  AND alert.low_balance_threshold > $3`, identityKey, accountID, threshold)
+	if err != nil {
+		return fmt.Errorf("保存下一低余额提醒阈值失败: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("确认下一低余额提醒阈值失败: %w", err)
+	}
+	if rows != 1 {
+		return errors.New("当前账号没有有效的低余额告警，或阈值未低于当前余额及本轮阈值")
 	}
 	return nil
 }

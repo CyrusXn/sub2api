@@ -56,22 +56,24 @@ func TestBalanceCenterRepositoryGetAndSaveAlertState(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT low_balance_active, multiplier_baseline")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT low_balance_active, low_balance_threshold, next_low_balance_threshold, multiplier_baseline")).
 		WithArgs("account:17").
-		WillReturnRows(sqlmock.NewRows([]string{"low_balance_active", "multiplier_baseline"}).AddRow(true, 0.1))
+		WillReturnRows(sqlmock.NewRows([]string{"low_balance_active", "low_balance_threshold", "next_low_balance_threshold", "multiplier_baseline"}).AddRow(true, 10.0, 5.0, 0.1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO balance_center_alert_states")).
-		WithArgs("account:17", int64(9), int64(17), true, 0.2, int64(21), service.BalanceCenterAlertMultiplierChanged, now).
+		WithArgs("account:17", int64(9), int64(17), true, 10.0, 5.0, 0.2, int64(21), service.BalanceCenterAlertMultiplierChanged, now, nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAlertRepository)
 	state, err := repo.GetAlertState(context.Background(), "account:17", 9, int64Ptr(17))
 	require.NoError(t, err)
 	require.True(t, state.LowBalanceActive)
+	require.Equal(t, 10.0, *state.LowBalanceThreshold)
+	require.Equal(t, 5.0, *state.NextLowBalanceThreshold)
 	require.Equal(t, 0.1, *state.MultiplierBaseline)
 
 	decision := &service.BalanceCenterAlertDecision{Type: service.BalanceCenterAlertMultiplierChanged, NewValue: float64Ptr(0.2)}
 	err = repo.SaveAlertState(context.Background(), "account:17", 9, int64Ptr(17), 21, service.BalanceCenterAlertState{
-		LowBalanceActive: true, MultiplierBaseline: float64Ptr(0.2),
+		LowBalanceActive: true, LowBalanceThreshold: float64Ptr(10), NextLowBalanceThreshold: float64Ptr(5), MultiplierBaseline: float64Ptr(0.2),
 	}, decision, now)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -82,7 +84,7 @@ func TestBalanceCenterRepositoryGetAlertStateReturnsEmptyWhenMissing(t *testing.
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT low_balance_active, multiplier_baseline")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT low_balance_active, low_balance_threshold, next_low_balance_threshold, multiplier_baseline")).
 		WithArgs("account:17").
 		WillReturnError(sql.ErrNoRows)
 
@@ -90,7 +92,22 @@ func TestBalanceCenterRepositoryGetAlertStateReturnsEmptyWhenMissing(t *testing.
 	state, err := repo.GetAlertState(context.Background(), "account:17", 9, int64Ptr(17))
 	require.NoError(t, err)
 	require.False(t, state.LowBalanceActive)
+	require.Nil(t, state.LowBalanceThreshold)
+	require.Nil(t, state.NextLowBalanceThreshold)
 	require.Nil(t, state.MultiplierBaseline)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterRepositorySchedulesNextThresholdOnlyForActiveAccount(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE balance_center_alert_states AS alert")).
+		WithArgs("account:17", int64(17), 5.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAlertRepository)
+	require.NoError(t, repo.SetNextLowBalanceThreshold(context.Background(), "account:17", 17, 5))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

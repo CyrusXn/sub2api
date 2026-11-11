@@ -9,6 +9,13 @@ export default {
     lowBalanceThreshold: 'Low balance threshold',
     alertSettingsSaved: 'Low balance alert settings saved',
     invalidLowBalanceThreshold: 'The low balance threshold must be a number greater than or equal to 0',
+    reminder: {
+      title: 'Upstream balance increase to record',
+      increased: 'Balance increased',
+      recordRecharge: 'Record the recharge for this site in Balance Center. This reminder clears after the record is saved.',
+      collapse: 'Collapse reminders',
+      expand: 'Expand reminders'
+    },
     addRecharge: 'Add recharge',
     addRechargeHint: 'Enter an amount and press Enter. The current second is used by default.',
     rechargeAt: 'Recharge time',

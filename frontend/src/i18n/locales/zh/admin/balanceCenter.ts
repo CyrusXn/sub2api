@@ -9,6 +9,13 @@ export default {
     lowBalanceThreshold: '低余额阈值',
     alertSettingsSaved: '低余额告警设置已保存',
     invalidLowBalanceThreshold: '低余额阈值必须是大于或等于 0 的数字',
+    reminder: {
+      title: '上游余额增加待补记',
+      increased: '余额增加',
+      recordRecharge: '请在余额中心记录对应站点充值，记录成功后此提醒会自动移除。',
+      collapse: '收起提醒',
+      expand: '展开提醒'
+    },
     addRecharge: '新增充值',
     addRechargeHint: '输入金额后按回车即可添加，时间默认精确到当前秒。',
     rechargeAt: '充值时间',

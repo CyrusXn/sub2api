@@ -1215,6 +1215,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 								markTextStreamRealOutput(c)
 							}
 							flusher.Flush()
+							if data != "" && sseEventHasSemanticOutput(data) {
+								recordTextStreamPacket(c)
+							}
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
 						}
