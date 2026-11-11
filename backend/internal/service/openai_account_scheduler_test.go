@@ -295,6 +295,9 @@ func newOpenAIAdvancedSchedulerRateLimitService(enabled string, values ...string
 	if len(values) > 1 && values[1] != "" {
 		repo.values[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] = values[1]
 	}
+	if len(values) > 2 && values[2] != "" {
+		repo.values[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = values[2]
+	}
 	return &RateLimitService{
 		settingService: NewSettingService(repo, &config.Config{}),
 	}

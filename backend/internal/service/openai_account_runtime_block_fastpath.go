@@ -121,6 +121,18 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	}
 	// 容量不足不永久摘号，但本模型短暂冷却，后续请求优先使用其他账号。
 	if account != nil && account.Platform == PlatformOpenAI && isOpenAIRequestScopedCapacityShed("", responseBody) {
+		// An explicit model-scoped rule overrides the default retry policy without
+		// turning a request-level overload into an account-wide health failure.
+		model := firstRequestedModel(canonicalModel)
+		if s != nil && s.rateLimitService != nil && model != "" && account.IsTempUnschedulableEnabled() {
+			ruleBody := openAICapacityShedRuleBody(responseBody)
+			matches := matchTempUnschedulableRules(account, statusCode, ruleBody)
+			if len(matches) > 0 && matches[0].rule.Scope == TempUnschedScopeModel {
+				stateCtx, cancel := openAIAccountStateContext(ctx)
+				defer cancel()
+				return s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, ruleBody, model)
+			}
+		}
 		s.coolOpenAIAccountModelAfterFailure(ctx, account, firstNonEmpty(canonicalModel...), false)
 		return false
 	}

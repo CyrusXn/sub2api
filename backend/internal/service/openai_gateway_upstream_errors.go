@@ -486,6 +486,10 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 	)
 	// 只有调用方明确完成本次模型状态处理才跳过回报兜底；空响应等错误仍需计数。
 	failoverErr.OpenAIModelFailureHandled = len(modelFailureHandled) > 0 && modelFailureHandled[0]
+	if shouldDisable && account != nil && account.Platform == PlatformOpenAI && failoverErr.RequestScopedTransient {
+		// A configured model cooldown takes precedence over capacity-shed replay.
+		failoverErr.RetryableOnSameAccount = false
+	}
 	if oauth429Retry {
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
