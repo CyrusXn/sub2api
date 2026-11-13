@@ -1697,7 +1697,7 @@ func (s *GeminiMessagesCompatService) geminiMaxAttemptsPerAccount() int {
 
 func (s *GeminiMessagesCompatService) shouldRetryGeminiUpstreamError(account *Account, statusCode int) bool {
 	switch statusCode {
-	case 429, 500, 502, 503, 504, 529:
+	case 429, 529:
 		return true
 	case 403:
 		// GeminiCli OAuth occasionally returns 403 transiently (activation/quota propagation); allow retry.
@@ -1715,6 +1715,25 @@ func (s *GeminiMessagesCompatService) shouldRetryGeminiUpstreamError(account *Ac
 	}
 }
 
+const geminiUpstreamServerErrorCooldown = time.Minute
+const geminiUpstreamServerErrorStateWriteTimeout = 5 * time.Second
+
+func (s *GeminiMessagesCompatService) cooldownGeminiUpstreamServerError(ctx context.Context, account *Account, statusCode int) {
+	if s == nil || s.accountRepo == nil || account == nil ||
+		!isGeminiUpstreamServerError(statusCode) || account.IsCustomErrorCodesEnabled() {
+		return
+	}
+	stateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), geminiUpstreamServerErrorStateWriteTimeout)
+	defer cancel()
+	until := time.Now().Add(geminiUpstreamServerErrorCooldown)
+	reason := fmt.Sprintf("Gemini upstream server error (%d): temporary cooldown", statusCode)
+	if err := s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, until, reason); err != nil {
+		logger.LegacyPrintf("service.gemini_messages_compat", "Gemini 账号 %d：上游 %d 后写入冷却失败：%v", account.ID, statusCode, err)
+		return
+	}
+	logger.LegacyPrintf("service.gemini_messages_compat", "Gemini 账号 %d：上游 %d 后冷却 %s，交由网关换号", account.ID, statusCode, geminiUpstreamServerErrorCooldown)
+}
+
 func (s *GeminiMessagesCompatService) shouldFailoverGeminiUpstreamError(statusCode int) bool {
 	switch statusCode {
 	case 401, 403, 404, 429, 529:
@@ -1726,11 +1745,15 @@ func (s *GeminiMessagesCompatService) shouldFailoverGeminiUpstreamError(statusCo
 
 // skippedErrorPolicyFailoverError 命中 ErrorPolicySkipped（池模式、或自定义错误码未命中）
 // 时构造 failover 错误：可 failover 的状态码返回 UpstreamFailoverError，交给 handler 层换号
-// （池模式账号按 pool_mode_retry_count 先同账号重试）；返回 nil 表示状态码不可 failover，
+// （池模式仅对显式配置且非 5xx 的状态按 pool_mode_retry_count 同账号重试）；返回 nil 表示状态码不可 failover，
 // 由调用方决定客户端写出。Skipped 只豁免账号状态标记，不豁免换号，与 OpenAI 网关路径一致。
 func (s *GeminiMessagesCompatService) skippedErrorPolicyFailoverError(c *gin.Context, account *Account, statusCode int, respBody []byte, upstreamRequestID string) *UpstreamFailoverError {
 	if !s.shouldFailoverGeminiUpstreamError(statusCode) {
 		return nil
+	}
+	// 上游服务端错误首次失败即冷却换号，避免池模式重试让用户反复命中故障账号。
+	if account.IsPoolMode() && !account.IsCustomErrorCodesEnabled() && isGeminiUpstreamServerError(statusCode) {
+		s.cooldownGeminiUpstreamServerError(c.Request.Context(), account, statusCode)
 	}
 	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 	upstreamDetail := s.upstreamErrorDetail(respBody)
@@ -1749,8 +1772,13 @@ func (s *GeminiMessagesCompatService) skippedErrorPolicyFailoverError(c *gin.Con
 	return &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           respBody,
-		RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode),
+		RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode) && !isGeminiUpstreamServerError(statusCode),
 	}
+}
+
+func isGeminiUpstreamServerError(statusCode int) bool {
+	// 529 保留已有全局过载冷却策略。
+	return statusCode >= http.StatusInternalServerError && statusCode <= 599 && statusCode != 529
 }
 
 // boundCacheUpstreamPassthroughError 构造绑定显式缓存的请求在上游网关账号上收到 429 / 5xx 时的 failover 错误。
@@ -3336,6 +3364,10 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	}
 	if s.rateLimitService != nil && (statusCode == 401 || statusCode == 403 || statusCode == 529) {
 		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
+		return
+	}
+	if isGeminiUpstreamServerError(statusCode) && !account.IsCustomErrorCodesEnabled() {
+		s.cooldownGeminiUpstreamServerError(ctx, account, statusCode)
 		return
 	}
 	if statusCode != 429 {

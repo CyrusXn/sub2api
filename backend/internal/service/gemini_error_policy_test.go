@@ -404,7 +404,7 @@ func TestSkippedErrorPolicyFailoverError(t *testing.T) {
 		{"pool_429_failover_with_same_account_retry", poolAccount(nil), 429, true, true},
 		{"pool_custom_retry_codes_500", poolAccount(map[string]any{
 			"pool_mode_retry_status_codes": []any{float64(500)},
-		}), 500, true, true},
+		}), 500, true, false},
 		{"pool_400_not_failover_worthy", poolAccount(nil), 400, false, false},
 		{"custom_codes_miss_500_failover_no_same_account_retry", customCodesAccount, 500, true, false},
 		{"custom_codes_miss_400_not_failover_worthy", customCodesAccount, 400, false, false},

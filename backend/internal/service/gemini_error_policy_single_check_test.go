@@ -29,11 +29,13 @@ import (
 type geminiSingleCheckRepoStub struct {
 	errorPolicyRepoStub
 	tempReason string
+	tempUntil  time.Time
 }
 
-func (r *geminiSingleCheckRepoStub) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, reason string) error {
+func (r *geminiSingleCheckRepoStub) SetTempUnschedulable(_ context.Context, _ int64, until time.Time, reason string) error {
 	r.tempCalls++
 	r.tempReason = reason
+	r.tempUntil = until
 	return nil
 }
 
@@ -177,9 +179,9 @@ func TestGeminiForward_UncheckedFinalResponseIsCheckedAfterLoop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("包含一次 1s 的重试退避")
 	}
-	// 第一次 503 在循环内检查后重试；第二次非签名 400 走 Claude 兼容层的签名分支，循环内不检查。
+	// 第一次 429 在循环内检查后重试；第二次非签名 400 走 Claude 兼容层的签名分支，循环内不检查。
 	svc, upstream, repo := newGeminiSingleCheckService(
-		geminiSequenceUpstreamResponse{status: http.StatusServiceUnavailable, body: `{"error":{"code":503,"message":"backend busy","status":"UNAVAILABLE"}}`},
+		geminiSequenceUpstreamResponse{status: http.StatusTooManyRequests, body: `{"error":{"code":429,"message":"backend busy","status":"RESOURCE_EXHAUSTED"}}`},
 		geminiSequenceUpstreamResponse{status: http.StatusBadRequest, body: `{"error":{"code":400,"message":"quota project misconfigured","status":"FAILED_PRECONDITION"}}`},
 	)
 	svc.cfg.Gateway.MaxSameAccountRetriesGemini = 1
