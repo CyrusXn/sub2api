@@ -364,7 +364,9 @@
               :model-mappings="modelMappings"
               :platform="account?.platform || 'anthropic'"
               :account-id="account?.id"
+              :sync-credentials="syncPreviewCredentials"
               :show-sync-button="account.platform !== 'grok' || !account.id"
+              @upstream-synced="upstreamModelsPreviewed = true"
               @upstream-sync-finished="refreshGrokDiagnostics"
             />
 
@@ -1228,7 +1230,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :sync-credentials="syncPreviewCredentials" @upstream-synced="upstreamModelsPreviewed = true" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -3925,6 +3927,7 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+const upstreamModelsPreviewed = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -4660,6 +4663,29 @@ const defaultBaseUrl = computed(() => {
   return 'https://api.anthropic.com'
 })
 
+// 新密钥只用于本次模型预览，不提前保存账号；留空仍使用已保存的凭据。
+const syncPreviewCredentials = computed(() => {
+  const apiKey = editApiKey.value.trim()
+  if (!props.account || !apiKey) return undefined
+  const baseUrl = isCNApiKeyAccount.value && editApiProtocol.value === 'adaptive'
+    ? editAdaptiveBaseUrls.value.chat_completions.trim() || defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, currentOpenCodeOrCNMode()).chat_completions
+    : editBaseUrl.value.trim() || defaultBaseUrl.value
+  return {
+    platform: props.account.platform,
+    type: props.account.type,
+    base_url: baseUrl,
+    api_key: apiKey,
+    ...(isCNApiKeyAccount.value ? {
+      api_protocol: editApiProtocol.value,
+      account_mode: currentOpenCodeOrCNMode(),
+    } : {}),
+  }
+})
+
+watch(syncPreviewCredentials, () => {
+  upstreamModelsPreviewed.value = false
+})
+
 const mixedChannelWarningMessageText = computed(() => {
   if (mixedChannelWarningDetails.value) {
     return t('admin.accounts.mixedChannelWarning', mixedChannelWarningDetails.value)
@@ -4765,6 +4791,7 @@ const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>
 }
 
 const syncFormFromAccount = (newAccount: Account | null) => {
+  upstreamModelsPreviewed.value = false
   if (!newAccount) {
     return
   }
@@ -5789,9 +5816,23 @@ const persistGrokMediaEligibility = async (accountID: number, updatedAccount: Ac
 
 const submitUpdateAccount = async (accountID: number, updatePayload: Record<string, unknown>) => {
   submitting.value = true
+  const shouldSyncPreviewedModels = upstreamModelsPreviewed.value
   try {
     let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
     updatedAccount = await persistGrokMediaEligibility(accountID, updatedAccount)
+    // 预览不写入旧账号；保存新凭据后再更新服务端受管的模型目录和能力快照。
+    if (shouldSyncPreviewedModels) {
+      try {
+        const result = await adminAPI.accounts.syncUpstreamModels(accountID)
+        if (result.warnings?.some(warning => warning.code === 'upstream_model_metadata_incomplete')) {
+          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
+        } else if (result.warnings?.some(warning => warning.code === 'upstream_model_metadata_partial')) {
+          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
+        }
+      } catch {
+        appStore.showWarning(t('admin.accounts.syncUpstreamModelsFailed'))
+      }
+    }
     let subscriptionProbeFailed = false
     if (isFishSubscriptionAccount.value && subscriptionRate.enabled) {
       try {

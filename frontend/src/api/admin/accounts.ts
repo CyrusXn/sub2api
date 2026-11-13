@@ -668,15 +668,18 @@ export async function syncUpstreamModels(id: number): Promise<SyncUpstreamModels
 }
 
 export interface SyncUpstreamPreviewParams {
+  account_id?: number
   platform: string
   type: string
   base_url?: string
   api_key: string
+  api_protocol?: string
+  account_mode?: string
   model_mapping?: Record<string, string>
 }
 
 /**
- * Preview upstream models without a saved account (create-flow)
+ * 使用当前输入预览模型；编辑时可继承已保存账号的连接配置，不写入账号。
  * @param params - Connection credentials
  * @returns List of model IDs returned by the upstream
  */

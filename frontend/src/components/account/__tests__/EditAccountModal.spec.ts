@@ -7,10 +7,12 @@ import {
   setPlatformCatalog
 } from '@/constants/platformCatalog'
 
-const { updateAccountMock, checkMixedChannelRiskMock, listAccountsMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, listAccountsMock, syncUpstreamModelsMock, showWarningMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   listAccountsMock: vi.fn(),
+  syncUpstreamModelsMock: vi.fn(),
+  showWarningMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
 
@@ -18,7 +20,8 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
-    showInfo: vi.fn()
+    showInfo: vi.fn(),
+    showWarning: showWarningMock
   })
 }))
 
@@ -35,7 +38,8 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       update: updateAccountMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock,
-      list: listAccountsMock
+      list: listAccountsMock,
+      syncUpstreamModels: syncUpstreamModelsMock
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -77,13 +81,14 @@ const BaseDialogStub = defineComponent({
 const ModelWhitelistSelectorStub = defineComponent({
   name: 'ModelWhitelistSelector',
   props: {
+    syncCredentials: { type: Object, default: undefined },
     modelMappings: { type: Array, default: () => [] },
     modelValue: {
       type: Array,
       default: () => []
     }
   },
-  emits: ['update:modelValue'],
+  emits: ['update:modelValue', 'upstream-synced'],
   template: `
     <div>
       <button
@@ -352,6 +357,81 @@ function mountModal(account = buildAccount(), renderGroupSelector = false, rende
 }
 
 describe('EditAccountModal', () => {
+  it('自适应协议模型预览使用当前 Chat Completions 地址', async () => {
+    const account = buildAccount()
+    account.platform = 'deepseek'
+    account.credentials = {
+      api_protocol: 'adaptive', account_mode: 'payg',
+      base_url: 'https://old.example/v1',
+      api_base_urls: { chat_completions: 'https://old.example/v1' }
+    }
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const urlInput = wrapper.findAll('input').find(input => (input.element as HTMLInputElement).value === 'https://old.example/v1')!
+    await urlInput.setValue('https://new.example/v1')
+    await wrapper.get('input[type="password"]').setValue('test-new-key')
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('syncCredentials')?.base_url).toBe('https://new.example/v1')
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('预览成功后保存账号再持久化模型能力，处理同步失败=%s', async failed => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    syncUpstreamModelsMock.mockReset()
+    showWarningMock.mockReset()
+    if (failed) syncUpstreamModelsMock.mockRejectedValue(new Error('test sync failed'))
+    else syncUpstreamModelsMock.mockResolvedValue({ models: ['new-key-model'] })
+    const wrapper = mountModal(account)
+    await wrapper.get('input[placeholder="sk-proj-..."]').setValue('test-new-key')
+    wrapper.getComponent(ModelWhitelistSelectorStub).vm.$emit('upstream-synced')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledOnce()
+    expect(syncUpstreamModelsMock).toHaveBeenCalledWith(account.id)
+    expect(updateAccountMock.mock.invocationCallOrder[0]).toBeLessThan(syncUpstreamModelsMock.mock.invocationCallOrder[0])
+    expect(wrapper.emitted('updated')).toHaveLength(1)
+    if (failed) expect(showWarningMock).toHaveBeenCalledWith('admin.accounts.syncUpstreamModelsFailed')
+    wrapper.unmount()
+  })
+
+  it('预览后又修改密钥时，不在保存时沿用过期预览标记', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const keyInput = wrapper.get('input[placeholder="sk-proj-..."]')
+    await keyInput.setValue('test-preview-key')
+    wrapper.getComponent(ModelWhitelistSelectorStub).vm.$emit('upstream-synced')
+    await keyInput.setValue('test-different-key')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(syncUpstreamModelsMock).not.toHaveBeenCalled()
+    expect(wrapper.emitted('updated')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('模型同步凭据跟随输入的新密钥和地址，清空密钥后恢复已保存账号同步', async () => {
+    const wrapper = mountModal()
+    const selector = wrapper.getComponent(ModelWhitelistSelectorStub)
+    expect(selector.props('syncCredentials')).toBeUndefined()
+
+    await wrapper.get('input[placeholder="sk-proj-..."]').setValue('  test-new-key  ')
+    expect(selector.props('syncCredentials')).toMatchObject({
+      platform: 'openai', type: 'apikey', api_key: 'test-new-key', base_url: 'https://api.openai.com'
+    })
+
+    const urlInput = wrapper.findAll('input').find(input => (input.element as HTMLInputElement).value === 'https://api.openai.com')!
+    await urlInput.setValue('https://new.example/v1')
+    expect(selector.props('syncCredentials')?.base_url).toBe('https://new.example/v1')
+    await wrapper.get('input[placeholder="sk-proj-..."]').setValue('test-newest-key')
+    expect(selector.props('syncCredentials')?.api_key).toBe('test-newest-key')
+    await wrapper.get('input[placeholder="sk-proj-..."]').setValue('   ')
+    expect(selector.props('syncCredentials')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('身份回复默认留空，不按分组强制填回', async () => {
     const account = buildAccount()
     account.groups = [{ id: 9, name: '【GPT】真官Key', platform: 'openai' }]
@@ -489,6 +569,8 @@ describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
     listAccountsMock.mockReset().mockResolvedValue({ items: [] })
+    syncUpstreamModelsMock.mockReset()
+    showWarningMock.mockReset()
   })
 
   it('loads and submits the account settlement multiplier', async () => {

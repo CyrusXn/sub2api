@@ -166,12 +166,7 @@ const props = withDefaults(defineProps<{
   platform?: string
   platforms?: string[]
   accountId?: number
-  syncCredentials?: {
-    platform: string
-    type: string
-    base_url?: string
-    api_key: string
-  }
+  syncCredentials?: SyncUpstreamPreviewParams
   showSyncButton?: boolean
 }>(), { showSyncButton: true })
 
@@ -192,7 +187,15 @@ const isSyncingUpstream = ref(false)
 let upstreamSyncVersion = 0
 
 watch(
-  () => props.accountId,
+  [
+    () => props.accountId,
+    () => props.syncCredentials?.platform,
+    () => props.syncCredentials?.type,
+    () => props.syncCredentials?.base_url,
+    () => props.syncCredentials?.api_key,
+    () => props.syncCredentials?.api_protocol,
+    () => props.syncCredentials?.account_mode,
+  ],
   () => {
     upstreamSyncVersion += 1
     isSyncingUpstream.value = false
@@ -317,10 +320,14 @@ const syncUpstreamModels = async () => {
   isSyncingUpstream.value = true
   try {
     let result
-    if (accountId) {
+    // 编辑时的新凭据优先于账号 ID，避免读取数据库里尚未更新的旧密钥。
+    if (previewCredentials) {
+      result = await accountsAPI.syncUpstreamModelsPreview({
+        ...previewCredentials,
+        ...(accountId ? { account_id: accountId } : {}),
+      } as SyncUpstreamPreviewParams)
+    } else if (accountId) {
       result = await accountsAPI.syncUpstreamModels(accountId)
-    } else if (previewCredentials) {
-      result = await accountsAPI.syncUpstreamModelsPreview(previewCredentials as SyncUpstreamPreviewParams)
     } else {
       return
     }
@@ -337,7 +344,7 @@ const syncUpstreamModels = async () => {
       return
     }
 
-    if (!accountId) {
+    if (previewCredentials) {
       emit('upstream-synced')
     }
 
@@ -377,7 +384,7 @@ const syncUpstreamModels = async () => {
   } finally {
     if (isCurrentSync()) {
       isSyncingUpstream.value = false
-      if (accountId) {
+      if (accountId && !previewCredentials) {
         emit('upstream-sync-finished')
       }
     }

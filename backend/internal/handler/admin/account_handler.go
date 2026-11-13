@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -3318,10 +3319,13 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 // POST /api/v1/admin/accounts/models/sync-upstream-preview
 func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	var req struct {
+		AccountID    *int64            `json:"account_id" binding:"omitempty,gt=0"`
 		Platform     string            `json:"platform" binding:"required"`
 		Type         string            `json:"type" binding:"required"`
 		BaseURL      string            `json:"base_url"`
 		APIKey       string            `json:"api_key" binding:"required"`
+		APIProtocol  string            `json:"api_protocol" binding:"omitempty,oneof=adaptive anthropic chat_completions responses"`
+		AccountMode  string            `json:"account_mode"`
 		ModelMapping map[string]string `json:"model_mapping"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3334,13 +3338,51 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	}
 
 	tempAccount := &service.Account{
-		Platform: req.Platform,
-		Type:     req.Type,
-		Credentials: map[string]any{
-			"api_key":       req.APIKey,
-			"base_url":      req.BaseURL,
-			"model_mapping": modelMapping,
-		},
+		Platform:    req.Platform,
+		Type:        req.Type,
+		Credentials: make(map[string]any),
+	}
+	if req.AccountID != nil {
+		account, err := h.adminService.GetAccount(c.Request.Context(), *req.AccountID)
+		if err != nil || account == nil {
+			response.NotFound(c, "Account not found")
+			return
+		}
+		if account.Platform != req.Platform || account.Type != req.Type ||
+			(account.Type != service.AccountTypeAPIKey && account.Type != service.AccountTypeUpstream) {
+			response.BadRequest(c, "Preview account platform or type does not match")
+			return
+		}
+		// 继承代理、鉴权方式和请求头等连接上下文，副本 ID 归零以禁止预览落库。
+		preview := *account
+		preview.ID = 0
+		preview.Credentials = make(map[string]any, len(account.Credentials)+2)
+		for key, value := range account.Credentials {
+			preview.Credentials[key] = value
+		}
+		preview.Extra = maps.Clone(account.Extra)
+		tempAccount = &preview
+	}
+	tempAccount.Credentials["api_key"] = req.APIKey
+	tempAccount.Credentials["base_url"] = req.BaseURL
+	if req.APIProtocol != "" {
+		tempAccount.Credentials["api_protocol"] = req.APIProtocol
+	}
+	if req.AccountMode != "" {
+		tempAccount.Credentials["account_mode"] = req.AccountMode
+	}
+	if tempAccount.IsMultiProtocolAPIKey() && tempAccount.IsAdaptiveAPIProtocol() {
+		// 模型发现读取 Chat Completions 地址，不能被副本里旧的分协议地址覆盖。
+		baseURLs, _ := tempAccount.Credentials["api_base_urls"].(map[string]any)
+		previewBaseURLs := maps.Clone(baseURLs)
+		if previewBaseURLs == nil {
+			previewBaseURLs = make(map[string]any)
+		}
+		previewBaseURLs[service.APIProtocolChatCompletions] = req.BaseURL
+		tempAccount.Credentials["api_base_urls"] = previewBaseURLs
+	}
+	if req.ModelMapping != nil {
+		tempAccount.Credentials["model_mapping"] = modelMapping
 	}
 
 	if h.accountTestService == nil {

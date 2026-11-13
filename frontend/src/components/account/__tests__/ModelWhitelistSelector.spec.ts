@@ -345,6 +345,86 @@ describe('ModelWhitelistSelector', () => {
     expect(wrapper.emitted('update:modelValue')).toEqual([[['x-preview-f-free']]])
   })
 
+  it('编辑账号时优先使用当前输入的凭据预览模型，不读取保存过的密钥', async () => {
+    const credentials = {
+      platform: 'openai', type: 'apikey', base_url: 'https://new.example/v1', api_key: 'test-edited-key'
+    }
+    syncUpstreamModelsPreview.mockResolvedValue({ models: ['new-key-model'] })
+    const wrapper = mountSelector({ accountId: 46, syncCredentials: credentials, modelValue: ['existing-model'] })
+    await syncButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(syncUpstreamModelsPreview).toHaveBeenCalledWith({ ...credentials, account_id: 46 })
+    expect(syncUpstreamModels).not.toHaveBeenCalled()
+    expect(wrapper.emitted('update:modelValue')).toEqual([[['existing-model', 'new-key-model']]])
+    expect(wrapper.emitted('upstream-sync-finished')).toBeUndefined()
+    expect(wrapper.emitted('upstream-synced')).toEqual([[]])
+    wrapper.unmount()
+  })
+
+  it('修改密钥后忽略旧账号请求结果，并允许立即用新密钥同步', async () => {
+    const oldRequest = deferred<any>()
+    const newRequest = deferred<any>()
+    syncUpstreamModels.mockReturnValue(oldRequest.promise)
+    syncUpstreamModelsPreview.mockReturnValue(newRequest.promise)
+    const wrapper = mountSelector({ accountId: 46 })
+    await syncButton(wrapper).trigger('click')
+
+    const credentials = { platform: 'openai', type: 'apikey', api_key: 'test-new-key' }
+    await wrapper.setProps({ syncCredentials: credentials })
+    await syncButton(wrapper).trigger('click')
+    expect(syncUpstreamModelsPreview).toHaveBeenCalledWith({ ...credentials, account_id: 46 })
+
+    oldRequest.resolve({ models: ['old-key-model'] })
+    await flushPromises()
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.vm.isSyncingUpstream).toBe(true)
+
+    newRequest.resolve({ models: ['new-key-model'] })
+    await flushPromises()
+    expect(wrapper.emitted('update:modelValue')).toEqual([[['new-key-model']]])
+    expect(wrapper.vm.isSyncingUpstream).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each(['api_key', 'base_url'] as const)('预览期间修改 %s 后忽略过期错误', async field => {
+    const pending = deferred<any>()
+    syncUpstreamModelsPreview.mockReturnValue(pending.promise)
+    const credentials = { platform: 'openai', type: 'apikey', base_url: 'https://old.example/v1', api_key: 'test-key' }
+    const wrapper = mountSelector({ syncCredentials: credentials })
+    await syncButton(wrapper).trigger('click')
+    await wrapper.setProps({ syncCredentials: { ...credentials, [field]: 'test-changed-value' } })
+    pending.reject({ message: 'old credentials failure' })
+    await flushPromises()
+
+    expect(showError).not.toHaveBeenCalled()
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.vm.isSyncingUpstream).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['api_protocol', 'responses'],
+    ['account_mode', 'coding'],
+  ] as const)('地址和密钥不变，仅修改 %s 后忽略过期预览结果', async (field, value) => {
+    const pending = deferred<any>()
+    syncUpstreamModelsPreview.mockReturnValue(pending.promise)
+    const credentials = {
+      platform: 'deepseek', type: 'apikey', base_url: 'https://custom.example/v1',
+      api_key: 'test-key', api_protocol: 'adaptive', account_mode: 'payg'
+    }
+    const wrapper = mountSelector({ accountId: 46, syncCredentials: credentials })
+    await syncButton(wrapper).trigger('click')
+    await wrapper.setProps({ syncCredentials: { ...credentials, [field]: value } })
+    pending.resolve({ models: ['outdated-model'] })
+    await flushPromises()
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.emitted('upstream-synced')).toBeUndefined()
+    expect(wrapper.vm.isSyncingUpstream).toBe(false)
+    wrapper.unmount()
+  })
+
   it('does not append configured fallback IDs', async () => {
     syncUpstreamModels.mockResolvedValue({
       models: ['composer-2.5'],
