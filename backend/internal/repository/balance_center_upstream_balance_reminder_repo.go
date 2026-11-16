@@ -86,7 +86,9 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		increased, _ = service.EvaluateUpstreamBalanceIncrease(&previous.Float64, item.Balance)
 	}
 	var reminder *service.UpstreamSiteBalanceReminder
-	var alertOldBalance, alertNewBalance, alertDelta, alertCurrency, alertDetectedAt any
+	var alertOldBalance, alertNewBalance, alertDelta, alertDetectedAt any
+	// 非上涨采样也会先校验 INSERT 的非空约束，提醒币种不能传 NULL。
+	alertCurrency := item.Currency
 	if increased {
 		oldBalance, detectedAt := previous.Float64, item.ObservedAt
 		// 在行锁内只累加同币种的待处理提醒，避免沿用另一币种的金额和发现时间。
@@ -101,7 +103,6 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		alertOldBalance = oldBalance
 		alertNewBalance = item.Balance
 		alertDelta = item.Balance - oldBalance
-		alertCurrency = item.Currency
 		alertDetectedAt = detectedAt
 	}
 	_, err = tx.ExecContext(ctx, `

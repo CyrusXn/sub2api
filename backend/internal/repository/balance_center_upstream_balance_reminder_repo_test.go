@@ -23,7 +23,7 @@ func TestUpstreamSiteBalanceObservationFirstSampleOnlyEstablishesBaseline(t *tes
 		WithArgs("site.example").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
-		WithArgs("site.example", "站点", "https://site.example", 20.0, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), false, nil, nil, nil, nil, nil).
+		WithArgs("site.example", "站点", "https://site.example", 20.0, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), false, nil, nil, nil, "USD", nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -115,7 +115,7 @@ func TestUpstreamSiteBalanceObservationCurrencyChangeOnlyResetsBaseline(t *testi
 		WithArgs("site.example").
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_old_balance", "alert_currency", "alert_detected_at"}).AddRow(10.0, "USD", nil, "USD", nil))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
-		WithArgs("site.example", "站点", "https://site.example", 70.0, "CNY", now, now.Add(service.UpstreamSiteBalancePollInterval), false, nil, nil, nil, nil, nil).
+		WithArgs("site.example", "站点", "https://site.example", 70.0, "CNY", now, now.Add(service.UpstreamSiteBalancePollInterval), false, nil, nil, nil, "CNY", nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
