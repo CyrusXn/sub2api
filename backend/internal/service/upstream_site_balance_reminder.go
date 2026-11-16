@@ -154,7 +154,7 @@ func (s *UpstreamBillingProbeService) refreshUpstreamSiteBalanceTargets(ctx cont
 	seen := make(map[int64]struct{}, len(sites))
 	observations := make([]UpstreamSiteBalanceObservation, 0, len(sites))
 	for _, site := range sites {
-		if !site.HasPassword || len(site.AccountIDs) == 0 {
+		if len(site.AccountIDs) == 0 {
 			continue
 		}
 		host := strings.ToLower(strings.TrimSpace(site.Host))
@@ -165,11 +165,12 @@ func (s *UpstreamBillingProbeService) refreshUpstreamSiteBalanceTargets(ctx cont
 		observations = append(observations, UpstreamSiteBalanceObservation{
 			Host: host, DisplayName: strings.TrimSpace(site.DisplayName), BaseURL: site.WebsiteURL,
 		})
-		id := site.AccountIDs[0]
-		if id > 0 {
-			if _, ok := seen[id]; !ok {
-				seen[id] = struct{}{}
-				accountIDs = append(accountIDs, id)
+		for _, id := range site.AccountIDs {
+			if id > 0 {
+				if _, ok := seen[id]; !ok {
+					seen[id] = struct{}{}
+					accountIDs = append(accountIDs, id)
+				}
 			}
 		}
 	}
@@ -185,9 +186,19 @@ func (s *UpstreamBillingProbeService) refreshUpstreamSiteBalanceTargets(ctx cont
 	}
 	targets := make(map[string]*Account, len(configured))
 	for _, site := range configured {
-		if len(site.AccountIDs) > 0 {
-			if account := accountByID[site.AccountIDs[0]]; account != nil {
-				targets[strings.ToLower(strings.TrimSpace(site.Host))] = account
+		host := strings.ToLower(strings.TrimSpace(site.Host))
+		for _, id := range site.AccountIDs {
+			account := accountByID[id]
+			if account == nil {
+				continue
+			}
+			if targets[host] == nil {
+				targets[host] = account
+			}
+			// 优先使用可查询钱包余额的现存密钥；否则沿用原账号供网页登录兜底。
+			if account.IsActive() && account.Type == AccountTypeAPIKey && account.GetCredential("api_key") != "" {
+				targets[host] = account
+				break
 			}
 		}
 	}
@@ -203,13 +214,6 @@ func (s *UpstreamBillingProbeService) probeUpstreamSiteBalance(ctx context.Conte
 	if s.accountTestService == nil || s.accountTestService.httpUpstream == nil {
 		return fmt.Errorf("transport_unavailable")
 	}
-	credential, err := s.upstreamSites.Resolve(ctx, observation.BaseURL)
-	if err != nil {
-		return fmt.Errorf("credential_unavailable")
-	}
-	if credential == nil {
-		return fmt.Errorf("credential_unavailable")
-	}
 	proxyURL := ""
 	if account.ProxyID != nil {
 		if account.Proxy == nil || account.Proxy.ID != *account.ProxyID {
@@ -222,28 +226,26 @@ func (s *UpstreamBillingProbeService) probeUpstreamSiteBalance(ctx context.Conte
 		tlsProfile = s.accountTestService.tlsFPProfileService.ResolveTLSProfile(account)
 	}
 	now := s.currentTime().UTC()
-	token, userID, err := s.upstreamSiteBalanceToken(ctx, account, observation.BaseURL, credential.Username, credential.Password, proxyURL, tlsProfile, now)
-	if err != nil {
-		return err
+	var result *UpstreamAccountBalanceSnapshot
+	if account.Type == AccountTypeAPIKey && account.GetCredential("api_key") != "" {
+		baseURL, err := s.accountTestService.validateUpstreamBaseURL(account.GetCredential("base_url"))
+		if err != nil {
+			return errors.New("invalid_base_url")
+		}
+		if mustUpstreamHost(baseURL) != observation.Host {
+			return errors.New("account_identity_changed")
+		}
+		balance, mode := s.fetchAPIKeyUsageBalanceWithMode(ctx, account, baseURL, account.GetCredential("api_key"), proxyURL, tlsProfile, now)
+		// 密钥限额和订阅剩余额度不是站点钱包；保留原始余额，不套用账号各自的充值换算系数。
+		if mode == "unrestricted" {
+			result = balance
+		}
 	}
-	result := s.fetchSiteBalanceWithToken(ctx, account, observation.BaseURL, token, userID, proxyURL, tlsProfile, now)
 	if result == nil {
-		return fmt.Errorf("balance_unavailable")
-	}
-	if result.Status != UpstreamBillingProbeStatusOK || result.Amount == nil {
-		if isUpstreamSiteBalanceLoginExpired(result) && !isPiteUpstreamSite(observation.Host) {
-			s.clearUpstreamSiteBalanceToken(observation.BaseURL, credential.Username)
-			// 只有明确的 401 登录失效才重登一次；403、网络和格式错误都直接退避。
-			token, userID, err = s.upstreamSiteBalanceToken(ctx, account, observation.BaseURL, credential.Username, credential.Password, proxyURL, tlsProfile, now)
-			if err != nil {
-				return err
-			}
-			result = s.fetchSiteBalanceWithToken(ctx, account, observation.BaseURL, token, userID, proxyURL, tlsProfile, s.currentTime().UTC())
-			if result == nil || result.Status != UpstreamBillingProbeStatusOK || result.Amount == nil {
-				return errors.New("auth_or_balance_unavailable")
-			}
-		} else {
-			return fmt.Errorf("balance_unavailable")
+		var err error
+		result, err = s.fetchUpstreamSiteWebBalance(ctx, observation, account, proxyURL, tlsProfile, now)
+		if err != nil {
+			return err
 		}
 	}
 	currency := strings.TrimSpace(result.Unit)
@@ -263,6 +265,42 @@ func (s *UpstreamBillingProbeService) probeUpstreamSiteBalance(ctx context.Conte
 		}
 	}
 	return nil
+}
+
+func (s *UpstreamBillingProbeService) fetchUpstreamSiteWebBalance(ctx context.Context, observation UpstreamSiteBalanceObservation, account *Account, proxyURL string, tlsProfile *tlsfingerprint.Profile, now time.Time) (*UpstreamAccountBalanceSnapshot, error) {
+	if s.upstreamSites == nil {
+		return nil, errors.New("credential_unavailable")
+	}
+	credential, err := s.upstreamSites.Resolve(ctx, observation.BaseURL)
+	if err != nil || credential == nil {
+		return nil, errors.New("credential_unavailable")
+	}
+	token, userID, err := s.upstreamSiteBalanceToken(ctx, account, observation.BaseURL, credential.Username, credential.Password, proxyURL, tlsProfile, now)
+	if err != nil {
+		return nil, err
+	}
+	result := s.fetchSiteBalanceWithToken(ctx, account, observation.BaseURL, token, userID, proxyURL, tlsProfile, now)
+	if result == nil {
+		return nil, errors.New("balance_unavailable")
+	}
+	if result.Status != UpstreamBillingProbeStatusOK || result.Amount == nil {
+		if isUpstreamSiteBalanceLoginExpired(result) && !isPiteUpstreamSite(observation.Host) {
+			s.clearUpstreamSiteBalanceToken(observation.BaseURL, credential.Username)
+			// 只有明确的 401 登录失效才重登一次；403、网络和格式错误都直接退避。
+			token, userID, err = s.upstreamSiteBalanceToken(ctx, account, observation.BaseURL, credential.Username, credential.Password, proxyURL, tlsProfile, now)
+			if err != nil {
+				return nil, err
+			}
+			result = s.fetchSiteBalanceWithToken(ctx, account, observation.BaseURL, token, userID, proxyURL, tlsProfile, s.currentTime().UTC())
+			if result == nil {
+				return nil, errors.New("balance_unavailable")
+			}
+		}
+	}
+	if result.Status != UpstreamBillingProbeStatusOK || result.Amount == nil {
+		return nil, &upstreamSiteBalanceProbeError{stage: "balance", reason: result.LastError, httpStatus: result.HTTPStatus}
+	}
+	return result, nil
 }
 
 func (s *UpstreamBillingProbeService) upstreamSiteBalanceToken(ctx context.Context, account *Account, baseURL, username, password, proxyURL string, tlsProfile *tlsfingerprint.Profile, now time.Time) (string, int, error) {
@@ -301,10 +339,9 @@ func (s *UpstreamBillingProbeService) upstreamSiteBalanceToken(ctx context.Conte
 	} else {
 		token, statusCode, reason, retryDelay = s.webAccountAccessToken(ctx, account, baseURL, username, password, proxyURL, tlsProfile, now)
 	}
-	_ = statusCode
 	_ = retryDelay
 	if reason != "" || token == "" {
-		return "", 0, fmt.Errorf("login_unavailable")
+		return "", 0, &upstreamSiteBalanceProbeError{stage: "login", reason: reason, httpStatus: statusCode}
 	}
 	entry := cachedWebAccountToken{token: token, userID: userID}
 	if key != "" {
@@ -338,7 +375,42 @@ func upstreamSiteBalanceFailureDelay(failureCount int) time.Duration {
 	return min(delay, time.Hour)
 }
 
-func safeUpstreamSiteBalanceFailure(error) string {
+type upstreamSiteBalanceProbeError struct {
+	stage      string
+	reason     string
+	httpStatus int
+}
+
+func (e *upstreamSiteBalanceProbeError) Error() string {
+	return safeUpstreamSiteBalanceFailure(e)
+}
+
+func safeUpstreamSiteBalanceFailure(err error) string {
+	var probeErr *upstreamSiteBalanceProbeError
+	if errors.As(err, &probeErr) {
+		if probeErr == nil || (probeErr.stage != "login" && probeErr.stage != "balance") {
+			return "probe_failed"
+		}
+		reason := "failed"
+		// 只保留内部分类和状态码，不保存上游正文、凭据或任意错误文本。
+		switch probeErr.reason {
+		case "request_build_failed", "request_failed", "empty_response", "response_read_failed", "response_too_large",
+			"web_auth_failed", "web_forbidden", "http_error", "web_login_failed", "invalid_response":
+			reason = probeErr.reason
+		}
+		code := probeErr.stage + "_" + reason
+		if probeErr.httpStatus >= 100 && probeErr.httpStatus <= 599 {
+			code += fmt.Sprintf("_http_%d", probeErr.httpStatus)
+		}
+		return code
+	}
+	if err != nil {
+		switch err.Error() {
+		case "transport_unavailable", "credential_unavailable", "proxy_unavailable", "invalid_base_url", "account_identity_changed",
+			"balance_unavailable", "observation_save_failed":
+			return err.Error()
+		}
+	}
 	return "probe_failed"
 }
 

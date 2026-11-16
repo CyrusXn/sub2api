@@ -1223,12 +1223,25 @@ func (s *UpstreamBillingProbeService) fetchAPIKeyUsageBalance(
 	tlsProfile *tlsfingerprint.Profile,
 	now time.Time,
 ) *UpstreamAccountBalanceSnapshot {
+	balance, _ := s.fetchAPIKeyUsageBalanceWithMode(ctx, account, baseURL, apiKey, proxyURL, tlsProfile, now)
+	return balance
+}
+
+func (s *UpstreamBillingProbeService) fetchAPIKeyUsageBalanceWithMode(
+	ctx context.Context,
+	account *Account,
+	baseURL string,
+	apiKey string,
+	proxyURL string,
+	tlsProfile *tlsfingerprint.Profile,
+	now time.Time,
+) (*UpstreamAccountBalanceSnapshot, string) {
 	usageURL := buildOpenAIEndpointURL(baseURL, "/v1/usage")
 	probeCtx, cancel := context.WithTimeout(ctx, upstreamBillingProbeRequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, usageURL, nil)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	profile := HTTPUpstreamProfileDefault
 	if account.Platform == PlatformOpenAI {
@@ -1241,21 +1254,21 @@ func (s *UpstreamBillingProbeService) fetchAPIKeyUsageBalance(
 
 	resp, err := s.accountTestService.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
 	if err != nil || resp == nil || resp.Body == nil {
-		return nil
+		return nil, ""
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, upstreamBillingProbeMaxBodyBytes+1))
 	if err != nil || len(body) > upstreamBillingProbeMaxBodyBytes || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
+		return nil, ""
 	}
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
-		return nil
+		return nil, ""
 	}
 	amount, ok := numberFromAny(root["balance"])
 	unit := strings.TrimSpace(upstreamBillingStringFromAny(root["unit"]))
 	if !ok || amount < 0 || unit == "" {
-		return nil
+		return nil, ""
 	}
 	return &UpstreamAccountBalanceSnapshot{
 		Status:        UpstreamBillingProbeStatusOK,
@@ -1264,7 +1277,7 @@ func (s *UpstreamBillingProbeService) fetchAPIKeyUsageBalance(
 		ReceivedAt:    probeTimePtr(now),
 		LastAttemptAt: now,
 		HTTPStatus:    resp.StatusCode,
-	}
+	}, strings.TrimSpace(upstreamBillingStringFromAny(root["mode"]))
 }
 
 func (s *UpstreamBillingProbeService) fetchNewAPIAccountData(

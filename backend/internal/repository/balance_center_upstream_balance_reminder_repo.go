@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -59,6 +60,7 @@ LIMIT $2`, now, limit)
 }
 
 func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context.Context, item service.UpstreamSiteBalanceObservation) (_ *service.UpstreamSiteBalanceReminder, err error) {
+	item.Currency = strings.TrimSpace(item.Currency)
 	if item.Currency == "" {
 		item.Currency = "USD"
 	}
@@ -72,27 +74,35 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		}
 	}()
 	var previous sql.NullFloat64
-	if err = tx.QueryRowContext(ctx, `SELECT balance FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE`, item.Host).Scan(&previous); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	var previousCurrency, previousAlertCurrency string
+	var previousAlertOldBalance sql.NullFloat64
+	var previousAlertDetectedAt sql.NullTime
+	if err = tx.QueryRowContext(ctx, `SELECT balance, currency, alert_old_balance, alert_currency, alert_detected_at FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE`, item.Host).Scan(&previous, &previousCurrency, &previousAlertOldBalance, &previousAlertCurrency, &previousAlertDetectedAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	increased, delta := false, float64(0)
-	if previous.Valid {
-		increased, delta = service.EvaluateUpstreamBalanceIncrease(&previous.Float64, item.Balance)
+	increased := false
+	// API 与网页可能使用不同单位，单位变化只能重建基线，不能当作充值。
+	if previous.Valid && strings.EqualFold(strings.TrimSpace(previousCurrency), item.Currency) {
+		increased, _ = service.EvaluateUpstreamBalanceIncrease(&previous.Float64, item.Balance)
 	}
 	var reminder *service.UpstreamSiteBalanceReminder
-	if increased {
-		reminder = &service.UpstreamSiteBalanceReminder{
-			Host: item.Host, DisplayName: item.DisplayName, OldBalance: previous.Float64,
-			NewBalance: item.Balance, Delta: delta, Currency: item.Currency, DetectedAt: item.ObservedAt,
-		}
-	}
 	var alertOldBalance, alertNewBalance, alertDelta, alertCurrency, alertDetectedAt any
 	if increased {
-		alertOldBalance = previous.Float64
+		oldBalance, detectedAt := previous.Float64, item.ObservedAt
+		// 在行锁内只累加同币种的待处理提醒，避免沿用另一币种的金额和发现时间。
+		if strings.EqualFold(strings.TrimSpace(previousAlertCurrency), item.Currency) {
+			if previousAlertOldBalance.Valid {
+				oldBalance = previousAlertOldBalance.Float64
+			}
+			if previousAlertDetectedAt.Valid {
+				detectedAt = previousAlertDetectedAt.Time
+			}
+		}
+		alertOldBalance = oldBalance
 		alertNewBalance = item.Balance
-		alertDelta = delta
+		alertDelta = item.Balance - oldBalance
 		alertCurrency = item.Currency
-		alertDetectedAt = item.ObservedAt
+		alertDetectedAt = detectedAt
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO upstream_site_balance_observations (
@@ -105,11 +115,11 @@ ON CONFLICT (host) DO UPDATE SET
  balance=EXCLUDED.balance, currency=EXCLUDED.currency, observed_at=EXCLUDED.observed_at,
  next_probe_at=EXCLUDED.next_probe_at, failure_count=0, last_error='',
  alert_active=CASE WHEN EXCLUDED.alert_active THEN TRUE ELSE upstream_site_balance_observations.alert_active END,
- alert_old_balance=CASE WHEN EXCLUDED.alert_active THEN COALESCE(upstream_site_balance_observations.alert_old_balance, EXCLUDED.alert_old_balance) ELSE upstream_site_balance_observations.alert_old_balance END,
+ alert_old_balance=CASE WHEN EXCLUDED.alert_active THEN EXCLUDED.alert_old_balance ELSE upstream_site_balance_observations.alert_old_balance END,
  alert_new_balance=CASE WHEN EXCLUDED.alert_active THEN EXCLUDED.alert_new_balance ELSE upstream_site_balance_observations.alert_new_balance END,
- alert_delta=CASE WHEN EXCLUDED.alert_active THEN EXCLUDED.alert_new_balance - COALESCE(upstream_site_balance_observations.alert_old_balance, EXCLUDED.alert_old_balance) ELSE upstream_site_balance_observations.alert_delta END,
+ alert_delta=CASE WHEN EXCLUDED.alert_active THEN EXCLUDED.alert_delta ELSE upstream_site_balance_observations.alert_delta END,
  alert_currency=CASE WHEN EXCLUDED.alert_active THEN EXCLUDED.alert_currency ELSE upstream_site_balance_observations.alert_currency END,
- alert_detected_at=CASE WHEN EXCLUDED.alert_active THEN COALESCE(upstream_site_balance_observations.alert_detected_at, EXCLUDED.alert_detected_at) ELSE upstream_site_balance_observations.alert_detected_at END,
+ alert_detected_at=CASE WHEN EXCLUDED.alert_active THEN EXCLUDED.alert_detected_at ELSE upstream_site_balance_observations.alert_detected_at END,
 	alert_version=CASE WHEN EXCLUDED.alert_active THEN upstream_site_balance_observations.alert_version+1 ELSE upstream_site_balance_observations.alert_version END,
 	updated_at=NOW()`, item.Host, item.DisplayName, item.BaseURL, item.Balance, item.Currency, item.ObservedAt, item.ObservedAt.Add(service.UpstreamSiteBalancePollInterval), increased, alertOldBalance, alertNewBalance, alertDelta, alertCurrency, alertDetectedAt)
 	if err != nil {
