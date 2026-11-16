@@ -357,6 +357,62 @@ function mountModal(account = buildAccount(), renderGroupSelector = false, rende
 }
 
 describe('EditAccountModal', () => {
+  it('同一账号后台刷新后保留编辑中的名称、备注和地址，并提交新名称', async () => {
+    const account = buildAccount()
+    account.name = '【派大星】 (Copy)'
+    updateAccountMock.mockReset().mockImplementation(async (_id, updates) => ({ ...account, ...updates }))
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    const nameInput = wrapper.get<HTMLInputElement>('[data-tour="edit-account-form-name"]')
+    const notesInput = wrapper.get<HTMLTextAreaElement>('textarea')
+    const baseURLInput = wrapper.findAll<HTMLInputElement>('input').find(input => input.element.value === account.credentials.base_url)!
+    await nameInput.setValue('【派大星】 az')
+    await notesInput.setValue('编辑中的备注')
+    await baseURLInput.setValue('https://updated.example/v1')
+
+    await wrapper.setProps({ account: {
+      ...account,
+      current_concurrency: 2,
+      extra: { upstream_billing_probe: { status: 'ok', balance: { amount: 39.62, unit: 'USD' } } }
+    } })
+    await flushPromises()
+
+    expect(nameInput.element.value).toBe('【派大星】 az')
+    expect(notesInput.element.value).toBe('编辑中的备注')
+    expect(baseURLInput.element.value).toBe('https://updated.example/v1')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledOnce()
+    expect(updateAccountMock.mock.calls[0]?.[1]).toMatchObject({
+      name: '【派大星】 az', notes: '编辑中的备注',
+      credentials: { base_url: 'https://updated.example/v1' }
+    })
+    expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({ id: account.id, name: '【派大星】 az' })
+    expect(account.name).toBe('【派大星】 (Copy)')
+    wrapper.unmount()
+  })
+
+  it('切换账号或重新打开弹窗时仍回填最新名称', async () => {
+    const account = buildAccount()
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const nameInput = wrapper.get<HTMLInputElement>('[data-tour="edit-account-form-name"]')
+    await nameInput.setValue('未保存的名称')
+
+    const otherAccount = { ...account, id: 2, name: '另一个账号' }
+    await wrapper.setProps({ account: otherAccount })
+    expect(nameInput.element.value).toBe('另一个账号')
+
+    await nameInput.setValue('另一个未保存的名称')
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ account: { ...otherAccount, name: '服务端最新名称' }, show: true })
+    expect(wrapper.get<HTMLInputElement>('[data-tour="edit-account-form-name"]').element.value).toBe('服务端最新名称')
+    wrapper.unmount()
+  })
+
   it('自适应协议模型预览使用当前 Chat Completions 地址', async () => {
     const account = buildAccount()
     account.platform = 'deepseek'

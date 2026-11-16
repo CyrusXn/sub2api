@@ -5264,7 +5264,8 @@ watch(
     if (!show || !newAccount) {
       return
     }
-    if (!wasShow || newAccount !== previousAccount) {
+    // 同一账号的余额、倍率刷新会替换对象引用，不能覆盖尚未保存的表单。
+    if (!wasShow || newAccount.id !== previousAccount?.id) {
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }
