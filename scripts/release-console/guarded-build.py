@@ -22,6 +22,10 @@ SAMPLE_BUDGET = 4
 PROBE_SECONDS = 3
 
 
+class UnknownBuildPhase(RuntimeError):
+    pass
+
+
 class ErrorRate:
     def __init__(self, path):
         self.path = path
@@ -172,9 +176,23 @@ def group_processes(group):
 def owned_buildx(group):
     processes = group_processes(group)
     if not processes:
-        raise RuntimeError('无法确认本次构建进程阶段')
+        raise UnknownBuildPhase('无法确认本次构建进程阶段')
     return any(b'build' in args and b'--builder' in args and b'sub2api-release' in args
                for _, args in processes)
+
+
+def build_phase(process, deadline):
+    while True:
+        try:
+            return 'buildx' if owned_buildx(process.pid) else 'build-prepare-or-verify'
+        except UnknownBuildPhase:
+            if process.poll() is not None:
+                return 'build-finished'
+            # shell 的 exec 窗口会暂时清空 cmdline；只在本轮预算内短暂复核。
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(.01, remaining))
 
 
 def cancel(process, builder):
@@ -227,9 +245,9 @@ def probe_health(url):
         return False
 
 
-def collect_sample(counter, group=None):
+def collect_sample(counter, process=None):
     deadline = time.monotonic() + SAMPLE_BUDGET
-    phase = 'baseline' if group is None else ('buildx' if owned_buildx(group) else 'build-prepare-or-verify')
+    phase = 'baseline' if process is None else build_phase(process, min(deadline, time.monotonic() + .25))
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
     try:
         jobs = {
@@ -297,7 +315,7 @@ def build_with_lock(commit, lock):
                                    pass_fds=(lock.fileno(),), env=environment)
         while process.poll() is None:
             tick = time.monotonic()
-            data = collect_sample(counter, process.pid)
+            data = collect_sample(counter, process)
             sample = data['memory']
             log_sample(data, limits.events)
             require_sample(sample, builder, data['phase'] == 'buildx')

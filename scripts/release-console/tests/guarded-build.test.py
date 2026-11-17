@@ -143,6 +143,58 @@ class BuildGuardTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '阶段'):
                 guard.owned_buildx(12345)
 
+    def test_exec_gap_is_rechecked_within_the_same_sample(self):
+        process = Mock(pid=12345)
+        process.poll.return_value = None
+        counter = Mock()
+        counter.sample.return_value = 0
+        with patch.object(guard, 'group_processes', side_effect=[[], [(12345, [b'bash'])]]) as groups, \
+                patch.object(guard, 'builder_sample', return_value=None), \
+                patch.object(guard, 'production_state', return_value='production|true'), \
+                patch.object(guard.preview, 'memory_mb', return_value=5000), \
+                patch.object(guard, 'probe_health', return_value=True):
+            data = guard.collect_sample(counter, process)
+        self.assertEqual(data['phase'], 'build-prepare-or-verify')
+        self.assertTrue(data['production_healthy'])
+        self.assertTrue(all(call.args == (process.pid,) for call in groups.call_args_list))
+
+    def test_child_exit_between_poll_and_phase_probe_still_gets_final_sample(self):
+        process = Mock(pid=12345)
+        process.poll.return_value = 0
+        counter = Mock()
+        counter.sample.return_value = 0
+        with patch.object(guard, 'group_processes', return_value=[]), \
+                patch.object(guard, 'builder_sample', return_value=None), \
+                patch.object(guard, 'production_state', return_value='production|true'), \
+                patch.object(guard.preview, 'memory_mb', return_value=5000), \
+                patch.object(guard, 'probe_health', return_value=True):
+            data = guard.collect_sample(counter, process)
+        self.assertEqual(data['phase'], 'build-finished')
+        counter.sample.assert_called_once()
+
+    def test_persistent_unknown_phase_is_bounded_and_still_fails_closed(self):
+        process = Mock(pid=12345)
+        process.poll.return_value = None
+        with patch.object(guard, 'group_processes', return_value=[]), \
+                patch.object(guard, 'builder_sample') as sample:
+            started = time.monotonic()
+            with self.assertRaisesRegex(RuntimeError, '阶段'):
+                guard.collect_sample(Mock(), process)
+        self.assertLess(time.monotonic() - started, .6)
+        sample.assert_not_called()
+
+    def test_exec_gap_does_not_bypass_first_buildx_cgroup_sample(self):
+        owned_buildx = guard.owned_buildx
+        with self.build_environment(running=True) as environment, \
+                patch.object(guard, 'owned_buildx', wraps=owned_buildx), \
+                patch.object(guard, 'group_processes', side_effect=[[], [(12345, [
+                    b'docker', b'buildx', b'build', b'--builder', b'sub2api-release'])]]):
+            environment.process.poll.side_effect = None
+            environment.process.poll.return_value = None
+            with self.assertRaisesRegex(RuntimeError, '采样'):
+                guard.build_with_lock('a' * 40, Mock())
+            environment.cancelled.assert_called_once_with(environment.process, None)
+
     def test_failed_baseline_never_starts_build_and_closes_counter(self):
         with self.build_environment() as environment, \
                 patch.object(guard.preview, 'memory_mb', return_value=4000), \
