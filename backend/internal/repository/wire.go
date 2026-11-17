@@ -48,8 +48,8 @@ func ProvideSessionLimitCache(rdb *redis.Client, cfg *config.Config) service.Ses
 	return NewSessionLimitCache(rdb, defaultIdleTimeoutMinutes)
 }
 
-// ProvideUsageBillingRepository 将余额中心旁路事件发布者注入真实结算仓储。
-func ProvideUsageBillingRepository(client *ent.Client, db *sql.DB, publisher service.BalanceCenterUsageEventPublisher) service.UsageBillingRepository {
+// ProvideUsageBillingRepository 将余额中心旁路事件发布者注入批量结算仓储，再交由计费通道合并。
+func ProvideUsageBillingRepository(client *ent.Client, db *sql.DB, publisher service.BalanceCenterUsageEventPublisher) service.UsageBillingBatchRepository {
 	return NewUsageBillingRepository(client, db, publisher)
 }
 

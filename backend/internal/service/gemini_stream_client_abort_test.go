@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -135,6 +136,29 @@ func TestGeminiCompatForward_ClientDisconnectAfterFinalChunkBillsCollectedUsage(
 		require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 		require.Nil(t, result)
 	})
+}
+
+func TestGeminiCompatForward_FinalChunkWithoutTrailingNewlineBillsCollectedUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reqBody := []byte(`{"model":"gemini-3-flash-preview","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(reqBody))
+	svc, upstream := newGeminiVertexAPIKeyTestService()
+	upstream.response = &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(geminiAbortTextChunk + strings.TrimRight(geminiAbortFinalChunk, "\n"))),
+	}
+
+	result, err := svc.Forward(context.Background(), c, geminiVertexAPIKeyTestAccount(""), reqBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.ClientDisconnect)
+	require.Equal(t, 10, result.Usage.InputTokens)
+	require.Equal(t, 5, result.Usage.OutputTokens)
+	require.NotNil(t, result.FirstTokenMs)
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "event: message_stop\n"))
 }
 
 func TestGeminiForwardAsChatCompletions_ClientDisconnectAfterFinalChunkBillsCollectedUsage(t *testing.T) {

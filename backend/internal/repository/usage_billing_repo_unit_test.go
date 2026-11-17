@@ -278,11 +278,19 @@ func TestReserveUsageBillingBatchImageBalance_DoesNotPublishBalanceCenterEvent(t
 }
 
 type balanceCenterUsageEventPublisherSpy struct {
-	accountIDs []int64
+	accountIDs     []int64
+	accountBatches [][]int64
+	singleCalls    int
 }
 
 func (p *balanceCenterUsageEventPublisherSpy) PublishAccountUsed(_ context.Context, accountID int64) {
+	p.singleCalls++
 	p.accountIDs = append(p.accountIDs, accountID)
+}
+
+func (p *balanceCenterUsageEventPublisherSpy) PublishAccountsUsed(_ context.Context, accountIDs []int64) {
+	p.accountBatches = append(p.accountBatches, append([]int64(nil), accountIDs...))
+	p.accountIDs = append(p.accountIDs, accountIDs...)
 }
 
 func TestApplyUsageBillingEffects_DeletedAPIKeyStillBillsBalance(t *testing.T) {

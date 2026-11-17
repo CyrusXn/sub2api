@@ -5,6 +5,8 @@ import UpstreamBalanceReminder from '../UpstreamBalanceReminder.vue'
 import type { UpstreamSiteBalanceReminderEvent } from '@/api/admin/balanceCenter'
 
 const subscribeMock = vi.hoisted(() => vi.fn())
+const pushMock = vi.hoisted(() => vi.fn())
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
 
 vi.mock('@/api/admin/balanceCenter', () => ({
   subscribeUpstreamSiteBalanceReminders: subscribeMock,
@@ -65,7 +67,7 @@ describe('UpstreamBalanceReminder', () => {
 
     const toggle = wrapper.get('button')
     expect(toggle.attributes('aria-expanded')).toBe('true')
-    expect(wrapper.findAll('button')).toHaveLength(1)
+    expect(wrapper.findAll('button')).toHaveLength(2)
     await toggle.trigger('click')
     expect(toggle.attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('[data-testid="upstream-balance-reminder-list"]').exists()).toBe(false)
@@ -89,6 +91,30 @@ describe('UpstreamBalanceReminder', () => {
     await nextTick()
 
     expect(wrapper.find('[data-testid="upstream-balance-reminder-a.example"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('点击记录跳转到对应站点，并携带净增金额与单位', async () => {
+    const wrapper = mount(UpstreamBalanceReminder)
+    emit({ type: 'upsert', reminder: reminder('zhixue.example', 8.96337526) })
+    await nextTick()
+    await wrapper.get('[data-testid="upstream-balance-reminder-zhixue.example"]').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'AdminBalanceCenter', query: expect.objectContaining({
+      recharge_host: 'zhixue.example', recharge_delta: '8.96337526', recharge_currency: 'USD', recharge_request: expect.any(String)
+    }) })
+    wrapper.unmount()
+  })
+
+  it('忽略旧快照与推送里的小额提醒，且继续维护事件版本', async () => {
+    const wrapper = mount(UpstreamBalanceReminder)
+    emit({ type: 'snapshot', reminders: [reminder('gift.example', 0.5), reminder('real.example', 1)] })
+    await nextTick()
+    expect(wrapper.find('[data-testid="upstream-balance-reminder-gift.example"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="upstream-balance-reminder-real.example"]').exists()).toBe(true)
+    emit({ type: 'upsert', reminder: { ...reminder('real.example', 0.5), version: 3 } })
+    emit({ type: 'upsert', reminder: { ...reminder('real.example', 5), version: 2 } })
+    await nextTick()
+    expect(wrapper.find('[data-testid="upstream-balance-reminder-real.example"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

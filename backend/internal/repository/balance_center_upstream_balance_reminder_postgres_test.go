@@ -76,10 +76,15 @@ func TestUpstreamSiteBalanceObservationPostgres(t *testing.T) {
 			}{
 				{name: "首次采样建立基线", balance: 20, currency: "USD"},
 				{name: "余额不变仍可保存", balance: 20, currency: "USD"},
+				{name: "小额上涨只更新基线", balance: 20.5, currency: "USD"},
+				{name: "连续小额上涨不累计触发", balance: 21, currency: "USD"},
 				{name: "余额下降仍可保存", balance: 18, currency: "USD"},
 				{name: "余额上涨生成提醒", balance: 25, currency: "USD", wantIncrease: true, version: 1, oldBalance: 18, delta: 7},
+				{name: "小额上涨保留合法待处理提醒", balance: 25.5, currency: "USD", version: 1},
+				{name: "连续小额上涨不混入待处理提醒", balance: 26, currency: "USD", version: 1},
 				{name: "下降保留待处理提醒", balance: 24, currency: "USD", version: 1},
-				{name: "再次上涨累加提醒", balance: 30, currency: "USD", wantIncrease: true, version: 2, oldBalance: 18, delta: 12},
+				// old/new 是提醒首尾实测余额，delta 只累计达标的单次上涨，不计小额变动或消费。
+				{name: "再次上涨只累加合格增量", balance: 30, currency: "USD", wantIncrease: true, version: 2, oldBalance: 18, delta: 13},
 				{name: "币种变化只重建基线", balance: 200, currency: "CNY", version: 2},
 				{name: "新币种上涨替换提醒", balance: 210, currency: "CNY", wantIncrease: true, version: 3, oldBalance: 200, delta: 10},
 				{name: "空币种默认美元", balance: 20, currency: "", version: 3},
@@ -143,6 +148,58 @@ func TestUpstreamSiteBalanceObservationPostgres(t *testing.T) {
 			reminders, err := repo.ListActiveUpstreamSiteBalanceReminders(ctx)
 			require.NoError(t, err)
 			require.Empty(t, reminders)
+			t.Run("旧小额提醒迁移清理且不复用旧值", func(t *testing.T) {
+				_, err := db.ExecContext(ctx, `
+INSERT INTO upstream_site_balance_observations (
+ host, display_name, base_url, balance, currency, alert_active,
+ alert_old_balance, alert_new_balance, alert_delta, alert_currency, alert_detected_at, alert_version
+) VALUES
+ ('small.example', 'HBY', 'https://small.example', 20.5, 'USD', TRUE, 20, 20.5, 0.5, 'USD', $1, 7),
+ ('valid.example', '智学', 'https://valid.example', 28.96, 'USD', TRUE, 20, 28.96, 8.96, 'USD', $1, 4),
+ ('one.example', '边界', 'https://one.example', 21, 'USD', TRUE, 20, 21, 1, 'USD', $1, 1),
+ ('stale.example', '已解决', 'https://stale.example', 20.5, 'USD', FALSE, 20, 20.5, 0.5, 'USD', $1, 3)`, now)
+				require.NoError(t, err)
+				migration, err := os.ReadFile("../../migrations/272_upstream_site_balance_minimum_increase.sql")
+				require.NoError(t, err)
+				_, err = db.ExecContext(ctx, string(migration))
+				require.NoError(t, err)
+				_, err = db.ExecContext(ctx, string(migration))
+				require.NoError(t, err)
+				var baseline float64
+				var active bool
+				var oldBalance, newBalance, delta sql.NullFloat64
+				var detectedAt sql.NullTime
+				var version int64
+				err = db.QueryRowContext(ctx, `SELECT balance, alert_active, alert_old_balance, alert_new_balance, alert_delta, alert_detected_at, alert_version
+FROM upstream_site_balance_observations WHERE host='small.example'`).Scan(&baseline, &active, &oldBalance, &newBalance, &delta, &detectedAt, &version)
+				require.NoError(t, err)
+				require.Equal(t, 20.5, baseline)
+				require.False(t, active)
+				require.False(t, oldBalance.Valid || newBalance.Valid || delta.Valid || detectedAt.Valid)
+				require.EqualValues(t, 8, version)
+				reminders, versions, err := repo.ListUpstreamSiteBalanceReminderSnapshot(ctx)
+				require.NoError(t, err)
+				require.Len(t, reminders, 2)
+				require.EqualValues(t, 4, versions["valid.example"])
+				require.EqualValues(t, 1, versions["one.example"])
+				for _, reminder := range reminders {
+					if reminder.Host == "valid.example" {
+						require.InDelta(t, 8.96, reminder.Delta, 1e-8)
+					}
+				}
+				for _, host := range []string{"small.example", "stale.example"} {
+					reminder, err := repo.SaveUpstreamSiteBalanceObservation(ctx, service.UpstreamSiteBalanceObservation{
+						Host: host, DisplayName: host, BaseURL: "https://" + host,
+						Balance: 21.5, Currency: "USD", ObservedAt: now.Add(time.Hour),
+					})
+					require.NoError(t, err)
+					require.NotNil(t, reminder)
+					require.Equal(t, 20.5, reminder.OldBalance)
+					require.Equal(t, 21.5, reminder.NewBalance)
+					require.Equal(t, 1.0, reminder.Delta)
+					require.True(t, now.Add(time.Hour).Equal(reminder.DetectedAt))
+				}
+			})
 			connection, err := db.Conn(ctx)
 			require.NoError(t, err)
 			require.ErrorIs(t, connection.Raw(func(any) error { return driver.ErrBadConn }), driver.ErrBadConn)

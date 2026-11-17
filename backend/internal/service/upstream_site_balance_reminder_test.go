@@ -258,6 +258,10 @@ func TestEvaluateUpstreamBalanceIncrease(t *testing.T) {
 	}{
 		{name: "first observation is baseline", current: 20},
 		{name: "increase creates reminder", previous: float64Ptr(10), current: 15, want: 5},
+		{name: "half unit increase does not create reminder", previous: float64Ptr(10), current: 10.5},
+		{name: "increase below one unit does not create reminder", previous: float64Ptr(10), current: 10.99999999},
+		{name: "one unit increase creates reminder", previous: float64Ptr(10), current: 11, want: 1},
+		{name: "one unit decimal difference tolerates floating point noise", previous: float64Ptr(1.3), current: 2.3, want: 1},
 		{name: "unchanged balance does not create reminder", previous: float64Ptr(10), current: 10},
 		{name: "decrease does not create reminder", previous: float64Ptr(10), current: 8},
 		{name: "floating point noise does not create reminder", previous: float64Ptr(10), current: 10.0000000001},
@@ -273,6 +277,16 @@ func TestEvaluateUpstreamBalanceIncrease(t *testing.T) {
 				require.Zero(t, delta)
 			}
 		})
+	}
+}
+
+func TestEvaluateUpstreamBalanceIncreaseDoesNotAccumulateSmallChanges(t *testing.T) {
+	previous := 10.0
+	for _, current := range []float64{10.5, 11, 11.5, 12} {
+		increased, delta := EvaluateUpstreamBalanceIncrease(&previous, current)
+		require.False(t, increased)
+		require.Zero(t, delta)
+		previous = current
 	}
 }
 

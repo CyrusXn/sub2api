@@ -16,6 +16,8 @@ import (
 
 const upstreamSiteBalanceIncreaseTolerance = 1e-9
 
+const UpstreamSiteBalanceMinimumIncrease = 1.0
+
 const UpstreamSiteBalancePollInterval = 5 * time.Minute
 
 const (
@@ -76,7 +78,7 @@ func EvaluateUpstreamBalanceIncrease(previous *float64, current float64) (bool, 
 		return false, 0
 	}
 	delta := current - *previous
-	if delta <= upstreamSiteBalanceIncreaseTolerance {
+	if delta+upstreamSiteBalanceIncreaseTolerance < UpstreamSiteBalanceMinimumIncrease {
 		return false, 0
 	}
 	return true, delta

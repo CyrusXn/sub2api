@@ -182,6 +182,9 @@ func TestHandleCCStreamingFromAnthropic_PingWriteFailureStopsDownstream(t *testi
 				stream += "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_failure\",\"usage\":{\"input_tokens\":10}}}\n\n"
 			}
 			stream += "event: ping\ndata: {\"type\":\"ping\"}\n\n" +
+				"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"late answer\"}}\n\n" +
+				"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
 				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n" +
 				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 			result, err := (&GatewayService{}).handleCCStreamingFromAnthropic(
@@ -194,8 +197,9 @@ func TestHandleCCStreamingFromAnthropic_PingWriteFailureStopsDownstream(t *testi
 			require.Zero(t, writer.writesAfterError)
 			require.Zero(t, writer.flushesAfterError)
 			require.NotContains(t, writer.Body.String(), "[DONE]")
+			require.NotContains(t, writer.Body.String(), "late answer", "客户端写失败后只收集上游正文和计费信息，不再写下游")
 			require.Equal(t, 7, result.Usage.OutputTokens)
-			require.NotNil(t, result.FirstTokenMs)
+			require.NotNil(t, result.FirstTokenMs, "断开后读到真实正文仍记录上游首字，元数据和用量不算首字")
 			if withUsage {
 				require.Equal(t, 10, result.Usage.InputTokens)
 			} else {

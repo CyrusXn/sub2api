@@ -1043,8 +1043,8 @@ func TestUsageLogRepositoryAdminAggregatesReadSettledValues(t *testing.T) {
 		db, mock := newSQLMock(t)
 		repo := &usageLogRepository{sql: db}
 		mock.ExpectQuery(`(?s)COUNT\(\*\).*usage_group_rollup_state.*WHERE id = 1`).
-			WillReturnRows(sqlmock.NewRows([]string{"count", "closed_before", "retained_from", "timezone_name"}).
-				AddRow(1, "2024-12-31", start.AddDate(0, -1, 0), "UTC"))
+			WillReturnRows(sqlmock.NewRows([]string{"count", "closed_before", "retained_from", "timezone_name", "expired_before"}).
+				AddRow(1, "2024-12-31", start.AddDate(0, -1, 0), "UTC", time.Unix(0, 0).UTC()))
 		mock.ExpectQuery(`(?s)usage_group_daily_rollups.*SUM\(ul\.actual_cost\).*created_at >= \$7`).
 			WithArgs(start, start.AddDate(0, 0, -1), "2024-12-31", true, "2024-12-01", "2024-12-31", start.AddDate(0, 0, -1)).
 			WillReturnRows(sqlmock.NewRows([]string{"group_id", "total_cost", "today_cost", "yesterday_cost"}))
@@ -1481,4 +1481,49 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.Equal(t, "priority", *log.ServiceTier)
 	})
 
+}
+
+func TestUsageLogRepositoryGetModelStatsAccountFilterKeepsActualCost(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	accountID := int64(42)
+
+	mock.ExpectQuery("COALESCE\\(SUM\\(actual_cost\\), 0\\) as actual_cost,\\s+COALESCE\\(SUM\\(COALESCE\\(account_stats_cost, total_cost\\) \\* COALESCE\\(account_rate_multiplier, 1\\)\\), 0\\) as account_cost").
+		WithArgs(start, end, accountID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"model", "requests", "input_tokens", "output_tokens",
+			"cache_creation_tokens", "cache_read_tokens", "total_tokens",
+			"cost", "actual_cost", "account_cost",
+		}).AddRow("gemini-4-argon", int64(3), int64(10), int64(20), int64(0), int64(0), int64(30), 6.0, 2.4, 0.9))
+
+	results, err := repo.GetModelStatsWithUsageFiltersBySource(context.Background(), start, end, usagestats.UsageLogFilters{AccountID: accountID}, usagestats.ModelSourceRequested)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, 2.4, results[0].ActualCost)
+	require.Equal(t, 0.9, results[0].AccountCost)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageLogRepositoryGetEndpointStatsAccountFilterKeepsActualCost(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	accountID := int64(42)
+
+	mock.ExpectQuery("COALESCE\\(SUM\\(actual_cost\\), 0\\) as actual_cost,\\s+COALESCE\\(SUM\\(COALESCE\\(account_stats_cost, total_cost\\) \\* COALESCE\\(account_rate_multiplier, 1\\)\\), 0\\) as account_cost").
+		WithArgs(start, end, accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"endpoint", "requests", "total_tokens", "cost", "actual_cost", "account_cost"}).
+			AddRow("/v1beta/models", int64(3), int64(30), 6.0, 2.4, 0.9))
+
+	results, err := repo.GetEndpointStatsWithFilters(context.Background(), start, end, 0, 0, accountID, 0, "", nil, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, 2.4, results[0].ActualCost)
+	require.Equal(t, 0.9, results[0].AccountCost)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

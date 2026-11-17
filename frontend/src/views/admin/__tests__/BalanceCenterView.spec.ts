@@ -1,6 +1,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import BalanceCenterView from '../BalanceCenterView.vue'
+import { reactive } from 'vue'
+
+const route = reactive<{ query: Record<string, string> }>({ query: {} })
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 
 const api = vi.hoisted(() => ({
   sites: vi.fn(), rechargeSummary: vi.fn(), createRechargeEvent: vi.fn(), deleteRechargeEvent: vi.fn(),
@@ -34,7 +38,8 @@ const summary = {
   ] }]
 }
 
-const mountView = () => mount(BalanceCenterView, {
+const mountView = (attachTo?: HTMLElement) => mount(BalanceCenterView, {
+  attachTo,
   global: {
     stubs: {
       AppLayout: { template: '<div><slot /></div>' },
@@ -49,6 +54,7 @@ const mountView = () => mount(BalanceCenterView, {
 describe('BalanceCenterView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    route.query = {}
     vi.stubGlobal('confirm', vi.fn(() => true))
     api.sites.mockResolvedValue(sites)
     api.listUpstreamSites.mockResolvedValue([
@@ -60,6 +66,96 @@ describe('BalanceCenterView', () => {
     api.deleteRechargeEvent.mockResolvedValue(undefined)
     api.getSettings.mockResolvedValue({ enabled: true, event_probe_enabled: true, email_enabled: true, low_balance_threshold: 5 })
     api.updateSettings.mockImplementation(async settings => settings)
+  })
+
+  it('从提醒定位站点、按充值档位预填10并选中输入文本，不自动入账', async () => {
+    route.query = { recharge_host: 'HBY.EXAMPLE', recharge_delta: '8.96337526', recharge_currency: 'USD', recharge_request: 'first' }
+    api.rechargeSummary.mockResolvedValue({ ...summary, items: [
+      { ...summary.items[0], amount: 100, record_type: 'recharge' },
+      { ...summary.items[1], amount: 10, record_type: 'recharge' }
+    ] })
+    const select = vi.spyOn(HTMLInputElement.prototype, 'select')
+    const wrapper = mountView(document.body)
+    await flushPromises()
+    const input = wrapper.get<HTMLInputElement>('[data-test="recharge-amount-1"]')
+    expect(input.element.value).toBe('10')
+    expect(document.activeElement).toBe(input.element)
+    expect(input.element.selectionStart).toBe(0)
+    expect(input.element.selectionEnd).toBe(2)
+    expect(select).toHaveBeenCalled()
+    expect(api.rechargeSummary).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="recharge-suggestion"]').text()).toContain('admin.balanceCenter.reminder.suggestion')
+    expect(api.createRechargeEvent).not.toHaveBeenCalled()
+    wrapper.unmount()
+    select.mockRestore()
+  })
+
+  it('已在余额中心时仍响应新的点击，切回录入页并向上匹配充值档位', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-recharge-records"]').trigger('click')
+    route.query = { recharge_host: 'vovo.example', recharge_delta: '8.96', recharge_currency: 'USD', recharge_request: 'second' }
+    await flushPromises()
+    expect(wrapper.get('[data-test="tab-add-recharge"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get<HTMLInputElement>('[data-test="recharge-amount-2"]').element.value).toBe('10')
+    expect(api.createRechargeEvent).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('重复点击同一提醒会重新选中输入框，但保留手工修正金额', async () => {
+    route.query = { recharge_host: 'hby.example', recharge_delta: '8.96', recharge_currency: 'USD', recharge_request: 'third' }
+    const wrapper = mountView(document.body)
+    await flushPromises()
+    const input = wrapper.get<HTMLInputElement>('[data-test="recharge-amount-1"]')
+    expect(input.element.value).toBe('10')
+    await input.setValue('12')
+    const other = wrapper.get<HTMLInputElement>('[data-test="recharge-amount-2"]')
+    other.element.focus()
+    route.query = { ...route.query, recharge_request: 'third-again' }
+    await flushPromises()
+    expect(input.element.value).toBe('12')
+    expect(document.activeElement).toBe(input.element)
+    expect(api.rechargeSummary).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each([
+    [1, '1'], [1.01, '5'], [2.6, '5'], [5, '5'], [5.01, '10'], [8.96, '10'],
+    [10, '10'], [15.6, '20'], [20, '20'], [40.8, '50'], [50, '50'],
+    [96.2, '100'], [100, '100'], [198.5, '200'], [200, '200'], [201, '300'], [300, '300'], [450, '500'], [500, '500']
+  ])('净增 %s 时按固定充值档位建议 %s', async (delta, expected) => {
+    route.query = { recharge_host: 'hby.example', recharge_delta: String(delta), recharge_request: String(delta) }
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-test="recharge-amount-1"]').element.value).toBe(expected)
+    expect(api.rechargeSummary).not.toHaveBeenCalled()
+    expect(api.createRechargeEvent).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('非法提醒参数或未配置站点不会预填和查询历史', async () => {
+    route.query = { recharge_host: 'missing.example', recharge_delta: '8.96' }
+    const wrapper = mountView()
+    await flushPromises()
+    expect(api.rechargeSummary).not.toHaveBeenCalled()
+    route.query = { recharge_host: 'hby.example', recharge_delta: 'Infinity' }
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-test="recharge-amount-1"]').element.value).toBe('')
+    expect(api.rechargeSummary).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('允许普通小数手工修正，但拒绝非十进制金额', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const input = wrapper.get('[data-test="recharge-amount-1"]')
+    await input.setValue('0x10')
+    await input.trigger('keyup.enter')
+    expect(api.createRechargeEvent).not.toHaveBeenCalled()
+    await input.setValue('8.5')
+    await input.trigger('keyup.enter')
+    expect(api.createRechargeEvent).toHaveBeenCalledWith(expect.objectContaining({ amount: 8.5 }))
+    wrapper.unmount()
   })
 
   it('默认只展示新增充值并仅加载站点', async () => {

@@ -75,15 +75,17 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 	}()
 	var previous sql.NullFloat64
 	var previousCurrency, previousAlertCurrency string
-	var previousAlertOldBalance sql.NullFloat64
+	var previousAlertActive bool
+	var previousAlertOldBalance, previousAlertDelta sql.NullFloat64
 	var previousAlertDetectedAt sql.NullTime
-	if err = tx.QueryRowContext(ctx, `SELECT balance, currency, alert_old_balance, alert_currency, alert_detected_at FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE`, item.Host).Scan(&previous, &previousCurrency, &previousAlertOldBalance, &previousAlertCurrency, &previousAlertDetectedAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT balance, currency, alert_active, alert_old_balance, alert_delta, alert_currency, alert_detected_at FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE`, item.Host).Scan(&previous, &previousCurrency, &previousAlertActive, &previousAlertOldBalance, &previousAlertDelta, &previousAlertCurrency, &previousAlertDetectedAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	increased := false
+	delta := 0.0
 	// API 与网页可能使用不同单位，单位变化只能重建基线，不能当作充值。
 	if previous.Valid && strings.EqualFold(strings.TrimSpace(previousCurrency), item.Currency) {
-		increased, _ = service.EvaluateUpstreamBalanceIncrease(&previous.Float64, item.Balance)
+		increased, delta = service.EvaluateUpstreamBalanceIncrease(&previous.Float64, item.Balance)
 	}
 	var reminder *service.UpstreamSiteBalanceReminder
 	var alertOldBalance, alertNewBalance, alertDelta, alertDetectedAt any
@@ -91,18 +93,20 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 	alertCurrency := item.Currency
 	if increased {
 		oldBalance, detectedAt := previous.Float64, item.ObservedAt
-		// 在行锁内只累加同币种的待处理提醒，避免沿用另一币种的金额和发现时间。
-		if strings.EqualFold(strings.TrimSpace(previousAlertCurrency), item.Currency) {
+		// 只累计同币种、仍待处理且达标的涨幅；小额波动与消费不混入累计金额。
+		// old/new 保留首尾实测余额，delta 是各次达标增幅之和，可能不同于两者净差。
+		if previousAlertActive && previousAlertDelta.Valid && previousAlertDelta.Float64 >= service.UpstreamSiteBalanceMinimumIncrease && strings.EqualFold(strings.TrimSpace(previousAlertCurrency), item.Currency) {
 			if previousAlertOldBalance.Valid {
 				oldBalance = previousAlertOldBalance.Float64
 			}
 			if previousAlertDetectedAt.Valid {
 				detectedAt = previousAlertDetectedAt.Time
 			}
+			delta += previousAlertDelta.Float64
 		}
 		alertOldBalance = oldBalance
 		alertNewBalance = item.Balance
-		alertDelta = item.Balance - oldBalance
+		alertDelta = delta
 		alertDetectedAt = detectedAt
 	}
 	_, err = tx.ExecContext(ctx, `

@@ -351,9 +351,13 @@ func isOpenAICompatibleModelNotFound400(respBody []byte) bool {
 }
 
 func isOpenAICompatibleModelNotFoundBody(respBody []byte) bool {
-	code := firstNonEmpty(upstreamErrorStringValues(respBody, "error.code", "response.error.code", "code")...)
+	code := firstNonEmpty(upstreamErrorStringValues(respBody, "error.code", "response.error.code")...)
 	if code != "" {
 		return strings.EqualFold(code, "model_not_found")
+	}
+	// 通用顶层状态码不能掩盖明确的模型错误消息，模型专用错误码仍可直接识别。
+	if strings.EqualFold(firstNonEmpty(upstreamErrorStringValues(respBody, "code")...), "model_not_found") {
+		return true
 	}
 
 	msg := strings.ToLower(strings.Join(upstreamErrorStringValues(respBody, "error.message", "response.error.message", "detail", "detail.message", "message"), " "))

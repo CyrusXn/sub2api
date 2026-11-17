@@ -16,6 +16,7 @@ const (
 
 type BalanceCenterEventQueue interface {
 	Schedule(context.Context, int64, time.Time) error
+	ScheduleBatch(context.Context, []int64, time.Time) error
 	PopDue(context.Context, time.Time, int64) ([]int64, error)
 }
 
@@ -25,6 +26,7 @@ type BalanceCenterAccountProber interface {
 
 type BalanceCenterUsageEventPublisher interface {
 	PublishAccountUsed(context.Context, int64)
+	PublishAccountsUsed(context.Context, []int64)
 }
 
 type BalanceCenterEventService struct {
@@ -68,7 +70,23 @@ func (s *BalanceCenterEventService) RefreshSettings(ctx context.Context) error {
 }
 
 func (s *BalanceCenterEventService) PublishAccountUsed(ctx context.Context, accountID int64) {
-	if s == nil || s.queue == nil || accountID <= 0 || !s.enabled.Load() {
+	s.PublishAccountsUsed(ctx, []int64{accountID})
+}
+
+func (s *BalanceCenterEventService) PublishAccountsUsed(ctx context.Context, accountIDs []int64) {
+	if s == nil || s.queue == nil || len(accountIDs) == 0 || !s.enabled.Load() {
+		return
+	}
+	unique := make([]int64, 0, len(accountIDs))
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if _, exists := seen[accountID]; accountID <= 0 || exists {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		unique = append(unique, accountID)
+	}
+	if len(unique) == 0 {
 		return
 	}
 	if ctx == nil {
@@ -76,8 +94,9 @@ func (s *BalanceCenterEventService) PublishAccountUsed(ctx context.Context, acco
 	}
 	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), balanceCenterEventPublishTimeout)
 	defer cancel()
-	if err := s.queue.Schedule(publishCtx, accountID, s.now().Add(balanceCenterEventMergeWindow)); err != nil {
-		slog.Warn("余额中心事件投递失败", "account_id", accountID, "error", err)
+	// 一批账号共用一次预算和一条队列命令，不能在结算提交后逐条累加等待。
+	if err := s.queue.ScheduleBatch(publishCtx, unique, s.now().Add(balanceCenterEventMergeWindow)); err != nil {
+		slog.Warn("余额中心事件投递失败", "account_count", len(unique), "error", err)
 	}
 }
 

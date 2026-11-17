@@ -12,7 +12,9 @@ export default {
     reminder: {
       title: '上游余额增加待补记',
       increased: '余额增加',
-      recordRecharge: '请在余额中心记录对应站点充值，记录成功后此提醒会自动移除。',
+      detectedIncrease: '累计检测增加',
+      recordRecharge: '点击定位到余额中心并预填建议金额，核对保存后提醒自动移除。',
+      suggestion: '检测增加 {delta} {currency}，已按充值档位向上匹配建议值。此值未换算币种或倍率，请核对实际人民币付款额后保存。',
       collapse: '收起提醒',
       expand: '展开提醒'
     },

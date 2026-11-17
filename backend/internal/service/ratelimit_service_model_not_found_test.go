@@ -445,8 +445,12 @@ func TestRateLimitService_HandleUpstreamError_Model400OnlyUsesAuthoritativeError
 		handled bool
 	}{
 		{`{"error":{"code":"model_not_found","message":"unknown model"}}`, true},
+		{`{"code":"invalid_argument","message":"Unknown model: foo"}`, true},
+		{`{"error":{"message":"The model is not supported"},"code":"bad_request"}`, true},
 		{`{"detail":"The 'gpt-test' model is not supported when using Codex with a ChatGPT account."}`, true},
 		{`{"error":{"message":"Invalid tools schema"}}`, false},
+		{`{"code":"invalid_argument","message":"Invalid value for temperature"}`, false},
+		{`{"error":{"code":"invalid_request_error","message":"Model not found: gpt-test"},"code":"model_not_found"}`, false},
 		{`{"error":{"message":"Invalid input"},"echo":"The 'gpt-test' model is not supported when using Codex with a ChatGPT account."}`, false},
 	} {
 		repo := &modelNotFoundAccountRepoStub{}
@@ -455,6 +459,7 @@ func TestRateLimitService_HandleUpstreamError_Model400OnlyUsesAuthoritativeError
 		account.Type = AccountTypeAPIKey
 		handled := svc.HandleUpstreamModelNotFound(context.Background(), account, "gpt-test", http.StatusBadRequest, []byte(tc.body))
 		require.Equal(t, tc.handled, handled, tc.body)
+		require.Zero(t, repo.tempCalls)
 		if tc.handled {
 			require.Len(t, repo.modelRateLimitCalls, 1)
 		} else {

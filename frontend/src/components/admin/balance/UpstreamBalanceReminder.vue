@@ -21,11 +21,13 @@
     </button>
 
     <div v-if="!collapsed" id="upstream-balance-reminder-list" class="max-h-[60vh] space-y-3 overflow-y-auto p-3">
-      <article
+      <button
         v-for="reminder in reminders"
         :key="reminder.host"
-        class="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm dark:border-amber-800 dark:bg-dark-900"
+        type="button"
+        class="block w-full rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-left text-sm hover:bg-amber-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-600 dark:border-amber-800 dark:bg-dark-900 dark:hover:bg-amber-950"
         :data-testid="`upstream-balance-reminder-${reminder.host}`"
+        @click="openRecharge(reminder)"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
@@ -38,11 +40,11 @@
         </div>
         <p class="mt-2 font-medium text-gray-800 dark:text-gray-200">
           {{ formatAmount(reminder.old_balance, reminder.currency) }} → {{ formatAmount(reminder.new_balance, reminder.currency) }}
-          <span class="text-emerald-700 dark:text-emerald-400">(+{{ formatAmount(reminder.delta, reminder.currency) }})</span>
+          <span class="text-emerald-700 dark:text-emerald-400">({{ t('admin.balanceCenter.reminder.detectedIncrease') }} +{{ formatAmount(reminder.delta, reminder.currency) }})</span>
         </p>
         <p class="mt-1 text-xs text-gray-500">{{ t('admin.balanceCenter.reminder.recordRecharge') }}</p>
         <time class="mt-1 block text-xs text-gray-400" :datetime="reminder.detected_at">{{ formatDate(reminder.detected_at) }}</time>
-      </article>
+      </button>
     </div>
   </aside>
 </template>
@@ -50,6 +52,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   subscribeUpstreamSiteBalanceReminders,
   type UpstreamSiteBalanceReminder,
@@ -57,10 +60,25 @@ import {
 } from '@/api/admin/balanceCenter'
 
 const { t, locale } = useI18n()
+const router = useRouter()
 const reminders = ref<UpstreamSiteBalanceReminder[]>([])
 const collapsed = ref(false)
 const latestVersions = new Map<string, number>()
 let unsubscribe: (() => void) | null = null
+let requestSequence = 0
+
+function openRecharge(reminder: UpstreamSiteBalanceReminder) {
+  void router.push({ name: 'AdminBalanceCenter', query: {
+    recharge_host: reminder.host,
+    recharge_delta: String(reminder.delta),
+    recharge_currency: reminder.currency,
+    recharge_request: `${Date.now()}-${++requestSequence}`
+  } })
+}
+
+function qualifies(reminder: UpstreamSiteBalanceReminder) {
+  return Number.isFinite(reminder.delta) && reminder.delta >= 1 - 1e-9
+}
 
 function applyEvent(event: UpstreamSiteBalanceReminderEvent) {
   if (event.type === 'snapshot') {
@@ -70,7 +88,7 @@ function applyEvent(event: UpstreamSiteBalanceReminderEvent) {
     for (const reminder of reminders.value) {
       latestVersions.set(reminder.host, Math.max(latestVersions.get(reminder.host) ?? -1, reminder.version))
     }
-    reminders.value = reminders.value.filter((reminder) => reminder.version >= (latestVersions.get(reminder.host) ?? reminder.version))
+    reminders.value = reminders.value.filter((reminder) => qualifies(reminder) && reminder.version >= (latestVersions.get(reminder.host) ?? reminder.version))
     return
   }
   if (event.type === 'resolved' && event.host) {
@@ -84,6 +102,10 @@ function applyEvent(event: UpstreamSiteBalanceReminderEvent) {
     const latestVersion = latestVersions.get(event.reminder.host) ?? -1
     if (event.reminder.version < latestVersion) return
     latestVersions.set(event.reminder.host, event.reminder.version)
+    if (!qualifies(event.reminder)) {
+      reminders.value = reminders.value.filter((item) => item.host !== event.reminder?.host)
+      return
+    }
     const index = reminders.value.findIndex((item) => item.host === event.reminder?.host)
     if (index < 0) reminders.value = [...reminders.value, event.reminder]
     else reminders.value = reminders.value.map((item, i) => i === index ? event.reminder! : item)

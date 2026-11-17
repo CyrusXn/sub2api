@@ -120,6 +120,7 @@ func TestIsOpenAICompatibleModelNotFound400(t *testing.T) {
 		want bool
 	}{
 		{name: "structured code", body: `{"error":{"code":"model_not_found","message":"No such deployment"}}`, want: true},
+		{name: "top level model code", body: `{"code":"model_not_found","message":"No such deployment"}`, want: true},
 		{name: "unknown provider", body: `{"error":{"message":"Unknown provider for model claude-x"}}`, want: true},
 		{name: "model not found", body: `{"error":{"message":"Model not found: claude-x"}}`, want: true},
 		{name: "unknown model", body: `{"error":{"message":"unknown model: claude-x"}}`, want: true},
@@ -128,6 +129,11 @@ func TestIsOpenAICompatibleModelNotFound400(t *testing.T) {
 		{name: "invalid parameter remains terminal", body: `{"error":{"code":"invalid_request_error","message":"Invalid value for temperature"}}`, want: false},
 		{name: "structured non-matching code overrides model not found message", body: `{"error":{"code":"invalid_request_error","message":"Model not found: claude-x"}}`, want: false},
 		{name: "structured non-matching error code overrides unsupported message", body: `{"error":{"code":"upstream_error","message":"The requested model is not supported"}}`, want: false},
+		{name: "nested code overrides top level model code", body: `{"error":{"code":"invalid_request_error","message":"Invalid input"},"code":"model_not_found"}`, want: false},
+		{name: "response error code overrides model message", body: `{"response":{"error":{"code":"invalid_request_error","message":"Model not found: claude-x"}},"code":"bad_request"}`, want: false},
+		{name: "top level parameter error remains terminal", body: `{"code":"invalid_argument","message":"Invalid value for temperature"}`, want: false},
+		{name: "top level code does not enable echo matching", body: `{"error":{"message":"Invalid request"},"code":"bad_request","echo":"model not found"}`, want: false},
+		{name: "flat xai error remains grok only", body: `{"code":"invalid_argument","error":"Unknown model: claude-x"}`, want: false},
 		{name: "echoed phrase is ignored", body: `{"error":{"message":"Invalid request"},"echo":"model not found"}`, want: false},
 	}
 

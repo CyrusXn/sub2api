@@ -58,7 +58,13 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// groups: OpenAI Live 与 Fast 强制策略都默认关闭，管理员显式开启后才生效。
 	requireColumn(t, tx, "groups", "allow_live", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "force_openai_fast", "boolean", 0, false)
+	requireColumn(t, tx, "groups", "force_openai_ultrafast", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "free_openai_fast", "boolean", 0, false)
+
+	// 分组汇总计算期间不阻塞明细写入，发布水位受保留边界和脏区间约束。
+	requireColumn(t, tx, "usage_group_rollup_state", "expired_before", "timestamp with time zone", 0, false)
+	requireColumn(t, tx, "usage_group_rollup_state", "building_until", "date", 0, true)
+	requireColumn(t, tx, "usage_group_rollup_state", "build_dirty_from", "date", 0, true)
 
 	// api_keys: key length should be 128
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)

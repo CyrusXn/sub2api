@@ -445,12 +445,14 @@ func createGroupUsageRollupTriggerTestSchema(t *testing.T, ctx context.Context, 
 	_, err = tx.ExecContext(ctx, `
 		CREATE TABLE users (id BIGINT PRIMARY KEY);
 		CREATE TABLE groups (id BIGINT PRIMARY KEY);
+		CREATE TABLE dashboard_business_daily (bucket_date DATE PRIMARY KEY, finalized_at TIMESTAMPTZ);
 	`+usageLogsDDL)
 	require.NoError(t, err)
 
 	for _, migrationName := range []string{
 		"232_group_usage_daily_rollups.sql",
 		"233_group_usage_rollup_timezone.sql",
+		"271_group_usage_rollup_nonblocking_build.sql",
 	} {
 		migrationSQL, readErr := migrations.FS.ReadFile(migrationName)
 		require.NoError(t, readErr)

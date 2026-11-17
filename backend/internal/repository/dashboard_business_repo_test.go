@@ -144,20 +144,15 @@ func TestCleanupUsageLogsFinalizesBusinessRollupBeforeDeletingDetails(t *testing
 	mock.ExpectExec(`(?s)UPDATE dashboard_business_daily.*SET finalized_at`).
 		WithArgs(cutoff, "UTC").
 		WillReturnResult(sqlmock.NewResult(0, 90))
+	mock.ExpectExec(groupRollupExpireExec).
+		WithArgs(cutoff).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)SELECT EXISTS.*pg_partitioned_table`).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectQuery(`(?s)WITH victims AS .*DELETE FROM usage_logs.*RETURNING created_at`).
+	mock.ExpectExec(`(?s)WITH victims AS .*SELECT tableoid, ctid.*ORDER BY created_at ASC, id ASC.*DELETE FROM usage_logs`).
 		WithArgs(cutoff, usageLogsCleanupBatchSize).
-		WillReturnRows(sqlmock.NewRows([]string{"created_at"}))
-	mock.ExpectCommit()
-	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
-		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
-			AddRow("2026-08-14", time.Unix(0, 0).UTC(), "UTC"))
-	mock.ExpectCommit()
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	expectGroupRollupPrecheck(mock, "2026-08-14", "UTC", true)
 
 	require.NoError(t, repo.CleanupUsageLogs(context.Background(), cutoff))
 	require.NoError(t, mock.ExpectationsWereMet())

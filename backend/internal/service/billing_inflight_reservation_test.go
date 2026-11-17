@@ -227,7 +227,7 @@ func TestInflightEstimate_CandidateAccountSettlementMultiplier(t *testing.T) {
 				groupID := int64(51)
 				accounts := make([]Account, len(tc.rates))
 				for i, rate := range tc.rates {
-					accounts[i] = Account{ID: int64(i + 1), Platform: gateway, AdminUsageMultiplier: rate}
+					accounts[i] = Account{ID: int64(i + 1), Platform: gateway, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: rate}
 				}
 				snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, gateway): accounts}}
 				attachInflightSnapshot(svc, snap)
@@ -257,9 +257,9 @@ func TestInflightEstimate_UnknownAccountMultiplierDoesNotMeanFree(t *testing.T) 
 		cancel   bool
 	}{
 		{name: "空候选"},
-		{name: "免费账号不支持当前模型", accounts: []Account{{Platform: PlatformAnthropic, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{"other-model": "claude-sonnet-4-5"}}}}},
+		{name: "免费账号不支持当前模型", accounts: []Account{{Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{"other-model": "claude-sonnet-4-5"}}}}},
 		{name: "快照失败", cancel: true},
-		{name: "非有限账号倍率", accounts: []Account{{Platform: PlatformAnthropic, AdminUsageMultiplier: inflightMultiplier(math.NaN())}}},
+		{name: "非有限账号倍率", accounts: []Account{{Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(math.NaN())}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newInflightEstimateGateway(t, nil)
@@ -283,9 +283,9 @@ func TestInflightEstimate_AccountMappingAndMultiplierShareSnapshot(t *testing.T)
 	svc := newInflightEstimateGateway(t, nil)
 	groupID := int64(53)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
-		{ID: 1, Platform: PlatformAnthropic, AdminUsageMultiplier: inflightMultiplier(0.5), Credentials: map[string]any{"model_mapping": map[string]any{"billing-alias": "claude-opus-4-1"}}},
-		{ID: 2, Platform: PlatformAnthropic, AdminUsageMultiplier: inflightMultiplier(3), Credentials: map[string]any{"model_mapping": map[string]any{"billing-alias": "claude-sonnet-4-5"}}},
-		{ID: 3, Platform: PlatformAnthropic, AdminUsageMultiplier: inflightMultiplier(100), Credentials: map[string]any{"model_mapping": map[string]any{"other-alias": "claude-opus-4-1"}}},
+		{ID: 1, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(0.5), Credentials: map[string]any{"model_mapping": map[string]any{"billing-alias": "claude-opus-4-1"}}},
+		{ID: 2, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(3), Credentials: map[string]any{"model_mapping": map[string]any{"billing-alias": "claude-sonnet-4-5"}}},
+		{ID: 3, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(100), Credentials: map[string]any{"model_mapping": map[string]any{"other-alias": "claude-opus-4-1"}}},
 	}}}
 	attachInflightSnapshot(svc, snap)
 	apiKey := &APIKey{User: &User{ID: 1, AdminUsageMultiplier: inflightMultiplier(0.5)}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 3}}
@@ -311,7 +311,7 @@ func TestInflightEstimate_ResolvedPlatformUsesMatchingAccountPool(t *testing.T) 
 			svc := newInflightEstimateGateway(t, nil)
 			groupID := int64(54)
 			snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, tc.platform): {
-				{ID: 1, Platform: tc.platform, AdminUsageMultiplier: inflightMultiplier(0.5), Credentials: map[string]any{"model_mapping": map[string]any{"route-alias": "route-alias"}}},
+				{ID: 1, Platform: tc.platform, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(0.5), Credentials: map[string]any{"model_mapping": map[string]any{"route-alias": "route-alias"}}},
 			}}}
 			attachInflightSnapshot(svc, snap)
 			price := 2.0
@@ -344,8 +344,8 @@ func TestInflightEstimate_AnthropicSelectionUsesRequestedModelBeforeChannelMappi
 	}, map[int64]string{groupID: PlatformAnthropic}))
 	svc := newInflightEstimateGateway(t, cs)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
-		{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{"claude-sonnet-4-5": "claude-sonnet-4-5"}}},
-		{ID: 2, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, AdminUsageMultiplier: inflightMultiplier(2), Credentials: map[string]any{"model_mapping": map[string]any{"public-alias": "claude-sonnet-4-5"}}},
+		{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{"claude-sonnet-4-5": "claude-sonnet-4-5"}}},
+		{ID: 2, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(2), Credentials: map[string]any{"model_mapping": map[string]any{"public-alias": "claude-sonnet-4-5"}}},
 	}}}
 	attachInflightSnapshot(svc, snap)
 	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
@@ -362,8 +362,8 @@ func TestInflightEstimate_CompositeWSUsesResolvedUpstreamSelectionModel(t *testi
 	groupID := int64(56)
 	svc := newInflightEstimateGateway(t, nil)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformOpenAI): {
-		{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{"public-alias": "gpt-5"}}},
-		{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, AdminUsageMultiplier: inflightMultiplier(2), Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}}},
+		{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{"public-alias": "gpt-5"}}},
+		{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(2), Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}}},
 	}}}
 	attachInflightSnapshot(svc, snap)
 	openai := &OpenAIGatewayService{cfg: svc.cfg, billingService: svc.billingService, resolver: svc.resolver, schedulerSnapshot: svc.schedulerSnapshot}
@@ -394,7 +394,7 @@ func TestInflightEstimate_OpenAISelectionCandidatesFreeAndUnmatched(t *testing.T
 			groupID := int64(57)
 			accounts := make([]Account, len(tc.mappings))
 			for i, model := range tc.mappings {
-				accounts[i] = Account{ID: int64(i + 1), Platform: PlatformOpenAI, Type: AccountTypeAPIKey, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{model: "gpt-5"}}}
+				accounts[i] = Account{ID: int64(i + 1), Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{model: "gpt-5"}}}
 			}
 			snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformOpenAI): accounts}}
 			attachInflightSnapshot(svc, snap)
@@ -429,8 +429,8 @@ func TestInflightEstimate_CapabilitySelectionDoesNotUseBillingModelFilter(t *tes
 			require.True(t, priced)
 			require.Greater(t, base, 0.0)
 			snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformGrok): {
-				{ID: 1, Platform: PlatformGrok, Type: AccountTypeAPIKey, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{tc.req.Model: tc.req.Model}}},
-				{ID: 2, Platform: PlatformGrok, Type: AccountTypeAPIKey, AdminUsageMultiplier: inflightMultiplier(2), Credentials: map[string]any{"model_mapping": map[string]any{"grok-4.5": "grok-4.5"}}},
+				{ID: 1, Platform: PlatformGrok, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(0), Credentials: map[string]any{"model_mapping": map[string]any{tc.req.Model: tc.req.Model}}},
+				{ID: 2, Platform: PlatformGrok, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, AdminUsageMultiplier: inflightMultiplier(2), Credentials: map[string]any{"model_mapping": map[string]any{"grok-4.5": "grok-4.5"}}},
 			}}}
 			attachInflightSnapshot(svc, snap)
 			var cost float64
@@ -659,8 +659,8 @@ func TestInflightEstimate_AccountLevelMappingFallsBackLikeBilling(t *testing.T) 
 	groupID := int64(31)
 	svc := newInflightEstimateGateway(t, nil)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
-		{ID: 1, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-sonnet-4-5"}}},
-		{ID: 2, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-opus-4-1"}}},
+		{ID: 1, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-sonnet-4-5"}}},
+		{ID: 2, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-opus-4-1"}}},
 	}}}
 	attachInflightSnapshot(svc, snap)
 	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
@@ -737,7 +737,7 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 	groupID := int64(40)
 	svc := newInflightEstimateGateway(t, nil)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
-		{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-40": "claude-sonnet-4-5", "claude-sonnet-4-5": "claude-sonnet-4-5"}}},
+		{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-40": "claude-sonnet-4-5", "claude-sonnet-4-5": "claude-sonnet-4-5"}}},
 	}}}
 	repo := attachInflightSnapshot(svc, snap)
 	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
@@ -768,7 +768,7 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 func TestInflightEstimate_NoGroupKeyUsesUngroupedAccountMapping(t *testing.T) {
 	svc := newInflightEstimateGateway(t, nil)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(0, PlatformAnthropic): {
-		{ID: 1, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-nog": "claude-opus-4-1"}}},
+		{ID: 1, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-nog": "claude-opus-4-1"}}},
 	}}}
 	attachInflightSnapshot(svc, snap)
 	apiKey := &APIKey{User: &User{ID: 1}}
@@ -793,7 +793,7 @@ func TestInflightEstimate_AccountMappingNoNegativeCaching(t *testing.T) {
 
 	_, priced := svc.EstimateInflightReservation(ctx, apiKey, req)
 	require.False(t, priced)
-	snap.set(groupID, PlatformAnthropic, []Account{{ID: 9, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-*": "claude-sonnet-4-5"}}}})
+	snap.set(groupID, PlatformAnthropic, []Account{{ID: 9, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"model_mapping": map[string]any{"acct-*": "claude-sonnet-4-5"}}}})
 	est, priced := svc.EstimateInflightReservation(ctx, apiKey, req)
 	require.True(t, priced, "new mapping (incl. wildcard) visible on next request")
 	require.Greater(t, est, 0.0)

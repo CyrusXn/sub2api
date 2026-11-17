@@ -67,6 +67,9 @@
         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 id="recharge-entry-title" class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.balanceCenter.addRecharge') }}</h2>
+            <p v-if="rechargeSuggestion" data-test="recharge-suggestion" class="mt-1 max-w-2xl text-xs text-amber-700 dark:text-amber-300">
+              {{ t('admin.balanceCenter.reminder.suggestion', rechargeSuggestion) }}
+            </p>
           </div>
           <form class="flex items-end gap-2" @submit.prevent="createSite">
             <input v-model="newSiteName" class="input h-10 w-32" :placeholder="t('admin.balanceCenter.siteName')" />
@@ -106,14 +109,14 @@
               <div class="flex items-center gap-2">
                 <input
                   v-model="amounts[site.id]"
+                  :ref="el => setRechargeInput(site.id, el)"
                   :data-test="`recharge-amount-${site.id}`"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
+                  type="text"
                   inputmode="decimal"
                   class="input min-w-0 flex-1"
                   :placeholder="t('admin.balanceCenter.amountPlaceholder')"
                   @keyup.enter="addRecharge(site)"
+                  @input="autoFilledAmounts.delete(site.id)"
                 />
                 <button type="button" class="btn btn-primary h-10 w-10 shrink-0 p-0" :title="t('admin.balanceCenter.addRecharge')" :disabled="busySiteID === site.id" @click="addRecharge(site)">
                   <Icon name="plus" size="sm" />
@@ -199,8 +202,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { adminAPI } from '@/api/admin'
 import type { BalanceCenterListParams, BalanceCenterRechargeEvent, BalanceCenterRechargeSummary, BalanceCenterSettings, BalanceCenterSite } from '@/api/admin/balanceCenter'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -217,10 +221,15 @@ type RangePreset = '24h' | 'today' | 'yesterday' | 'all'
 type ActiveTab = 'add' | 'records'
 
 const { t } = useI18n()
+const route = useRoute()
 const app = useAppStore()
 const sites = ref<BalanceCenterSite[]>([])
 const currentUpstreamHosts = ref<Set<string>>(new Set())
 const amounts = reactive<Record<number, string>>({})
+const entryReady = ref(false)
+const rechargeInputs = new Map<number, HTMLInputElement>()
+const autoFilledAmounts = new Map<number, string>()
+const rechargeSuggestion = ref<{ delta: number; currency: string }>()
 const activeTab = ref<ActiveTab>('add')
 const sitesLoading = ref(false)
 const recordsLoading = ref(false)
@@ -252,6 +261,42 @@ const sortedSummarySites = computed(() => [...summary.sites].sort((left, right) 
   const totalDifference = right.total_amount - left.total_amount
   return totalDifference || left.site_name.localeCompare(right.site_name)
 }))
+
+function setRechargeInput(siteID: number, element: unknown) {
+  if (element instanceof HTMLInputElement) rechargeInputs.set(siteID, element)
+  else rechargeInputs.delete(siteID)
+}
+
+function focusRecharge(siteID: number) {
+  const input = rechargeInputs.get(siteID)
+  input?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  input?.focus({ preventScroll: true })
+  input?.select()
+}
+
+watch([() => route.query, entryReady], async ([query, ready], _previous, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
+  rechargeSuggestion.value = undefined
+  if (!ready || typeof query.recharge_host !== 'string' || typeof query.recharge_delta !== 'string') return
+  const delta = Number(query.recharge_delta)
+  if (!Number.isFinite(delta) || delta < 1 - 1e-9 || delta > Number.MAX_SAFE_INTEGER) return
+  const host = query.recharge_host.trim().toLowerCase()
+  const site = sortedSites.value.find(candidate => candidate.normalized_domain.trim().toLowerCase() === host)
+  if (!site) return
+  activeTab.value = 'add'
+  const canPrefill = !amounts[site.id] || autoFilledAmounts.get(site.id) === String(amounts[site.id])
+  // 按用户确认的充值档位建议；更大金额沿用百元档，不从净余额声称还原实际付款。
+  const suggestion = String([1, 5, 10, 20, 50, 100, 200, 300, 500].find(amount => amount >= delta) ?? Math.ceil(delta / 100) * 100)
+  if (canPrefill) {
+    amounts[site.id] = suggestion
+    autoFilledAmounts.set(site.id, suggestion)
+    rechargeSuggestion.value = { delta, currency: typeof query.recharge_currency === 'string' ? query.recharge_currency.slice(0, 12) : '' }
+  }
+  await nextTick()
+  if (cancelled) return
+  focusRecharge(site.id)
+}, { immediate: true })
 
 function toLocalSecond(value: Date) {
   const pad = (input: number) => String(input).padStart(2, '0')
@@ -314,6 +359,7 @@ async function initial() {
     notifyError(error)
   } finally {
     sitesLoading.value = false
+    entryReady.value = true
   }
 
   try {
@@ -387,7 +433,9 @@ async function switchTab(tab: ActiveTab) {
 }
 
 async function addRecharge(site: BalanceCenterSite) {
-  const amount = Number(amounts[site.id])
+  const input = String(amounts[site.id] ?? '').trim()
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(input)) return
+  const amount = Number(input)
   if (!Number.isFinite(amount) || amount <= 0) return
   const occurredAt = new Date(rechargeTime.value)
   if (Number.isNaN(occurredAt.getTime())) return
@@ -404,6 +452,8 @@ async function addRecharge(site: BalanceCenterSite) {
       record_type: 'recharge'
     })
     amounts[site.id] = ''
+    autoFilledAmounts.delete(site.id)
+    rechargeSuggestion.value = undefined
     site.historical_recharge_total = (site.historical_recharge_total ?? 0) + amount
     app.showSuccess(t('admin.balanceCenter.rechargeAdded'))
   } catch (error) {

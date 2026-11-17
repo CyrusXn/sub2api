@@ -507,7 +507,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 				CacheReadTokens:     usageLog.CacheReadTokens,
 				ImageOutputTokens:   usageLog.ImageOutputTokens,
 			}, cost.TotalCost, pricingAt,
-			accountStatsLongContextPricingEnabled(longContextBillingGate) && !modelLongContextExempt,
+			accountStatsLongContextPricingEnabled(longContextBillingGate) && !modelLongContextExempt, 1,
 		)
 	}
 
