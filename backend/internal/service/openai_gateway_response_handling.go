@@ -194,14 +194,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		streamInterval = resolveGrokStreamIdleTimeout(cfgSec)
 	}
 	// 仅监控上游数据间隔超时，不被下游写入阻塞影响
-	var intervalTicker *time.Ticker
+	var intervalTimer *time.Timer
 	if streamInterval > 0 {
-		intervalTicker = time.NewTicker(streamInterval)
-		defer intervalTicker.Stop()
+		intervalTimer = time.NewTimer(streamInterval)
+		defer intervalTimer.Stop()
 	}
 	var intervalCh <-chan time.Time
-	if intervalTicker != nil {
-		intervalCh = intervalTicker.C
+	if intervalTimer != nil {
+		intervalCh = intervalTimer.C
 	}
 
 	keepaliveInterval := time.Duration(0)
@@ -1079,7 +1079,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 			}
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
-			if time.Since(lastRead) < streamInterval {
+			if remaining := streamInterval - time.Since(lastRead); remaining > 0 {
+				// Re-arm for the actual last-read deadline.
+				intervalTimer.Reset(remaining)
 				continue
 			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed {
@@ -1093,6 +1095,20 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
+			}
+			if account != nil && account.Platform == PlatformOpenAI &&
+				!openAIStreamClientOutputStarted(c, clientOutputStarted) && !eventShouldFlush {
+				_ = resp.Body.Close()
+				failoverErr := s.newOpenAIStreamFailoverErrorWithModel(
+					c, account, false, upstreamRequestID, nil,
+					"OpenAI upstream stream idle timeout before model output", mappedModel, resp.Header,
+				)
+				// Only keepalive comments can have reached the client. Joining the
+				// first-output failover budget also bounds the replay to one account
+				// switch, so one stalled request cannot walk the whole pool and apply
+				// HandleStreamTimeout to every account it touches.
+				failoverErr.SafeToFailoverAfterWrite = true
+				return resultWithUsage(), failoverErr
 			}
 			// Grok: short cool + account failover when no client-visible bytes
 			// were committed yet (pre-commit). After output started we keep the
@@ -1109,11 +1125,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return resultWithUsage(), s.newOpenAIResponsesCompletionFailover(c, account, false, resp, mappedModel, nil, "Upstream response stream timed out before completion")
 			}
 			if account != nil && account.Platform == PlatformOpenAI {
-				_ = s.writeOpenAIResponsesReadFailure(ctx, c, account, false, resp, responseID, originalModel, mappedModel, createdAtStamper.Value(), errors.New("upstream stream timeout"))
+				_ = s.writeOpenAIResponsesReadFailure(ctx, c, account, false, resp, responseID, originalModel, mappedModel, createdAtStamper.Value(), errOpenAIStreamIdleTimeout)
 			} else {
 				sendErrorEvent("stream_timeout", "Upstream response stream timed out")
 			}
-			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), errOpenAIStreamIdleTimeout
 
 		case <-firstOutputCh:
 			if firstOutputProgressObserved {

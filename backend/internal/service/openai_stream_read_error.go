@@ -23,6 +23,8 @@ const (
 // EOF — without a read error — before any terminal signal arrived.
 var ErrOpenAIUpstreamStreamTruncated = errors.New("upstream stream ended before any terminal chunk")
 
+var errOpenAIStreamIdleTimeout = errors.New("stream data interval timeout")
+
 type openAIUpstreamStreamReadError struct {
 	cause         error
 	clientCode    string
@@ -73,6 +75,9 @@ func OpenAIUpstreamStreamReadErrorDetails(err error) (code, message string, ok b
 
 func classifyOpenAIUpstreamStreamReadError(err error) (code, message string) {
 	if err != nil {
+		if errors.Is(err, errOpenAIStreamIdleTimeout) {
+			return "stream_timeout", "Upstream response stream timed out"
+		}
 		if errors.Is(err, ErrOpenAIUpstreamStreamTruncated) {
 			return OpenAIUpstreamStreamTruncatedCode, "Upstream response stream ended before completion"
 		}

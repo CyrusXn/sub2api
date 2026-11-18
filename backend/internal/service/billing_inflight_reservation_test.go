@@ -6,6 +6,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
+	"regexp"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -13,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,15 +78,20 @@ func newInflightEstimateGateway(t *testing.T, channelService *ChannelService) *G
 	cfg := &config.Config{}
 	cfg.Billing.InflightReservation = config.InflightReservationConfig{Enabled: true, DefaultMaxTokens: 1000, MaxInputTokens: 200000, MaxOutputTokens: 128000}
 	billing := NewBillingService(cfg, nil)
+	userGroupRateTTL := resolveUserGroupRateCacheTTL(cfg)
 	svc := &GatewayService{
-		cfg:            cfg,
-		billingService: billing,
-		resolver:       NewModelPricingResolver(channelService, billing),
-		channelService: channelService,
+		cfg:                cfg,
+		billingService:     billing,
+		resolver:           NewModelPricingResolver(channelService, billing),
+		channelService:     channelService,
+		userGroupRateCache: gocache.New(userGroupRateTTL, 0),
 	}
-	// 与正式构造器一样复用费率解析器，避免每次估算都创建缓存清理协程。
-	svc.userGroupRateResolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(cfg), &svc.userGroupRateSF, "service.gateway")
-	svc.userGroupRateCache = svc.userGroupRateResolver.cache
+	// Match NewGatewayService's shared resolver. Leaving it nil creates a new
+	// cache and janitor per estimate; their asynchronous finalizers distort heap
+	// measurements. This fixture needs no background expiration worker.
+	svc.userGroupRateResolver = newUserGroupRateResolver(
+		nil, svc.userGroupRateCache, userGroupRateTTL, &svc.userGroupRateSF, "service.gateway",
+	)
 	return svc
 }
 
@@ -734,6 +743,21 @@ func attachInflightSnapshot(svc *GatewayService, snap *inflightSnapshotCacheStub
 
 // 定价与附加倍率共用一次账号快照；随机模型名不直接查库、不产生按模型名的缓存（内存有界）。
 func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
+	// HeapAlloc is process-wide: unrelated background work in other service
+	// tests must not be counted as memory retained by this estimate path.
+	const childEnv = "SUB2API_BILLING_HEAP_TEST_CHILD"
+	if os.Getenv(childEnv) != "1" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		cmd := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.count=1")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "isolated heap test failed:\n%s", output)
+		return
+	}
+
 	groupID := int64(40)
 	svc := newInflightEstimateGateway(t, nil)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
@@ -759,6 +783,10 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&after)
+	// Keep the measured service and request reachable through the final GC so
+	// a per-model cache regression cannot disappear with a dead test fixture.
+	runtime.KeepAlive(svc)
+	runtime.KeepAlive(apiKey)
 	require.Zero(t, repo.dbCalls.Load(), "no direct DB query on the request path")
 	require.Equal(t, int64(n+100), snap.reads.Load(), "每次估算只读取一次调度器快照")
 	require.Less(t, int64(after.HeapAlloc)-int64(before.HeapAlloc), int64(8<<20), "no per-model cache growth")

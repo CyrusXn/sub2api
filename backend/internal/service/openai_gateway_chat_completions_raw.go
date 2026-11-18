@@ -336,13 +336,24 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	timeout := s.textStreamFirstOutputTimeout(effort)
 	expired, stopDeadline := startTextStreamReadDeadline(c, resp.Body, startTime, timeout)
 	defer stopDeadline()
-	scanner := s.newUpstreamSSEScanner(resp.Body)
 
 	var usage OpenAIUsage
 	var firstTokenMs *int
 	clientDisconnected := false
 	clientOutputStarted := false
 	semanticOutputSeen := false
+	flushPending := false
+	flushToClient := func() {
+		if flushPending && !clientDisconnected && clientOutputStarted {
+			c.Writer.Flush()
+			if semanticOutputSeen {
+				markTextStreamRealOutput(c)
+			}
+			recordTextStreamPacket(c)
+		}
+		flushPending = false
+	}
+	scanner := s.newUpstreamSSEScanner(&flushBeforeUpstreamRead{r: resp.Body, flush: flushToClient})
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
@@ -424,24 +435,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 		line = s.replaceModelInSSELine(line, originalModel)
 		writeLine(line)
-		if line == "" {
-			if !clientDisconnected && clientOutputStarted {
-				c.Writer.Flush()
-				if semanticOutputSeen {
-					markTextStreamRealOutput(c)
-				}
-				recordTextStreamPacket(c)
-			}
-			continue
-		}
-		if !clientDisconnected && clientOutputStarted {
-			c.Writer.Flush()
-			if semanticOutputSeen {
-				markTextStreamRealOutput(c)
-			}
-			recordTextStreamPacket(c)
-		}
+		// 不逐行 flush：scanner 下次向上游读取前统一 flush（见 flushBeforeUpstreamRead）。
+		flushPending = true
 	}
+	flushToClient()
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
