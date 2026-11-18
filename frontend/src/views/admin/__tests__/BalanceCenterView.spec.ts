@@ -133,6 +133,30 @@ describe('BalanceCenterView', () => {
     wrapper.unmount()
   })
 
+  it.each([
+    [430.1590791, 0.1, '50'],
+    [96.2, 0.1, '10'],
+    [8.96, 0.1, '1'],
+    [8.96, 2, '20'],
+    [500, 0.1, '50'],
+    [430.1590791, 1, '500'],
+    [430.1590791, undefined, '500'],
+    [430.1590791, 0, '500'],
+    [430.1590791, -1, '500'],
+    [430.1590791, Number.NaN, '500'],
+    [430.1590791, Number.POSITIVE_INFINITY, '500']
+  ])('净增 %s、充值换算系数 %s 时先换算再按档位建议 %s', async (delta, scale, expected) => {
+    api.listUpstreamSites.mockResolvedValue([
+      { host: 'HBY.EXAMPLE', account_ids: [10], recharge_conversion_scale: scale }
+    ])
+    route.query = { recharge_host: 'hby.example', recharge_delta: String(delta), recharge_currency: 'USD' }
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-test="recharge-amount-1"]').element.value).toBe(expected)
+    expect(api.createRechargeEvent).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('非法提醒参数或未配置站点不会预填和查询历史', async () => {
     route.query = { recharge_host: 'missing.example', recharge_delta: '8.96' }
     const wrapper = mountView()

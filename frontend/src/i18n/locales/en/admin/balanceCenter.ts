@@ -11,7 +11,7 @@ export default {
     invalidLowBalanceThreshold: 'The low balance threshold must be a number greater than or equal to 0',
     reminder: {
       detectedIncrease: 'Total detected increase',
-      suggestion: 'Detected an increase of {delta} {currency}. Prefilled the next recharge denomination as a suggestion without currency or multiplier conversion. Verify the actual CNY payment before saving.',
+      suggestion: 'Detected an increase of {delta} {currency}. Applied the recharge conversion scale {scale}, then prefilled the next recharge denomination. No currency conversion was applied. Verify the actual CNY payment before saving.',
       title: 'Upstream balance increase to record',
       increased: 'Balance increased',
       recordRecharge: 'Click to locate this site and prefill a suggested amount in Balance Center. Verify and save to clear this reminder.',

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"testing"
 
@@ -10,6 +11,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUpstreamSiteCredentialRepositoryRechargeConversionScale(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		first    float64
+		fallback bool
+		want     float64
+	}{
+		{name: "使用首个有效钱包探测账号的系数", first: 1, want: 0.1},
+		{name: "没有有效钱包探测账号时沿用首账号", first: 0.2, fallback: true, want: 0.2},
+		{name: "非法系数沿用账号默认口径", first: 0, fallback: true, want: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteAccountsQuery)).WithArgs(false).WillReturnRows(
+				sqlmock.NewRows([]string{"id", "name", "base_url", "upstream_recharge_scale", "status", "type", "has_api_key"}).
+					AddRow(1, "首账号", "https://hby.example/v1", tt.first, "inactive", "apikey", true).
+					AddRow(2, "无密钥账号", "https://HBY.EXAMPLE", 0.3, "active", "apikey", false).
+					AddRow(3, "钱包探测账号", "https://hby.example/v1", 0.1, "active", "apikey", !tt.fallback).
+					AddRow(4, "后续账号", "https://hby.example/v1", 0.4, "active", "apikey", !tt.fallback),
+			)
+			mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteCredentialsQuery)).WillReturnRows(
+				sqlmock.NewRows([]string{"host", "display_name", "login_username", "password_encrypted"}),
+			)
+			sites, err := NewUpstreamSiteCredentialRepository(db).ListSites(context.Background(), false)
+			require.NoError(t, err)
+			require.Len(t, sites, 1)
+			require.Equal(t, []int64{1, 2, 3, 4}, sites[0].AccountIDs)
+			encoded, err := json.Marshal(sites[0])
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &payload))
+			require.Equal(t, tt.want, payload["recharge_conversion_scale"])
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestUpstreamSiteCredentialRepositoryListSitesGroupsAccountsByHost(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -17,10 +57,10 @@ func TestUpstreamSiteCredentialRepositoryListSitesGroupsAccountsByHost(t *testin
 	repo := NewUpstreamSiteCredentialRepository(db)
 
 	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteAccountsQuery)).WithArgs(false).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "name", "base_url"}).
-			AddRow(12, "VoVo Plus", "https://vovoapi.com/v1").
-			AddRow(14, "VoVo Image", "https://VOVOAPI.com").
-			AddRow(4, "AIGC", "https://api.aigclink.xyz/v1"),
+		sqlmock.NewRows([]string{"id", "name", "base_url", "upstream_recharge_scale", "status", "type", "has_api_key"}).
+			AddRow(12, "VoVo Plus", "https://vovoapi.com/v1", 1, "active", "apikey", true).
+			AddRow(14, "VoVo Image", "https://VOVOAPI.com", 1, "active", "apikey", true).
+			AddRow(4, "AIGC", "https://api.aigclink.xyz/v1", 1, "active", "apikey", true),
 	)
 	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteCredentialsQuery)).WillReturnRows(
 		sqlmock.NewRows([]string{"host", "display_name", "login_username", "password_encrypted"}).
@@ -57,11 +97,11 @@ func TestUpstreamSiteCredentialRepositoryHistoryIncludesAllAccountIDs(t *testing
 	t.Cleanup(func() { _ = db.Close() })
 	repo := NewUpstreamSiteCredentialRepository(db)
 	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteAccountsQuery)).WithArgs(true).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "base_url"}).
-			AddRow(1, "Claude", "https://relay.example/v1").
-			AddRow(2, "Gemini（历史账号）", "https://relay.example/v1beta").
-			AddRow(3, "Grok", "https://RELAY.example").
-			AddRow(4, "国模", "https://relay.example/api"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "base_url", "upstream_recharge_scale", "status", "type", "has_api_key"}).
+			AddRow(1, "Claude", "https://relay.example/v1", 1, "active", "apikey", true).
+			AddRow(2, "Gemini（历史账号）", "https://relay.example/v1beta", 1, "active", "apikey", true).
+			AddRow(3, "Grok", "https://RELAY.example", 1, "active", "apikey", true).
+			AddRow(4, "国模", "https://relay.example/api", 1, "active", "apikey", true))
 	mock.ExpectQuery(regexp.QuoteMeta(upstreamSiteCredentialsQuery)).
 		WillReturnRows(sqlmock.NewRows([]string{"host", "display_name", "login_username", "password_encrypted"}))
 	sites, err := repo.ListSites(context.Background(), true)

@@ -1148,6 +1148,7 @@ export interface UpstreamSiteCredentialSummary {
   login_username: string
   has_password: boolean
   protocol: 'innom' | 'newapi'
+  recharge_conversion_scale?: number
 }
 
 export interface UpstreamSiteCredentialInput {

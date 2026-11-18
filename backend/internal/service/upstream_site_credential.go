@@ -24,14 +24,15 @@ type UpstreamSiteCredential struct {
 }
 
 type UpstreamSiteCredentialSummary struct {
-	Host          string   `json:"host"`
-	WebsiteURL    string   `json:"website_url"`
-	AccountIDs    []int64  `json:"account_ids"`
-	AccountNames  []string `json:"account_names"`
-	LoginUsername string   `json:"login_username"`
-	HasPassword   bool     `json:"has_password"`
-	Protocol      string   `json:"protocol"`
-	DisplayName   string   `json:"display_name"`
+	Host                    string   `json:"host"`
+	WebsiteURL              string   `json:"website_url"`
+	AccountIDs              []int64  `json:"account_ids"`
+	AccountNames            []string `json:"account_names"`
+	LoginUsername           string   `json:"login_username"`
+	HasPassword             bool     `json:"has_password"`
+	Protocol                string   `json:"protocol"`
+	DisplayName             string   `json:"display_name"`
+	RechargeConversionScale float64  `json:"recharge_conversion_scale"`
 }
 
 func defaultUpstreamSiteDisplayName(accountNames []string, host string) string {

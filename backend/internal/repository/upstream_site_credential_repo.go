@@ -12,7 +12,8 @@ import (
 )
 
 const upstreamSiteAccountsQuery = `
-SELECT id, name, credentials->>'base_url'
+SELECT id, name, credentials->>'base_url', upstream_recharge_scale, status, type,
+       COALESCE(credentials->>'api_key', '') <> '' AS has_api_key
 FROM accounts
 WHERE ($1 OR deleted_at IS NULL)
   AND COALESCE(credentials->>'base_url', '') <> ''
@@ -56,10 +57,13 @@ func (r *upstreamSiteCredentialRepository) ListSites(ctx context.Context, includ
 	defer func() { _ = rows.Close() }()
 
 	sitesByHost := make(map[string]*service.UpstreamSiteCredentialSummary)
+	preferredAccounts := make(map[string]bool)
 	for rows.Next() {
 		var id int64
-		var name, baseURL string
-		if err := rows.Scan(&id, &name, &baseURL); err != nil {
+		var name, baseURL, status, accountType string
+		var scale float64
+		var hasAPIKey bool
+		if err := rows.Scan(&id, &name, &baseURL, &scale, &status, &accountType, &hasAPIKey); err != nil {
 			return nil, fmt.Errorf("scan upstream site account: %w", err)
 		}
 		host, websiteURL, ok := repositoryNormalizeUpstreamSite(baseURL)
@@ -67,17 +71,24 @@ func (r *upstreamSiteCredentialRepository) ListSites(ctx context.Context, includ
 			continue
 		}
 		site := sitesByHost[host]
+		account := &service.Account{UpstreamRechargeScale: scale, Status: status, Type: accountType}
 		if site == nil {
 			protocol := "innom"
 			if host == "api.aigclink.xyz" {
 				protocol = "newapi"
 			}
 			site = &service.UpstreamSiteCredentialSummary{
-				Host:       host,
-				WebsiteURL: websiteURL,
-				Protocol:   protocol,
+				Host:                    host,
+				WebsiteURL:              websiteURL,
+				Protocol:                protocol,
+				RechargeConversionScale: account.UpstreamRechargeConversionScale(),
 			}
 			sitesByHost[host] = site
+		}
+		// 与钱包探测选用账号的顺序一致，避免同站点多个账号的系数被后续账号覆盖。
+		if !preferredAccounts[host] && account.IsActive() && account.Type == service.AccountTypeAPIKey && hasAPIKey {
+			site.RechargeConversionScale = account.UpstreamRechargeConversionScale()
+			preferredAccounts[host] = true
 		}
 		site.AccountIDs = append(site.AccountIDs, id)
 		site.AccountNames = append(site.AccountNames, name)

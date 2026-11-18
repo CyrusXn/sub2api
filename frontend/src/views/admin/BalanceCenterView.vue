@@ -224,12 +224,12 @@ const { t } = useI18n()
 const route = useRoute()
 const app = useAppStore()
 const sites = ref<BalanceCenterSite[]>([])
-const currentUpstreamHosts = ref<Set<string>>(new Set())
+const currentUpstreamScales = ref<Map<string, number>>(new Map())
 const amounts = reactive<Record<number, string>>({})
 const entryReady = ref(false)
 const rechargeInputs = new Map<number, HTMLInputElement>()
 const autoFilledAmounts = new Map<number, string>()
-const rechargeSuggestion = ref<{ delta: number; currency: string }>()
+const rechargeSuggestion = ref<{ delta: number; currency: string; scale: number }>()
 const activeTab = ref<ActiveTab>('add')
 const sitesLoading = ref(false)
 const recordsLoading = ref(false)
@@ -252,7 +252,7 @@ const summary = reactive<BalanceCenterRechargeSummary>({ total_amount: 0, items:
 const alertSettings = reactive<BalanceCenterSettings>({ enabled: false, event_probe_enabled: false, email_enabled: false, low_balance_threshold: 5 })
 
 const sortedSites = computed(() => [...sites.value]
-  .filter((site) => currentUpstreamHosts.value.has(site.normalized_domain.trim().toLowerCase()))
+  .filter((site) => currentUpstreamScales.value.has(site.normalized_domain.trim().toLowerCase()))
   .sort((left, right) => {
     const totalDifference = (right.historical_recharge_total ?? 0) - (left.historical_recharge_total ?? 0)
     return totalDifference || left.normalized_domain.localeCompare(right.normalized_domain)
@@ -284,14 +284,18 @@ watch([() => route.query, entryReady], async ([query, ready], _previous, onClean
   const host = query.recharge_host.trim().toLowerCase()
   const site = sortedSites.value.find(candidate => candidate.normalized_domain.trim().toLowerCase() === host)
   if (!site) return
+  const configuredScale = currentUpstreamScales.value.get(host) ?? 1
+  const scale = Number.isFinite(configuredScale) && configuredScale > 0 ? configuredScale : 1
+  const convertedDelta = delta * scale
+  if (!Number.isFinite(convertedDelta) || convertedDelta <= 0 || convertedDelta > Number.MAX_SAFE_INTEGER) return
   activeTab.value = 'add'
   const canPrefill = !amounts[site.id] || autoFilledAmounts.get(site.id) === String(amounts[site.id])
-  // 按用户确认的充值档位建议；更大金额沿用百元档，不从净余额声称还原实际付款。
-  const suggestion = String([1, 5, 10, 20, 50, 100, 200, 300, 500].find(amount => amount >= delta) ?? Math.ceil(delta / 100) * 100)
+  // 先按账号系数换算充值口径，再向上匹配档位；净余额增量不能直接还原实际付款。
+  const suggestion = String([1, 5, 10, 20, 50, 100, 200, 300, 500].find(amount => amount >= convertedDelta) ?? Math.ceil(convertedDelta / 100) * 100)
   if (canPrefill) {
     amounts[site.id] = suggestion
     autoFilledAmounts.set(site.id, suggestion)
-    rechargeSuggestion.value = { delta, currency: typeof query.recharge_currency === 'string' ? query.recharge_currency.slice(0, 12) : '' }
+    rechargeSuggestion.value = { delta, currency: typeof query.recharge_currency === 'string' ? query.recharge_currency.slice(0, 12) : '', scale }
   }
   await nextTick()
   if (cancelled) return
@@ -353,9 +357,9 @@ async function initial() {
 
   try {
     const upstreamSites = await adminAPI.accounts.listUpstreamSites({ include_history: false })
-    currentUpstreamHosts.value = new Set(upstreamSites.map((site) => site.host.trim().toLowerCase()))
+    currentUpstreamScales.value = new Map(upstreamSites.map((site) => [site.host.trim().toLowerCase(), site.recharge_conversion_scale ?? 1]))
   } catch (error) {
-    currentUpstreamHosts.value = new Set()
+    currentUpstreamScales.value = new Map()
     notifyError(error)
   } finally {
     sitesLoading.value = false
