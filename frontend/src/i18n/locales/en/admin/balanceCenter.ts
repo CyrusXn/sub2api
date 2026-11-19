@@ -12,11 +12,20 @@ export default {
     reminder: {
       detectedIncrease: 'Total detected increase',
       suggestion: 'Detected an increase of {delta} {currency}. Applied the recharge conversion scale {scale}, then prefilled the next recharge denomination. No currency conversion was applied. Verify the actual CNY payment before saving.',
-      title: 'Upstream balance increase to record',
+      title: 'Recharge review',
       increased: 'Balance increased',
-      recordRecharge: 'Click to locate this site and prefill a suggested amount in Balance Center. Verify and save to clear this reminder.',
+      recordRecharge: 'Recharge records keep their detected occurrence time. Edit the amount, then confirm individually or in bulk.',
       collapse: 'Collapse reminders',
-      expand: 'Expand reminders'
+      expand: 'Expand review list',
+      amount: 'Recharge amount',
+      save: 'Save amount',
+      confirm: 'Confirm',
+      confirmAll: 'Confirm all',
+      loading: 'Loading pending recharges…',
+      loadError: 'Could not load pending recharges',
+      saved: 'Recharge amount updated',
+      confirmed: 'Recharge confirmed',
+      confirmedAll: 'All pending recharges confirmed'
     },
     addRecharge: 'Add recharge',
     addRechargeHint: 'Enter an amount and press Enter. The current second is used by default.',

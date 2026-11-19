@@ -66,17 +66,19 @@ type BalanceCenterManualRow struct {
 }
 
 type BalanceCenterRechargeEvent struct {
-	ID         int64     `json:"id"`
-	Source     string    `json:"source"`
-	SourceKey  string    `json:"source_key"`
-	SiteID     *int64    `json:"site_id,omitempty"`
-	SiteLabel  string    `json:"site_label,omitempty"`
-	AccountID  *int64    `json:"account_id,omitempty"`
-	Amount     float64   `json:"amount"`
-	Currency   string    `json:"currency"`
-	OccurredAt time.Time `json:"occurred_at"`
-	Note       string    `json:"note"`
-	RecordType string    `json:"record_type"`
+	ID           int64      `json:"id"`
+	Source       string     `json:"source"`
+	SourceKey    string     `json:"source_key"`
+	SiteID       *int64     `json:"site_id,omitempty"`
+	SiteLabel    string     `json:"site_label,omitempty"`
+	AccountID    *int64     `json:"account_id,omitempty"`
+	Amount       float64    `json:"amount"`
+	Currency     string     `json:"currency"`
+	OccurredAt   time.Time  `json:"occurred_at"`
+	Note         string     `json:"note"`
+	RecordType   string     `json:"record_type"`
+	ReviewStatus string     `json:"review_status"`
+	ReviewedAt   *time.Time `json:"reviewed_at,omitempty"`
 }
 
 type BalanceCenterRechargeSiteSummary struct {
@@ -145,6 +147,9 @@ type BalanceCenterAdminRepository interface {
 	GetBalanceCenterRechargeSummary(context.Context, BalanceCenterListFilter) (*BalanceCenterRechargeSummary, error)
 	CreateBalanceCenterRechargeEvent(context.Context, *BalanceCenterRechargeEvent) (*BalanceCenterRechargeEvent, error)
 	DeleteBalanceCenterRechargeEvent(context.Context, int64) error
+	UpdatePendingRechargeAmount(context.Context, int64, float64) error
+	ConfirmPendingRecharge(context.Context, int64) error
+	ConfirmAllPendingRecharges(context.Context) (int64, error)
 	ListBalanceCenterReconciliations(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterReconciliation], error)
 	CreateBalanceCenterReconciliation(context.Context, *BalanceCenterReconciliation) (*BalanceCenterReconciliation, error)
 	ListBalanceCenterAlerts(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterAlertDelivery], error)
@@ -253,6 +258,45 @@ func (s *BalanceCenterService) GetRechargeSummary(ctx context.Context, filter Ba
 		return nil, err
 	}
 	return repository.GetBalanceCenterRechargeSummary(ctx, normalizeBalanceCenterFilter(filter))
+}
+
+func (s *BalanceCenterService) ListPendingRechargeReviews(ctx context.Context) (*BalanceCenterPage[BalanceCenterRechargeEvent], error) {
+	filter := normalizeBalanceCenterFilter(BalanceCenterListFilter{Page: 1, PageSize: 100, Status: "pending"})
+	repository, err := s.adminRepository()
+	if err != nil {
+		return nil, err
+	}
+	return repository.ListBalanceCenterRechargeEvents(ctx, filter)
+}
+
+func (s *BalanceCenterService) UpdatePendingRechargeAmount(ctx context.Context, id int64, amount float64) error {
+	if id <= 0 || amount <= 0 {
+		return errors.New("充值记录或金额无效")
+	}
+	repository, err := s.adminRepository()
+	if err != nil {
+		return err
+	}
+	return repository.UpdatePendingRechargeAmount(ctx, id, amount)
+}
+
+func (s *BalanceCenterService) ConfirmPendingRecharge(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return errors.New("充值记录 ID 无效")
+	}
+	repository, err := s.adminRepository()
+	if err != nil {
+		return err
+	}
+	return repository.ConfirmPendingRecharge(ctx, id)
+}
+
+func (s *BalanceCenterService) ConfirmAllPendingRecharges(ctx context.Context) (int64, error) {
+	repository, err := s.adminRepository()
+	if err != nil {
+		return 0, err
+	}
+	return repository.ConfirmAllPendingRecharges(ctx)
 }
 
 func (s *BalanceCenterService) CreateRechargeEvent(ctx context.Context, event *BalanceCenterRechargeEvent) (*BalanceCenterRechargeEvent, error) {

@@ -87,6 +87,7 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 	if previous.Valid && strings.EqualFold(strings.TrimSpace(previousCurrency), item.Currency) {
 		increased, delta = service.EvaluateUpstreamBalanceIncrease(&previous.Float64, item.Balance)
 	}
+	observedDelta := delta
 	var reminder *service.UpstreamSiteBalanceReminder
 	var alertOldBalance, alertNewBalance, alertDelta, alertDetectedAt any
 	// 非上涨采样也会先校验 INSERT 的非空约束，提醒币种不能传 NULL。
@@ -108,6 +109,27 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		alertNewBalance = item.Balance
 		alertDelta = delta
 		alertDetectedAt = detectedAt
+		// 充值归属检测时间；审核时间仅用于 review 字段，绝不回写 occurred_at。
+		amount := int64(observedDelta)
+		if amount > 0 {
+			sourceKey := fmt.Sprintf("%s:%s", strings.ToLower(item.Host), item.ObservedAt.UTC().Format(time.RFC3339Nano))
+			_, err = tx.ExecContext(ctx, `
+WITH site AS (
+ INSERT INTO balance_center_sites (name, display_name, normalized_domain, base_url, source, probe_supported)
+ VALUES ($5, $5, LOWER($4), $6, 'sub2api', TRUE)
+ ON CONFLICT (normalized_domain) DO UPDATE SET
+   display_name=CASE WHEN balance_center_sites.display_name='' THEN EXCLUDED.display_name ELSE balance_center_sites.display_name END,
+   base_url=CASE WHEN balance_center_sites.base_url='' THEN EXCLUDED.base_url ELSE balance_center_sites.base_url END,
+   updated_at=NOW()
+ RETURNING id, COALESCE(NULLIF(display_name, ''), name) AS site_label
+)
+INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, amount, currency, occurred_at, note, record_type, review_status)
+SELECT 'upstream_auto', $1, site.id, site.site_label, $2, 'CNY', $3, '余额增加自动识别，待审核', 'recharge', 'pending' FROM site
+ON CONFLICT (source, source_key) DO NOTHING`, sourceKey, amount, item.ObservedAt, item.Host, item.DisplayName, item.BaseURL)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO upstream_site_balance_observations (

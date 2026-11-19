@@ -1,120 +1,74 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
 import UpstreamBalanceReminder from '../UpstreamBalanceReminder.vue'
-import type { UpstreamSiteBalanceReminderEvent } from '@/api/admin/balanceCenter'
 
-const subscribeMock = vi.hoisted(() => vi.fn())
-const pushMock = vi.hoisted(() => vi.fn())
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
-
-vi.mock('@/api/admin/balanceCenter', () => ({
-  subscribeUpstreamSiteBalanceReminders: subscribeMock,
+const api = vi.hoisted(() => ({
+  pendingRechargeReviews: vi.fn(),
+  updatePendingRechargeAmount: vi.fn(),
+  confirmPendingRecharge: vi.fn(),
+  confirmAllPendingRecharges: vi.fn(),
+  subscribe: vi.fn(),
+  showError: vi.fn(),
+  showSuccess: vi.fn()
 }))
 
+vi.mock('@/api/admin/balanceCenter', () => ({
+  balanceCenterAPI: {
+    pendingRechargeReviews: api.pendingRechargeReviews,
+    updatePendingRechargeAmount: api.updatePendingRechargeAmount,
+    confirmPendingRecharge: api.confirmPendingRecharge,
+    confirmAllPendingRecharges: api.confirmAllPendingRecharges
+  },
+  subscribeUpstreamSiteBalanceReminders: api.subscribe
+}))
+
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: api.showError, showSuccess: api.showSuccess }) }))
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
-  return {
-    ...actual,
-    useI18n: () => ({ locale: { value: 'en' }, t: (key: string) => key }),
-  }
+  return { ...actual, useI18n: () => ({ locale: { value: 'zh' }, t: (key: string) => key }) }
 })
 
-const reminder = (host: string, delta: number) => ({
-  host,
-  display_name: host,
-  old_balance: 10,
-  new_balance: 10 + delta,
-  delta,
-  currency: 'USD',
-  detected_at: '2026-11-11T00:00:00.000Z',
-  version: 1,
-})
-
-function emit(event: UpstreamSiteBalanceReminderEvent) {
-  const callback = subscribeMock.mock.calls[0]?.[0] as ((value: UpstreamSiteBalanceReminderEvent) => void) | undefined
-  expect(callback).toBeTypeOf('function')
-  callback?.(event)
-}
+const recharge = { id: 5, source: 'upstream_auto', source_key: 'a.example:stamp', site_label: '站点 A', amount: 8, currency: 'CNY', occurred_at: '2026-11-11T00:00:00.000Z', note: '', record_type: 'recharge' as const, review_status: 'pending' as const }
 
 describe('UpstreamBalanceReminder', () => {
   beforeEach(() => {
-    subscribeMock.mockReset()
-    subscribeMock.mockReturnValue(vi.fn())
+    vi.clearAllMocks()
+    api.pendingRechargeReviews.mockResolvedValue({ items: [recharge], total: 1 })
+    api.subscribe.mockReturnValue(vi.fn())
   })
-
   afterEach(() => vi.clearAllMocks())
 
-  it('restores snapshot, tracks multiple sites, and resolves only the matching site', async () => {
+  it('shows a floating review count, hides the list until expanded, and preserves detected time', async () => {
     const wrapper = mount(UpstreamBalanceReminder)
-    expect(subscribeMock).toHaveBeenCalledOnce()
-    emit({ type: 'snapshot', reminders: [reminder('a.example', 5), reminder('b.example', 8)] })
-    await nextTick()
-
-    expect(wrapper.findAll('[data-testid^="upstream-balance-reminder-"]')).toHaveLength(2)
-    emit({ type: 'resolved', host: 'a.example' })
-    await nextTick()
-    expect(wrapper.findAll('[data-testid^="upstream-balance-reminder-"]')).toHaveLength(1)
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-b.example"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-a.example"]').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('allows collapsing but provides no dismiss action', async () => {
-    const wrapper = mount(UpstreamBalanceReminder)
-    emit({ type: 'upsert', reminder: reminder('a.example', 5) })
-    await nextTick()
-
-    const toggle = wrapper.get('button')
-    expect(toggle.attributes('aria-expanded')).toBe('true')
-    expect(wrapper.findAll('button')).toHaveLength(2)
-    await toggle.trigger('click')
-    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="upstream-balance-reminders"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="upstream-balance-reminder-list"]').exists()).toBe(false)
+    await wrapper.get('aside > button').trigger('click')
+    expect(wrapper.get('time').attributes('datetime')).toBe(recharge.occurred_at)
     wrapper.unmount()
   })
 
-  it('ignores an older resolution after a newer balance increase', async () => {
+  it('saves an edited amount before confirming and removes confirmed rows', async () => {
     const wrapper = mount(UpstreamBalanceReminder)
-    emit({ type: 'upsert', reminder: { ...reminder('a.example', 5), version: 3 } })
-    emit({ type: 'resolved', host: 'a.example', version: 2 })
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-a.example"]').exists()).toBe(true)
+    await flushPromises()
+    await wrapper.get('aside > button').trigger('click')
+    await wrapper.get('input[type="number"]').setValue('12')
+    await wrapper.get('[data-testid="recharge-review-5"] button:last-child').trigger('click')
+    await flushPromises()
+    expect(api.updatePendingRechargeAmount).toHaveBeenCalledWith(5, 12)
+    expect(api.confirmPendingRecharge).toHaveBeenCalledWith(5)
+    expect(wrapper.find('[data-testid="upstream-balance-reminders"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('ignores an older balance increase after a newer resolution', async () => {
+  it('confirms all and hides the reminder when the queue is empty', async () => {
     const wrapper = mount(UpstreamBalanceReminder)
-    emit({ type: 'resolved', host: 'a.example', version: 4 })
-    emit({ type: 'upsert', reminder: { ...reminder('a.example', 5), version: 3 } })
-    await nextTick()
-
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-a.example"]').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('点击记录跳转到对应站点，并携带净增金额与单位', async () => {
-    const wrapper = mount(UpstreamBalanceReminder)
-    emit({ type: 'upsert', reminder: reminder('zhixue.example', 8.96337526) })
-    await nextTick()
-    await wrapper.get('[data-testid="upstream-balance-reminder-zhixue.example"]').trigger('click')
-    expect(pushMock).toHaveBeenCalledWith({ name: 'AdminBalanceCenter', query: expect.objectContaining({
-      recharge_host: 'zhixue.example', recharge_delta: '8.96337526', recharge_currency: 'USD', recharge_request: expect.any(String)
-    }) })
-    wrapper.unmount()
-  })
-
-  it('忽略旧快照与推送里的小额提醒，且继续维护事件版本', async () => {
-    const wrapper = mount(UpstreamBalanceReminder)
-    emit({ type: 'snapshot', reminders: [reminder('gift.example', 0.5), reminder('real.example', 1)] })
-    await nextTick()
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-gift.example"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-real.example"]').exists()).toBe(true)
-    emit({ type: 'upsert', reminder: { ...reminder('real.example', 0.5), version: 3 } })
-    emit({ type: 'upsert', reminder: { ...reminder('real.example', 5), version: 2 } })
-    await nextTick()
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-real.example"]').exists()).toBe(false)
+    await flushPromises()
+    await wrapper.get('aside > button').trigger('click')
+    await wrapper.get('#upstream-balance-reminder-list > div button').trigger('click')
+    await flushPromises()
+    expect(api.confirmAllPendingRecharges).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-testid="upstream-balance-reminders"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

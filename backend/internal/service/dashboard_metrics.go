@@ -43,7 +43,7 @@ type DashboardBusinessSummary struct {
 	Ledger DashboardBusinessLedger `json:"ledger"`
 	// UpstreamRechargeTotal 直接汇总充值记录，不受经营历史日期范围影响。
 	UpstreamRechargeTotal float64 `json:"upstream_recharge_total"`
-	// UserBalanceTotal 仅统计有效充值用户当前余额，排除 admin 体验额度。
+	// UserBalanceTotal 汇总当前用户余额，不按充值金额筛选；排除 admin 体验额度。
 	UserBalanceTotal float64 `json:"user_balance_total"`
 	// UpstreamBalanceTotal 按上游站点取最新最小余额后汇总。
 	UpstreamBalanceTotal float64 `json:"upstream_balance_total"`

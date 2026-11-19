@@ -1128,13 +1128,14 @@ export async function refreshBusinessBalances(): Promise<BusinessBalanceRefresh>
       failedAccounts++
       site.failed_accounts++
     }
-    // 按用户指定口径，失败账号以零参与同上游最小值和跨上游汇总。
-    const accountBalance = validBalance ? amount : 0
-    if (site.balance == null || accountBalance < site.balance) site.balance = accountBalance
+    // 探测失败不是零余额，不能让一个失效账号压低同域有效余额。
+    if (validBalance && (site.balance == null || amount < site.balance)) site.balance = amount
   }
   return {
     preview_only: previewOnly,
-    total_balance: [...sites.values()].reduce((total, site) => total + (site.balance ?? 0), 0),
+    total_balance: [...sites.values()].some(site => site.balance != null)
+      ? [...sites.values()].reduce((total, site) => total + (site.balance ?? 0), 0)
+      : null,
     failed_accounts: failedAccounts,
     sites: [...sites.values()].sort((a, b) => a.domain.localeCompare(b.domain)),
     refreshed_at: previewOnly

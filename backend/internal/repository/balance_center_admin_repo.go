@@ -53,11 +53,11 @@ ORDER BY s.normalized_domain ASC, cs.account_id NULLS LAST`)
 func (r *balanceCenterRepository) ListBalanceCenterSites(ctx context.Context) ([]service.BalanceCenterSite, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT s.id, s.name, s.display_name, s.normalized_domain, s.base_url, s.source, s.probe_supported,
-       COALESCE(SUM(e.amount), 0) AS historical_recharge_total, s.updated_at
+       COALESCE(SUM(e.amount) FILTER (WHERE e.review_status='confirmed'), 0) AS historical_recharge_total, s.updated_at
 FROM balance_center_sites s
 LEFT JOIN balance_center_recharge_events e ON e.site_id = s.id
 GROUP BY s.id, s.name, s.display_name, s.normalized_domain, s.base_url, s.source, s.probe_supported, s.updated_at
-ORDER BY COALESCE(SUM(e.amount), 0) DESC, s.normalized_domain ASC, s.id ASC`)
+ORDER BY COALESCE(SUM(e.amount) FILTER (WHERE e.review_status='confirmed'), 0) DESC, s.normalized_domain ASC, s.id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("查询余额站点失败: %w", err)
 	}
@@ -192,7 +192,7 @@ expression=EXCLUDED.expression, amount=EXCLUDED.amount, sort_order=EXCLUDED.sort
 }
 
 func (r *balanceCenterRepository) ListBalanceCenterRechargeEvents(ctx context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterRechargeEvent], error) {
-	where, args := balanceCenterFilterSQL(filter, false)
+	where, args := balanceCenterRechargeFilterSQL(filter)
 	return listBalanceCenterRechargeEvents(ctx, r.db, filter, where, args)
 }
 
@@ -200,7 +200,7 @@ func (r *balanceCenterRepository) GetBalanceCenterRechargeSummary(ctx context.Co
 	where, args := balanceCenterRechargeFilterSQL(filter)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT s.id, s.source, s.source_key, s.site_id, s.account_id, s.amount, s.currency,
-       s.occurred_at, s.note, s.site_label,
+       s.occurred_at, s.note, s.site_label, s.review_status, s.reviewed_at,
        CASE WHEN s.site_id IS NULL THEN COALESCE(NULLIF(BTRIM(s.site_label), ''), '未归属站点')
             ELSE COALESCE(NULLIF(BTRIM(COALESCE(bs.display_name, bs.name)), ''), '未归属站点') END AS site_name
 FROM balance_center_recharge_events s
@@ -224,11 +224,13 @@ ORDER BY s.occurred_at DESC, s.id DESC`, args...)
 	for rows.Next() {
 		var item service.BalanceCenterRechargeEvent
 		var siteID, accountID sql.NullInt64
+		var reviewedAt sql.NullTime
 		var siteName string
-		if err := rows.Scan(&item.ID, &item.Source, &item.SourceKey, &siteID, &accountID, &item.Amount, &item.Currency, &item.OccurredAt, &item.Note, &item.SiteLabel, &siteName); err != nil {
+		if err := rows.Scan(&item.ID, &item.Source, &item.SourceKey, &siteID, &accountID, &item.Amount, &item.Currency, &item.OccurredAt, &item.Note, &item.SiteLabel, &item.ReviewStatus, &reviewedAt, &siteName); err != nil {
 			return nil, err
 		}
 		item.SiteID, item.AccountID = balanceCenterNullInt64Ptr(siteID), balanceCenterNullInt64Ptr(accountID)
+		item.ReviewedAt = balanceCenterNullTimePtr(reviewedAt)
 		allItems = append(allItems, item)
 		amount := decimal.NewFromFloat(item.Amount)
 		totalAmount = totalAmount.Add(amount)
@@ -286,7 +288,7 @@ func listBalanceCenterRechargeEvents(ctx context.Context, db *sql.DB, filter ser
 		return nil, err
 	}
 	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
-	rows, err := db.QueryContext(ctx, `SELECT id, source, source_key, site_id, account_id, amount, currency, occurred_at, note, site_label
+	rows, err := db.QueryContext(ctx, `SELECT id, source, source_key, site_id, account_id, amount, currency, occurred_at, note, site_label, review_status, reviewed_at
 FROM balance_center_recharge_events s`+where+` ORDER BY occurred_at DESC, id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
@@ -296,10 +298,12 @@ FROM balance_center_recharge_events s`+where+` ORDER BY occurred_at DESC, id DES
 	for rows.Next() {
 		var item service.BalanceCenterRechargeEvent
 		var siteID, accountID sql.NullInt64
-		if err := rows.Scan(&item.ID, &item.Source, &item.SourceKey, &siteID, &accountID, &item.Amount, &item.Currency, &item.OccurredAt, &item.Note, &item.SiteLabel); err != nil {
+		var reviewedAt sql.NullTime
+		if err := rows.Scan(&item.ID, &item.Source, &item.SourceKey, &siteID, &accountID, &item.Amount, &item.Currency, &item.OccurredAt, &item.Note, &item.SiteLabel, &item.ReviewStatus, &reviewedAt); err != nil {
 			return nil, err
 		}
 		item.SiteID, item.AccountID = balanceCenterNullInt64Ptr(siteID), balanceCenterNullInt64Ptr(accountID)
+		item.ReviewedAt = balanceCenterNullTimePtr(reviewedAt)
 		items = append(items, item)
 	}
 	return &service.BalanceCenterPage[service.BalanceCenterRechargeEvent]{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize}, rows.Err()
@@ -387,6 +391,38 @@ func (r *balanceCenterRepository) DeleteBalanceCenterRechargeEvent(ctx context.C
 		return errors.New("充值记录不存在")
 	}
 	return nil
+}
+
+func (r *balanceCenterRepository) UpdatePendingRechargeAmount(ctx context.Context, id int64, amount float64) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE balance_center_recharge_events SET amount=$1, updated_at=NOW() WHERE id=$2 AND review_status='pending'`, amount, id)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return errors.New("待审核充值记录不存在")
+	}
+	return nil
+}
+
+func (r *balanceCenterRepository) ConfirmPendingRecharge(ctx context.Context, id int64) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`, id)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return errors.New("待审核充值记录不存在")
+	}
+	return nil
+}
+
+func (r *balanceCenterRepository) ConfirmAllPendingRecharges(ctx context.Context) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE review_status='pending'`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (r *balanceCenterRepository) ListBalanceCenterReconciliations(ctx context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterReconciliation], error) {
@@ -578,7 +614,14 @@ func balanceCenterFilterSQL(filter service.BalanceCenterListFilter, includeTime 
 }
 
 func balanceCenterRechargeFilterSQL(filter service.BalanceCenterListFilter) (string, []any) {
-	conditions, args := make([]string, 0, 3), make([]any, 0, 3)
+	conditions, args := []string{"s.review_status='confirmed'"}, make([]any, 0, 3)
+	if filter.Status == "pending" {
+		conditions[0] = "s.review_status='pending'"
+	}
+	if filter.AccountID > 0 {
+		args = append(args, filter.AccountID)
+		conditions = append(conditions, "s.account_id=$"+fmt.Sprint(len(args)))
+	}
 	if filter.SiteID > 0 {
 		args = append(args, filter.SiteID)
 		conditions = append(conditions, "s.site_id=$"+fmt.Sprint(len(args)))

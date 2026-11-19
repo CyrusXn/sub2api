@@ -52,6 +52,26 @@ func TestUpstreamSiteBalanceObservationPostgres(t *testing.T) {
 			require.NoError(t, err)
 			_, err = db.ExecContext(ctx, create)
 			require.NoError(t, err)
+			// 自动入账也使用临时表，沿用生产迁移的字段与约束。
+			_, err = db.ExecContext(ctx, `CREATE TEMP TABLE accounts (id BIGINT PRIMARY KEY);
+CREATE TEMP TABLE upstream_site_credentials (id BIGINT PRIMARY KEY);`)
+			require.NoError(t, err)
+			schema, err := os.ReadFile("../../migrations/225_add_balance_center.sql")
+			require.NoError(t, err)
+			for _, table := range []string{"balance_center_sites", "balance_center_recharge_events"} {
+				_, definition, found := strings.Cut(string(schema), "CREATE TABLE IF NOT EXISTS "+table+" (")
+				require.True(t, found)
+				definition, _, found = strings.Cut(definition, ");")
+				require.True(t, found)
+				_, err = db.ExecContext(ctx, "CREATE TEMP TABLE "+table+" ("+definition+");")
+				require.NoError(t, err)
+			}
+			for _, filename := range []string{"230_add_recharge_event_site_label.sql", "238_add_balance_center_display_name_record_type.sql", "275_balance_center_recharge_review.sql"} {
+				migration, err := os.ReadFile("../../migrations/" + filename)
+				require.NoError(t, err)
+				_, err = db.ExecContext(ctx, string(migration))
+				require.NoError(t, err)
+			}
 			var temporary bool
 			require.NoError(t, db.QueryRowContext(ctx, "SELECT relnamespace = pg_my_temp_schema() FROM pg_class WHERE oid = 'upstream_site_balance_observations'::regclass").Scan(&temporary))
 			require.True(t, temporary)
@@ -109,6 +129,16 @@ func TestUpstreamSiteBalanceObservationPostgres(t *testing.T) {
 							require.Equal(t, observation.ObservedAt, reminder.DetectedAt)
 						}
 						active = reminder
+						var amount int64
+						var occurredAt time.Time
+						var reviewStatus string
+						err = db.QueryRowContext(ctx, `SELECT amount::bigint, occurred_at, review_status
+FROM balance_center_recharge_events WHERE source='upstream_auto' AND occurred_at=$1`, observation.ObservedAt).
+							Scan(&amount, &occurredAt, &reviewStatus)
+						require.NoError(t, err)
+						require.Equal(t, int64(item.balance-cases[index-1].balance), amount)
+						require.True(t, occurredAt.Equal(observation.ObservedAt))
+						require.Equal(t, "pending", reviewStatus)
 					} else {
 						require.Nil(t, reminder)
 					}

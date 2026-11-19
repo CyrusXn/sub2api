@@ -151,7 +151,7 @@ export interface BalanceCenterManualRow {
 }
 
 export interface BalanceCenterRechargeEvent {
-  id?: number
+  id: number
   source: string
   source_key: string
   site_id?: number
@@ -162,6 +162,8 @@ export interface BalanceCenterRechargeEvent {
   occurred_at: string
   note: string
   record_type: 'recharge' | 'subscription'
+  review_status?: 'pending' | 'confirmed'
+  reviewed_at?: string
 }
 
 export interface BalanceCenterRechargeSiteSummary {
@@ -298,8 +300,20 @@ export const balanceCenterAPI = {
   async rechargeSummary(params: BalanceCenterListParams) {
     return (await apiClient.get<BalanceCenterRechargeSummary>(`${base}/recharge-summary`, { params })).data
   },
-  async createRechargeEvent(item: BalanceCenterRechargeEvent) {
+  async createRechargeEvent(item: Omit<BalanceCenterRechargeEvent, 'id'>) {
     return (await apiClient.post<BalanceCenterRechargeEvent>(`${base}/recharge-events`, item)).data
+  },
+  async pendingRechargeReviews() {
+    return (await apiClient.get<BalanceCenterPage<BalanceCenterRechargeEvent>>(`${base}/recharge-reviews`)).data
+  },
+  async updatePendingRechargeAmount(id: number, amount: number) {
+    await apiClient.patch(`${base}/recharge-reviews/${id}`, { amount })
+  },
+  async confirmPendingRecharge(id: number) {
+    await apiClient.post(`${base}/recharge-reviews/${id}/confirm`)
+  },
+  async confirmAllPendingRecharges() {
+    return (await apiClient.post<{ confirmed: number }>(`${base}/recharge-reviews/confirm-all`)).data
   },
   async deleteRechargeEvent(id: number) {
     await apiClient.delete(`${base}/recharge-events/${id}`)

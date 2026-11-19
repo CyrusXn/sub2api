@@ -29,6 +29,10 @@ type balanceCenterAdminService interface {
 	GetRechargeSummary(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterRechargeSummary, error)
 	CreateRechargeEvent(context.Context, *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, error)
 	DeleteRechargeEvent(context.Context, int64) error
+	ListPendingRechargeReviews(context.Context) (*service.BalanceCenterPage[service.BalanceCenterRechargeEvent], error)
+	UpdatePendingRechargeAmount(context.Context, int64, float64) error
+	ConfirmPendingRecharge(context.Context, int64) error
+	ConfirmAllPendingRecharges(context.Context) (int64, error)
 	ListReconciliations(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterReconciliation], error)
 	CreateReconciliation(context.Context, *service.BalanceCenterReconciliation) (*service.BalanceCenterReconciliation, error)
 	ListAlerts(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterAlertDelivery], error)
@@ -300,6 +304,49 @@ func (h *BalanceCenterHandler) DeleteRechargeEvent(c *gin.Context) {
 		return
 	}
 	response.Success(c, nil)
+}
+
+func (h *BalanceCenterHandler) PendingRechargeReviews(c *gin.Context) {
+	result, err := h.service.ListPendingRechargeReviews(c.Request.Context())
+	h.respond(c, result, err)
+}
+
+func (h *BalanceCenterHandler) UpdatePendingRechargeAmount(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	var input struct {
+		Amount float64 `json:"amount"`
+	}
+	if err != nil || id <= 0 || c.ShouldBindJSON(&input) != nil || input.Amount <= 0 {
+		response.BadRequest(c, "充值记录或金额无效")
+		return
+	}
+	if err := h.service.UpdatePendingRechargeAmount(c.Request.Context(), id, input.Amount); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, nil)
+}
+
+func (h *BalanceCenterHandler) ConfirmPendingRecharge(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "充值记录 ID 无效")
+		return
+	}
+	if err := h.service.ConfirmPendingRecharge(c.Request.Context(), id); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, nil)
+}
+
+func (h *BalanceCenterHandler) ConfirmAllPendingRecharges(c *gin.Context) {
+	count, err := h.service.ConfirmAllPendingRecharges(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"confirmed": count})
 }
 
 func (h *BalanceCenterHandler) Reconciliations(c *gin.Context) {

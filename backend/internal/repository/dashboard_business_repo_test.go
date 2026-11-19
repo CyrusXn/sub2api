@@ -31,7 +31,7 @@ func TestDashboardBusinessSummaryReadsPermanentDailyRollup(t *testing.T) {
 	summaryColumns := append([]string{"upstream_recharge_total", "user_balance_total", "upstream_balance_total"}, totalColumns...)
 	summaryColumns = append(summaryColumns, totalColumns...)
 	summaryColumns = append(summaryColumns, rangeColumns...)
-	mock.ExpectQuery(`(?s)SELECT.*balance_center_recharge_events.*FROM dashboard_business_daily`).
+	mock.ExpectQuery(`(?s)SELECT.*balance_center_recharge_events.*SELECT SUM\(balance\) FROM users WHERE deleted_at IS NULL AND LOWER\(TRIM\(COALESCE\(email, ''\)\)\) <> 'admin@example.com'\), 0\).*FROM dashboard_business_daily`).
 		WithArgs("2026-08-01", "2026-08-15", start, end).
 		WillReturnRows(sqlmock.NewRows(summaryColumns).AddRow(
 			8932.97, 321.45, 678.9,

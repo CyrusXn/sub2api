@@ -1,7 +1,7 @@
 <template>
   <aside
-    v-if="reminders.length"
-    class="fixed bottom-4 right-4 z-[70] w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-amber-300 bg-white shadow-2xl dark:border-amber-700 dark:bg-dark-800"
+    v-if="items.length"
+    class="fixed bottom-4 right-4 z-[70] w-[min(30rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-amber-300 bg-white shadow-2xl dark:border-amber-700 dark:bg-dark-800"
     data-testid="upstream-balance-reminders"
     aria-live="polite"
   >
@@ -13,38 +13,52 @@
       @click="collapsed = !collapsed"
     >
       <span class="flex min-w-0 items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
-        <span class="shrink-0 text-lg" aria-hidden="true">⚠</span>
+        <span aria-hidden="true">!</span>
         <span class="truncate">{{ t('admin.balanceCenter.reminder.title') }}</span>
       </span>
-      <span class="shrink-0 rounded-full bg-amber-600 px-2.5 py-1 text-xs font-bold text-white">{{ reminders.length }}</span>
+      <span class="shrink-0 rounded-full bg-amber-600 px-2.5 py-1 text-xs font-bold text-white">{{ items.length }}</span>
       <span class="sr-only">{{ collapsed ? t('admin.balanceCenter.reminder.expand') : t('admin.balanceCenter.reminder.collapse') }}</span>
     </button>
 
-    <div v-if="!collapsed" id="upstream-balance-reminder-list" class="max-h-[60vh] space-y-3 overflow-y-auto p-3">
-      <button
-        v-for="reminder in reminders"
-        :key="reminder.host"
-        type="button"
-        class="block w-full rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-left text-sm hover:bg-amber-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-600 dark:border-amber-800 dark:bg-dark-900 dark:hover:bg-amber-950"
-        :data-testid="`upstream-balance-reminder-${reminder.host}`"
-        @click="openRecharge(reminder)"
+    <div v-if="!collapsed" id="upstream-balance-reminder-list" class="max-h-[65vh] space-y-3 overflow-y-auto p-3">
+      <article
+        v-for="item in items"
+        :key="item.id"
+        class="space-y-2 border-b border-gray-200 pb-3 last:border-0 last:pb-0 dark:border-dark-600"
+        :data-testid="`recharge-review-${item.id}`"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <p class="truncate font-semibold text-gray-900 dark:text-gray-100">{{ reminder.display_name || reminder.host }}</p>
-            <p class="truncate text-xs text-gray-500">{{ reminder.host }}</p>
+            <p class="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{{ item.site_label || item.source_key }}</p>
+            <time class="block text-xs text-gray-500" :datetime="item.occurred_at">{{ formatDate(item.occurred_at) }}</time>
           </div>
-          <span class="shrink-0 rounded-md bg-amber-200 px-2 py-1 text-xs font-semibold text-amber-950 dark:bg-amber-900 dark:text-amber-100">
-            {{ t('admin.balanceCenter.reminder.increased') }}
-          </span>
+          <span class="shrink-0 text-xs text-gray-500">{{ item.currency }}</span>
         </div>
-        <p class="mt-2 font-medium text-gray-800 dark:text-gray-200">
-          {{ formatAmount(reminder.old_balance, reminder.currency) }} → {{ formatAmount(reminder.new_balance, reminder.currency) }}
-          <span class="text-emerald-700 dark:text-emerald-400">({{ t('admin.balanceCenter.reminder.detectedIncrease') }} +{{ formatAmount(reminder.delta, reminder.currency) }})</span>
-        </p>
-        <p class="mt-1 text-xs text-gray-500">{{ t('admin.balanceCenter.reminder.recordRecharge') }}</p>
-        <time class="mt-1 block text-xs text-gray-400" :datetime="reminder.detected_at">{{ formatDate(reminder.detected_at) }}</time>
-      </button>
+        <div class="flex items-end gap-2">
+          <label class="min-w-0 flex-1 text-xs text-gray-600 dark:text-gray-300">
+            {{ t('admin.balanceCenter.reminder.amount') }}
+            <input
+              v-model="amounts[item.id]"
+              type="number"
+              min="0.01"
+              step="0.01"
+              class="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 dark:border-dark-500 dark:bg-dark-900 dark:text-gray-100"
+              :aria-label="`${t('admin.balanceCenter.reminder.amount')} ${item.site_label || item.source_key}`"
+            />
+          </label>
+          <button type="button" class="rounded border border-gray-300 px-2 py-1.5 text-xs disabled:opacity-50 dark:border-dark-500" :disabled="busyId === item.id" @click="saveAmount(item)">
+            {{ t('admin.balanceCenter.reminder.save') }}
+          </button>
+          <button type="button" class="rounded bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50" :disabled="busyId === item.id" @click="confirm(item)">
+            {{ t('admin.balanceCenter.reminder.confirm') }}
+          </button>
+        </div>
+      </article>
+      <div class="flex justify-end border-t border-gray-200 pt-3 dark:border-dark-600">
+        <button type="button" class="rounded bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50" :disabled="busyId !== null" @click="confirmAll">
+          {{ t('admin.balanceCenter.reminder.confirmAll') }}
+        </button>
+      </div>
     </div>
   </aside>
 </template>
@@ -52,68 +66,84 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import {
+  balanceCenterAPI,
   subscribeUpstreamSiteBalanceReminders,
-  type UpstreamSiteBalanceReminder,
+  type BalanceCenterRechargeEvent,
   type UpstreamSiteBalanceReminderEvent
 } from '@/api/admin/balanceCenter'
+import { useAppStore } from '@/stores/app'
 
 const { t, locale } = useI18n()
-const router = useRouter()
-const reminders = ref<UpstreamSiteBalanceReminder[]>([])
-const collapsed = ref(false)
-const latestVersions = new Map<string, number>()
+const app = useAppStore()
+const items = ref<BalanceCenterRechargeEvent[]>([])
+const amounts = ref<Record<number, string>>({})
+const collapsed = ref(true)
+const busyId = ref<number | null>(null)
 let unsubscribe: (() => void) | null = null
-let requestSequence = 0
+let requestId = 0
 
-function openRecharge(reminder: UpstreamSiteBalanceReminder) {
-  void router.push({ name: 'AdminBalanceCenter', query: {
-    recharge_host: reminder.host,
-    recharge_delta: String(reminder.delta),
-    recharge_currency: reminder.currency,
-    recharge_request: `${Date.now()}-${++requestSequence}`
-  } })
-}
-
-function qualifies(reminder: UpstreamSiteBalanceReminder) {
-  return Number.isFinite(reminder.delta) && reminder.delta >= 1 - 1e-9
-}
-
-function applyEvent(event: UpstreamSiteBalanceReminderEvent) {
-  if (event.type === 'snapshot') {
-    reminders.value = event.reminders ?? []
-    latestVersions.clear()
-    for (const [host, version] of Object.entries(event.versions ?? {})) latestVersions.set(host, version)
-    for (const reminder of reminders.value) {
-      latestVersions.set(reminder.host, Math.max(latestVersions.get(reminder.host) ?? -1, reminder.version))
-    }
-    reminders.value = reminders.value.filter((reminder) => qualifies(reminder) && reminder.version >= (latestVersions.get(reminder.host) ?? reminder.version))
-    return
-  }
-  if (event.type === 'resolved' && event.host) {
-    const latestVersion = latestVersions.get(event.host) ?? -1
-    if (event.version !== undefined && event.version < latestVersion) return
-    latestVersions.set(event.host, event.version ?? latestVersion + 1)
-    reminders.value = reminders.value.filter((item) => item.host !== event.host || (event.version ?? Number.MAX_SAFE_INTEGER) < item.version)
-    return
-  }
-  if (event.type === 'upsert' && event.reminder) {
-    const latestVersion = latestVersions.get(event.reminder.host) ?? -1
-    if (event.reminder.version < latestVersion) return
-    latestVersions.set(event.reminder.host, event.reminder.version)
-    if (!qualifies(event.reminder)) {
-      reminders.value = reminders.value.filter((item) => item.host !== event.reminder?.host)
-      return
-    }
-    const index = reminders.value.findIndex((item) => item.host === event.reminder?.host)
-    if (index < 0) reminders.value = [...reminders.value, event.reminder]
-    else reminders.value = reminders.value.map((item, i) => i === index ? event.reminder! : item)
+async function loadReviews() {
+  const request = ++requestId
+  try {
+    const result = await balanceCenterAPI.pendingRechargeReviews()
+    if (request !== requestId) return
+    items.value = result.items
+    amounts.value = Object.fromEntries(result.items.map(item => [item.id!, String(item.amount)]))
+  } catch {
+    app.showError(t('admin.balanceCenter.reminder.loadError'))
   }
 }
 
-function formatAmount(value: number, currency: string) {
-  return `${new Intl.NumberFormat(locale.value, { maximumFractionDigits: 2 }).format(value)} ${currency}`
+function onReminderEvent(event: UpstreamSiteBalanceReminderEvent) {
+  if (event.type === 'upsert') void loadReviews()
+}
+
+async function saveAmount(item: BalanceCenterRechargeEvent) {
+  const amount = Number(amounts.value[item.id!])
+  if (!Number.isFinite(amount) || amount <= 0) return
+  busyId.value = item.id!
+  try {
+    await balanceCenterAPI.updatePendingRechargeAmount(item.id!, amount)
+    item.amount = amount
+    app.showSuccess(t('admin.balanceCenter.reminder.saved'))
+  } catch (error) {
+    app.showError(error instanceof Error ? error.message : t('admin.balanceCenter.reminder.loadError'))
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function confirm(item: BalanceCenterRechargeEvent) {
+  busyId.value = item.id!
+  try {
+		const amount = Number(amounts.value[item.id!])
+		if (!Number.isFinite(amount) || amount <= 0) return
+		if (amount !== item.amount) {
+			await balanceCenterAPI.updatePendingRechargeAmount(item.id!, amount)
+			item.amount = amount
+		}
+    await balanceCenterAPI.confirmPendingRecharge(item.id!)
+    items.value = items.value.filter(row => row.id !== item.id)
+    app.showSuccess(t('admin.balanceCenter.reminder.confirmed'))
+  } catch (error) {
+    app.showError(error instanceof Error ? error.message : t('admin.balanceCenter.reminder.loadError'))
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function confirmAll() {
+  busyId.value = -1
+  try {
+    await balanceCenterAPI.confirmAllPendingRecharges()
+    items.value = []
+    app.showSuccess(t('admin.balanceCenter.reminder.confirmedAll'))
+  } catch (error) {
+    app.showError(error instanceof Error ? error.message : t('admin.balanceCenter.reminder.loadError'))
+  } finally {
+    busyId.value = null
+  }
 }
 
 function formatDate(value: string) {
@@ -122,10 +152,12 @@ function formatDate(value: string) {
 }
 
 onMounted(() => {
-  unsubscribe = subscribeUpstreamSiteBalanceReminders(applyEvent)
+  void loadReviews()
+  unsubscribe = subscribeUpstreamSiteBalanceReminders(onReminderEvent)
 })
 
 onBeforeUnmount(() => {
+  ++requestId
   unsubscribe?.()
   unsubscribe = null
 })

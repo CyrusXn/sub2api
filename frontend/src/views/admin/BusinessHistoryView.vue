@@ -340,7 +340,16 @@ const balancesError = ref(false)
 const upstreamBalanceTotal = computed(() => balances.value?.total_balance)
 // 完整历史与总余额卡片使用同一批账号余额；历史区间仍只取期末资产快照。
 const ledgerBalance = computed(() => usesLifetimeConsumption.value ? upstreamBalanceTotal.value : summary.value?.ledger?.closing_balance)
-const userBalanceTotal = computed(() => allDates.value ? summary.value?.user_balance_total : summary.value?.range_user_balance_total)
+// 用户余额卡始终展示当前总余额，历史区间余额仅保留在历史明细中。
+const userBalanceTotal = computed(() => {
+  const amount = summary.value?.user_balance_total
+  if (amount == null) return amount
+  const creditIncluded = !queriedRange.value || (
+    queriedRange.value.start_date <= businessHistoryRechargeExclusion.bucketDate &&
+    queriedRange.value.end_date >= businessHistoryRechargeExclusion.bucketDate
+  )
+  return amount - (creditIncluded ? businessHistoryRechargeExclusion.amount : 0)
+})
 const loadError = ref(false)
 const trendMetric = ref<TrendMetric>('requests')
 const trendMetrics: TrendMetric[] = ['requests', 'tokens', 'consumption', 'profit']
@@ -460,12 +469,7 @@ const totalProfitUsers = computed(() => {
 // 余额快照按日采集，所选结束日可能未采集到，此时提示“暂无快照”而不是展示误导性的零余额。
 const balanceSnapshotHint = computed(() => {
   if (!summary.value) return ''
-  if (allDates.value) return t('admin.businessHistory.asOfNow')
-  if (summary.value.range_user_balance_total == null) return t('admin.businessHistory.balanceSnapshotEmpty')
-  if (summary.value.range_balance_captured_at) return t('admin.businessHistory.snapshotTime', { time: formatTimestamp(summary.value.range_balance_captured_at) })
-  const snapshotDate = summary.value.range_balance_snapshot_date
-  if (!snapshotDate) return t('admin.businessHistory.balanceSnapshotEmpty')
-  return t('admin.businessHistory.balanceSnapshotAsOf', { date: formatDate(snapshotDate) })
+  return t('admin.businessHistory.asOfNow')
 })
 // 金额按确认的人民币 1:1 口径展示，不作美元汇率换算。
 const isMoneyTrend = computed(() => trendMetric.value === 'consumption' || trendMetric.value === 'profit')

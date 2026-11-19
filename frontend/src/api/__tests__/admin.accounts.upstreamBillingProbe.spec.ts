@@ -86,13 +86,13 @@ describe('admin account upstream billing probe API', () => {
     const result = await refreshBusinessBalances()
     expect(result.total_balance).toBe(18)
     expect(result.sites).toEqual([
-      { domain: 'failed.example', balance: 0, failed_accounts: 1 },
+      { domain: 'failed.example', balance: null, failed_accounts: 1 },
       { domain: 'up.example', balance: 18, failed_accounts: 0 }
     ])
     expect(result.failed_accounts).toBe(1)
   })
 
-  it.each([false, true])('同一上游失败账号按零取最小值，不受账号顺序影响（倒序：%s）', async reverse => {
+  it.each([false, true])('同一上游失败账号不参与最小值，不受账号顺序影响（倒序：%s）', async reverse => {
     const items = [1, 2].map(id => ({ id, type: 'apikey', credentials: { base_url: 'https://up.example' } }))
     get.mockResolvedValue({ data: { items: reverse ? items.reverse() : items, total: 2 } })
     post.mockResolvedValue({ data: { results: [
@@ -100,11 +100,11 @@ describe('admin account upstream billing probe API', () => {
       { account_id: 2, error: '余额获取失败' }
     ] } })
     const result = await refreshBusinessBalances()
-    expect(result.total_balance).toBe(0)
-    expect(result.sites).toEqual([{ domain: 'up.example', balance: 0, failed_accounts: 1 }])
+    expect(result.total_balance).toBe(18)
+    expect(result.sites).toEqual([{ domain: 'up.example', balance: 18, failed_accounts: 1 }])
   })
 
-  it.each(['missing', 'invalid', 'rejected'])('探测结果缺失、无效或请求失败按零计算：%s', async mode => {
+  it.each(['missing', 'invalid', 'rejected'])('探测结果缺失、无效或请求失败不伪造零余额：%s', async mode => {
     get.mockResolvedValue({ data: { items: [
       { id: 1, type: 'apikey', credentials: { base_url: 'https://up.example' } }
     ], total: 1 } })
@@ -113,9 +113,9 @@ describe('admin account upstream billing probe API', () => {
       { account_id: 1, snapshot: { balance: { status: 'ok', amount: '18' } } }
     ] } })
     const result = await refreshBusinessBalances()
-    expect(result.total_balance).toBe(0)
+    expect(result.total_balance).toBeNull()
     expect(result.failed_accounts).toBe(1)
-    expect(result.sites[0].balance).toBe(0)
+    expect(result.sites[0].balance).toBeNull()
   })
 
   it('本地只读验收仅汇总线上已有余额，不触发探测写入', async () => {

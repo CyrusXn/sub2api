@@ -39,8 +39,8 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 	}
 	query := `
 		SELECT
-			COALESCE((SELECT SUM(amount) FROM balance_center_recharge_events), 0),
-			COALESCE((SELECT SUM(balance) FROM users WHERE deleted_at IS NULL AND LOWER(TRIM(COALESCE(email, ''))) <> 'admin@example.com' AND total_recharged > 1), 0),
+			COALESCE((SELECT SUM(amount) FROM balance_center_recharge_events WHERE review_status='confirmed'), 0),
+			COALESCE((SELECT SUM(balance) FROM users WHERE deleted_at IS NULL AND LOWER(TRIM(COALESCE(email, ''))) <> 'admin@example.com'), 0),
 			COALESCE((
 				SELECT SUM(site_balance)
 				FROM (
@@ -87,7 +87,7 @@ func (r *dashboardAggregationRepository) GetDashboardBusinessSummary(ctx context
 			COALESCE((
 				SELECT SUM(amount)
 				FROM balance_center_recharge_events
-				WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz
+				WHERE review_status='confirmed' AND occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz
 			), 0),
 			(
 				SELECT b.user_balance_total

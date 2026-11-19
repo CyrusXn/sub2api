@@ -13,7 +13,7 @@ export default {
     lifetimeBalanceTotal: '上游总余额',
     refreshBalances: '重新获取全部上游账号余额',
     minimumAccountBalance: '同一上游最小余额',
-    balanceAccountsFailed: '{count} 个账号余额获取失败，已按 0 计算',
+    balanceAccountsFailed: '{count} accounts failed balance lookup and were excluded from the total',
     balanceRefreshFailed: '读取上游账号列表失败，请稍后重试。',
     balanceRefreshing: '正在获取全部上游账号余额…',
     balanceNotRefreshed: '尚未取得余额',

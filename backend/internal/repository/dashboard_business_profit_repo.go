@@ -16,7 +16,7 @@ func (r *dashboardAggregationRepository) populateBusinessProfitHistory(ctx conte
  SELECT generate_series(COALESCE((SELECT MIN(bucket_date) FROM dashboard_business_daily), $1::date), $1::date, INTERVAL '1 day')::date AS day
 ), recharges AS (
  SELECT (occurred_at AT TIME ZONE $2)::date AS day, SUM(amount) AS amount
- FROM balance_center_recharge_events WHERE occurred_at <= $3 GROUP BY 1
+ FROM balance_center_recharge_events WHERE review_status='confirmed' AND occurred_at <= $3 GROUP BY 1
 ), cumulative AS (
  SELECT c.day, SUM(COALESCE(d.actual_cost, 0)) OVER (ORDER BY c.day) AS charges,
    SUM(COALESCE(e.amount, 0)) OVER (ORDER BY c.day)

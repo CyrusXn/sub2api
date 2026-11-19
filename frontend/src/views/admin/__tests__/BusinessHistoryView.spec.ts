@@ -183,13 +183,17 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥70,496.87')
     expect(wrapper.get('[data-test="history-total-row"]').findAll('td')[10].text()).toBe('¥1,216.15')
     expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('¥8,932.97')
-    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥321.45')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥-4,678.55')
     expect(history.range.recharge_amount).toBe(75496.87)
     expect(targetDay.recharge_amount).toBe(5215.79)
+
+    await applyDates(wrapper, '2026-11-08', '2026-11-08')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥-4,678.55')
 
     await applyDates(wrapper, '2026-11-09', '2026-11-09')
     expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥656.77')
     expect(wrapper.get('[data-test="history-total-row"]').findAll('td')[10].text()).toBe('¥656.77')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥321.45')
   })
 
   it('完整建站日期范围沿用全部历史口径，上游总消费按充值减当前余额计算', async () => {
@@ -402,13 +406,13 @@ describe('BusinessHistoryView', () => {
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥20.00')
     expect(wrapper.get('[data-test="range-consumption"]').text()).toContain('¥18.00')
     expect(wrapper.get('[data-test="user-total-recharge"]').text()).toBe('¥120.00')
-    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥300.50')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥321.45')
     expect(wrapper.get('[data-test="upstream-recharge-total"]').text()).toBe('¥1,234.56')
     expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('¥328.00')
     expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥8.00')
     expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥12.00')
     expect(wrapper.get('[data-test="recharge-difference"]').text()).toBe('¥-1,114.56')
-    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.snapshotTime')
+    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.asOfNow')
     expect(wrapper.get('[data-test="upstream-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceRefreshedAt')
     expect(wrapper.get('[data-test="ledger-status"]').text()).toContain('admin.businessHistory.requestCostNotice')
     expect(wrapper.get('[data-test="token-breakdown"]').text()).toContain('1.00K')
@@ -519,9 +523,9 @@ describe('BusinessHistoryView', () => {
 
     expect(wrapper.get('[data-test="upstream-total-consumption"]').text()).toBe('¥8.00')
     expect(wrapper.get('[data-test="total-profit"]').text()).toBe('¥12.00')
-    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('--')
+    expect(wrapper.get('[data-test="user-balance-total"]').text()).toBe('¥321.45')
     expect(wrapper.get('[data-test="upstream-balance-total"]').text()).toBe('¥328.00')
-    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.balanceSnapshotEmpty')
+    expect(wrapper.get('[data-test="user-balance-snapshot-hint"]').text()).toBe('admin.businessHistory.asOfNow')
   })
 
   it('截图中的请求估算超过充值时改用充值减期末余额，收益同步重算', async () => {

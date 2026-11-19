@@ -48,6 +48,7 @@ func TestUpstreamSiteBalanceObservationIncreasePersistsReminderAndFiveMinuteNext
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT balance, currency, alert_active, alert_old_balance, alert_delta, alert_currency, alert_detected_at FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE")).
 		WithArgs("site.example").
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).AddRow(20.0, "USD", false, nil, nil, "USD", nil))
+	expectAutomaticRechargeReview(mock, "site.example", now, 5)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
 		WithArgs("site.example", "站点", "https://site.example", 25.0, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), true, 20.0, 25.0, 5.0, "USD", now).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -81,6 +82,7 @@ func TestUpstreamSiteBalanceObservationIncreaseUpdatesExistingReminderFromOrigin
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT balance, currency, alert_active, alert_old_balance, alert_delta, alert_currency, alert_detected_at FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE")).
 		WithArgs("site.example").
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).AddRow(25.0, "USD", true, 20.0, 5.0, "USD", now.Add(-5*time.Minute)))
+	expectAutomaticRechargeReview(mock, "site.example", now, 5)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
 		WithArgs("site.example", "站点", "https://site.example", 30.0, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), true, 20.0, 30.0, 10.0, "USD", now.Add(-5*time.Minute)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -139,6 +141,7 @@ func TestUpstreamSiteBalanceObservationReplacesDifferentCurrencyReminder(t *test
 		WithArgs("site.example").
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).
 			AddRow(70.0, "CNY", true, 10.0, 5.0, "USD", now.Add(-time.Hour)))
+	expectAutomaticRechargeReview(mock, "site.example", now, 5)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
 		WithArgs("site.example", "站点", "https://site.example", 75.0, "CNY", now, now.Add(service.UpstreamSiteBalancePollInterval), true, 70.0, 75.0, 5.0, "CNY", now).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -195,6 +198,7 @@ func TestUpstreamSiteBalanceObservationPendingReminderExcludesSmallIncrease(t *t
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT balance, currency, alert_active, alert_old_balance, alert_delta, alert_currency, alert_detected_at FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE")).
 		WithArgs("site.example").
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).AddRow(25.5, "USD", true, 20.0, 5.0, "USD", detectedAt))
+	expectAutomaticRechargeReview(mock, "site.example", now, 5)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
 		WithArgs("site.example", "站点", "https://site.example", 30.5, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), true, 20.0, 30.5, 10.0, "USD", detectedAt).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -236,6 +240,7 @@ func TestUpstreamSiteBalanceObservationDoesNotReuseInactiveOrSmallReminder(t *te
 				WithArgs("site.example").
 				WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).
 					AddRow(25.5, "USD", tt.active, 20.0, tt.delta, "USD", now.Add(-time.Hour)))
+			expectAutomaticRechargeReview(mock, "site.example", now, 1)
 			mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
 				WithArgs("site.example", "站点", "https://site.example", 26.5, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), true, 25.5, 26.5, 1.0, "USD", now).
 				WillReturnResult(sqlmock.NewResult(0, 1))
@@ -257,4 +262,11 @@ func TestUpstreamSiteBalanceObservationDoesNotReuseInactiveOrSmallReminder(t *te
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+func expectAutomaticRechargeReview(mock sqlmock.Sqlmock, host string, observedAt time.Time, amount int64) {
+	sourceKey := host + ":" + observedAt.UTC().Format(time.RFC3339Nano)
+	mock.ExpectExec(regexp.QuoteMeta("WITH site AS (")).
+		WithArgs(sourceKey, amount, observedAt, host, "站点", "https://site.example").
+		WillReturnResult(sqlmock.NewResult(1, 1))
 }

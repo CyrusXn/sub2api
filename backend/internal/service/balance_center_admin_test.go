@@ -10,8 +10,11 @@ import (
 
 type balanceCenterAdminRepositoryStub struct {
 	BalanceCenterRepository
-	lastFilter   BalanceCenterListFilter
-	createdEvent *BalanceCenterRechargeEvent
+	lastFilter    BalanceCenterListFilter
+	createdEvent  *BalanceCenterRechargeEvent
+	updatedID     int64
+	updatedAmount float64
+	confirmedIDs  []int64
 }
 
 type balanceCenterRechargeReminderRepositoryStub struct {
@@ -61,7 +64,8 @@ func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterManualRows(context.C
 func (r *balanceCenterAdminRepositoryStub) ReplaceBalanceCenterManualRows(context.Context, []BalanceCenterManualRow) error {
 	return nil
 }
-func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterRechargeEvents(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterRechargeEvent], error) {
+func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterRechargeEvents(_ context.Context, filter BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterRechargeEvent], error) {
+	r.lastFilter = filter
 	return nil, nil
 }
 func (r *balanceCenterAdminRepositoryStub) GetBalanceCenterRechargeSummary(_ context.Context, filter BalanceCenterListFilter) (*BalanceCenterRechargeSummary, error) {
@@ -75,6 +79,17 @@ func (r *balanceCenterAdminRepositoryStub) CreateBalanceCenterRechargeEvent(_ co
 }
 func (r *balanceCenterAdminRepositoryStub) DeleteBalanceCenterRechargeEvent(context.Context, int64) error {
 	return nil
+}
+func (r *balanceCenterAdminRepositoryStub) UpdatePendingRechargeAmount(_ context.Context, id int64, amount float64) error {
+	r.updatedID, r.updatedAmount = id, amount
+	return nil
+}
+func (r *balanceCenterAdminRepositoryStub) ConfirmPendingRecharge(_ context.Context, id int64) error {
+	r.confirmedIDs = append(r.confirmedIDs, id)
+	return nil
+}
+func (r *balanceCenterAdminRepositoryStub) ConfirmAllPendingRecharges(context.Context) (int64, error) {
+	return 2, nil
 }
 func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterReconciliations(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterReconciliation], error) {
 	return nil, nil
@@ -118,6 +133,23 @@ func TestBalanceCenterRechargeSummaryNormalizesPaginationAndForwardsFilters(t *t
 	require.Equal(t, int64(9), repo.lastFilter.SiteID)
 	require.Equal(t, &start, repo.lastFilter.StartTime)
 	require.Equal(t, &end, repo.lastFilter.EndTime)
+}
+
+func TestBalanceCenterRechargeReviewUsesPendingFilterAndValidatesAmount(t *testing.T) {
+	repo := &balanceCenterAdminRepositoryStub{}
+	svc := NewBalanceCenterService(repo, nil)
+	_, err := svc.ListPendingRechargeReviews(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "pending", repo.lastFilter.Status)
+	require.Equal(t, 100, repo.lastFilter.PageSize)
+	require.Error(t, svc.UpdatePendingRechargeAmount(context.Background(), 4, 0))
+	require.NoError(t, svc.UpdatePendingRechargeAmount(context.Background(), 4, 15))
+	require.Equal(t, int64(4), repo.updatedID)
+	require.Equal(t, float64(15), repo.updatedAmount)
+	require.NoError(t, svc.ConfirmPendingRecharge(context.Background(), 4))
+	count, err := svc.ConfirmAllPendingRecharges(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count)
 }
 
 func TestBalanceCenterCreateRechargeEventDefaultsToCNY(t *testing.T) {
