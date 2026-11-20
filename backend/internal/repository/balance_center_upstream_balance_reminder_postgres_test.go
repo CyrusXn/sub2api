@@ -93,20 +93,21 @@ CREATE TEMP TABLE upstream_site_credentials (id BIGINT PRIMARY KEY);`)
 				version      int64
 				oldBalance   float64
 				delta        float64
+				amount       int64
 			}{
 				{name: "首次采样建立基线", balance: 20, currency: "USD"},
 				{name: "余额不变仍可保存", balance: 20, currency: "USD"},
 				{name: "小额上涨只更新基线", balance: 20.5, currency: "USD"},
 				{name: "连续小额上涨不累计触发", balance: 21, currency: "USD"},
 				{name: "余额下降仍可保存", balance: 18, currency: "USD"},
-				{name: "余额上涨生成提醒", balance: 25, currency: "USD", wantIncrease: true, version: 1, oldBalance: 18, delta: 7},
+				{name: "余额上涨生成提醒", balance: 25, currency: "USD", wantIncrease: true, version: 1, oldBalance: 18, delta: 7, amount: 10},
 				{name: "小额上涨保留合法待处理提醒", balance: 25.5, currency: "USD", version: 1},
 				{name: "连续小额上涨不混入待处理提醒", balance: 26, currency: "USD", version: 1},
 				{name: "下降保留待处理提醒", balance: 24, currency: "USD", version: 1},
 				// old/new 是提醒首尾实测余额，delta 只累计达标的单次上涨，不计小额变动或消费。
-				{name: "再次上涨只累加合格增量", balance: 30, currency: "USD", wantIncrease: true, version: 2, oldBalance: 18, delta: 13},
+				{name: "再次上涨只累加合格增量", balance: 30, currency: "USD", wantIncrease: true, version: 2, oldBalance: 18, delta: 13, amount: 10},
 				{name: "币种变化只重建基线", balance: 200, currency: "CNY", version: 2},
-				{name: "新币种上涨替换提醒", balance: 210, currency: "CNY", wantIncrease: true, version: 3, oldBalance: 200, delta: 10},
+				{name: "新币种上涨替换提醒", balance: 210, currency: "CNY", wantIncrease: true, version: 3, oldBalance: 200, delta: 10, amount: 10},
 				{name: "空币种默认美元", balance: 20, currency: "", version: 3},
 			}
 			var active *service.UpstreamSiteBalanceReminder
@@ -136,7 +137,7 @@ CREATE TEMP TABLE upstream_site_credentials (id BIGINT PRIMARY KEY);`)
 FROM balance_center_recharge_events WHERE source='upstream_auto' AND occurred_at=$1`, observation.ObservedAt).
 							Scan(&amount, &occurredAt, &reviewStatus)
 						require.NoError(t, err)
-						require.Equal(t, int64(item.balance-cases[index-1].balance), amount)
+						require.Equal(t, item.amount, amount)
 						require.True(t, occurredAt.Equal(observation.ObservedAt))
 						require.Equal(t, "pending", reviewStatus)
 					} else {

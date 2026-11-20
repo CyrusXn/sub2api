@@ -16,6 +16,17 @@ func NewUpstreamSiteBalanceReminderRepository(db *sql.DB) service.UpstreamSiteBa
 	return &balanceCenterRepository{db: db}
 }
 
+func upstreamAutomaticRechargeAmount(delta float64) int64 {
+	// 与余额中心的充值预填档位一致。只容忍浮点差值误差，避免恰好在档位的金额被抬到下一档。
+	const tolerance = 1e-9
+	for _, tier := range [...]int64{1, 5, 10, 20, 50, 100, 200, 300, 500} {
+		if delta <= float64(tier)+tolerance {
+			return tier
+		}
+	}
+	return int64(math.Ceil((delta-tolerance)/100) * 100)
+}
+
 func (r *balanceCenterRepository) EnsureUpstreamSiteBalanceObservations(ctx context.Context, items []service.UpstreamSiteBalanceObservation) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -111,8 +122,8 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		alertDelta = delta
 		alertDetectedAt = detectedAt
 		// 充值归属检测时间；审核时间仅用于 review 字段，绝不回写 occurred_at。
-		// 余额差值可能略低于实际充值额，四舍五入避免直接截断少记一元。
-		amount := int64(math.Round(observedDelta))
+		// 轮询间隔内可能已经发生消费，按本次实测增量向上匹配充值档位。
+		amount := upstreamAutomaticRechargeAmount(observedDelta)
 		if amount > 0 {
 			sourceKey := fmt.Sprintf("%s:%s", strings.ToLower(item.Host), item.ObservedAt.UTC().Format(time.RFC3339Nano))
 			_, err = tx.ExecContext(ctx, `
