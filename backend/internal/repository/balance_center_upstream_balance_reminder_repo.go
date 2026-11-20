@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -110,7 +111,8 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		alertDelta = delta
 		alertDetectedAt = detectedAt
 		// 充值归属检测时间；审核时间仅用于 review 字段，绝不回写 occurred_at。
-		amount := int64(observedDelta)
+		// 余额差值可能略低于实际充值额，四舍五入避免直接截断少记一元。
+		amount := int64(math.Round(observedDelta))
 		if amount > 0 {
 			sourceKey := fmt.Sprintf("%s:%s", strings.ToLower(item.Host), item.ObservedAt.UTC().Format(time.RFC3339Nano))
 			_, err = tx.ExecContext(ctx, `

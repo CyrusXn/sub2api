@@ -38,13 +38,21 @@ describe('UpstreamBalanceReminder', () => {
   })
   afterEach(() => vi.clearAllMocks())
 
-  it('shows a floating review count, hides the list until expanded, and preserves detected time', async () => {
+  it('shows only an accessible dot when collapsed and preserves detected time when expanded', async () => {
     const wrapper = mount(UpstreamBalanceReminder)
     await flushPromises()
-    expect(wrapper.find('[data-testid="upstream-balance-reminders"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="upstream-balance-reminder-list"]').exists()).toBe(false)
-    await wrapper.get('aside > button').trigger('click')
+    const reminder = wrapper.get('[data-testid="upstream-balance-reminders"]')
+    const toggle = reminder.get('button')
+    expect(reminder.find('#upstream-balance-reminder-list').exists()).toBe(false)
+    expect(toggle.find('[data-testid="collapsed-review-dot"]').exists()).toBe(true)
+    expect(toggle.text()).toBe('')
+    expect(toggle.attributes('aria-label')).toBe('admin.balanceCenter.reminder.expand')
+    await toggle.trigger('click')
+    expect(toggle.text()).toContain('admin.balanceCenter.reminder.title')
     expect(wrapper.get('time').attributes('datetime')).toBe(recharge.occurred_at)
+    await toggle.trigger('click')
+    expect(toggle.text()).toBe('')
+    expect(reminder.find('#upstream-balance-reminder-list').exists()).toBe(false)
     wrapper.unmount()
   })
 

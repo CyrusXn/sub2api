@@ -1,23 +1,28 @@
 <template>
   <aside
     v-if="items.length"
-    class="fixed bottom-4 right-4 z-[70] w-[min(30rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-amber-300 bg-white shadow-2xl dark:border-amber-700 dark:bg-dark-800"
+    class="fixed bottom-4 right-4 z-[70]"
+    :class="{ 'w-[min(30rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-amber-300 bg-white shadow-2xl dark:border-amber-700 dark:bg-dark-800': !collapsed }"
     data-testid="upstream-balance-reminders"
     aria-live="polite"
   >
     <button
       type="button"
-      class="flex w-full items-center justify-between gap-3 bg-amber-50 px-4 py-3 text-left dark:bg-amber-950/40"
+      class="flex items-center"
+      :class="collapsed ? 'h-8 w-8 justify-center rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500' : 'w-full justify-between gap-3 bg-amber-50 px-4 py-3 text-left dark:bg-amber-950/40'"
+      :aria-label="collapsed ? t('admin.balanceCenter.reminder.expand') : t('admin.balanceCenter.reminder.collapse')"
       :aria-expanded="!collapsed"
-      aria-controls="upstream-balance-reminder-list"
+      :aria-controls="collapsed ? undefined : 'upstream-balance-reminder-list'"
       @click="collapsed = !collapsed"
     >
-      <span class="flex min-w-0 items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
-        <span aria-hidden="true">!</span>
-        <span class="truncate">{{ t('admin.balanceCenter.reminder.title') }}</span>
-      </span>
-      <span class="shrink-0 rounded-full bg-amber-600 px-2.5 py-1 text-xs font-bold text-white">{{ items.length }}</span>
-      <span class="sr-only">{{ collapsed ? t('admin.balanceCenter.reminder.expand') : t('admin.balanceCenter.reminder.collapse') }}</span>
+      <span v-if="collapsed" class="h-3 w-3 rounded-full bg-amber-500" data-testid="collapsed-review-dot" aria-hidden="true" />
+      <template v-else>
+        <span class="flex min-w-0 items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
+          <span aria-hidden="true">!</span>
+          <span class="truncate">{{ t('admin.balanceCenter.reminder.title') }}</span>
+        </span>
+        <span class="shrink-0 rounded-full bg-amber-600 px-2.5 py-1 text-xs font-bold text-white">{{ items.length }}</span>
+      </template>
     </button>
 
     <div v-if="!collapsed" id="upstream-balance-reminder-list" class="max-h-[65vh] space-y-3 overflow-y-auto p-3">
