@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -30,6 +31,8 @@ type balanceCenterAdminService interface {
 	CreateRechargeEvent(context.Context, *service.BalanceCenterRechargeEvent) (*service.BalanceCenterRechargeEvent, error)
 	DeleteRechargeEvent(context.Context, int64) error
 	ListPendingRechargeReviews(context.Context) (*service.BalanceCenterPage[service.BalanceCenterRechargeEvent], error)
+	GetRechargeReviewPosition(context.Context, int64) (*service.RechargeReviewPosition, error)
+	SaveRechargeReviewPosition(context.Context, int64, service.RechargeReviewPosition) error
 	UpdatePendingRechargeAmount(context.Context, int64, float64) error
 	ConfirmPendingRecharge(context.Context, int64) error
 	ConfirmAllPendingRecharges(context.Context) (int64, error)
@@ -309,6 +312,38 @@ func (h *BalanceCenterHandler) DeleteRechargeEvent(c *gin.Context) {
 func (h *BalanceCenterHandler) PendingRechargeReviews(c *gin.Context) {
 	result, err := h.service.ListPendingRechargeReviews(c.Request.Context())
 	h.respond(c, result, err)
+}
+
+func (h *BalanceCenterHandler) GetRechargeReviewPosition(c *gin.Context) {
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "未登录")
+		return
+	}
+	position, err := h.service.GetRechargeReviewPosition(c.Request.Context(), subject.UserID)
+	h.respond(c, gin.H{"position": position}, err)
+}
+
+func (h *BalanceCenterHandler) SaveRechargeReviewPosition(c *gin.Context) {
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "未登录")
+		return
+	}
+	var input struct {
+		X *float64 `json:"x"`
+		Y *float64 `json:"y"`
+	}
+	if c.ShouldBindJSON(&input) != nil || input.X == nil || input.Y == nil {
+		response.BadRequest(c, "审核提醒位置无效")
+		return
+	}
+	position := service.RechargeReviewPosition{X: *input.X, Y: *input.Y}
+	if !position.Valid() {
+		response.BadRequest(c, "审核提醒位置无效")
+		return
+	}
+	h.respond(c, nil, h.service.SaveRechargeReviewPosition(c.Request.Context(), subject.UserID, position))
 }
 
 func (h *BalanceCenterHandler) UpdatePendingRechargeAmount(c *gin.Context) {

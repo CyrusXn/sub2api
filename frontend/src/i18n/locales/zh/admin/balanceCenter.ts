@@ -23,6 +23,7 @@ export default {
       confirmAll: '一键确认全部',
       loading: '正在读取待审核充值…',
       loadError: '待审核充值读取失败',
+      positionSaveError: '审核提醒位置保存失败',
       saved: '充值金额已更新',
       confirmed: '充值记录已确认',
       confirmedAll: '已确认全部待审核充值'

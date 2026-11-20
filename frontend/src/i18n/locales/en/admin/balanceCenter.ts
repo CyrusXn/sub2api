@@ -23,6 +23,7 @@ export default {
       confirmAll: 'Confirm all',
       loading: 'Loading pending recharges…',
       loadError: 'Could not load pending recharges',
+      positionSaveError: 'Could not save the review badge position',
       saved: 'Recharge amount updated',
       confirmed: 'Recharge confirmed',
       confirmedAll: 'All pending recharges confirmed'

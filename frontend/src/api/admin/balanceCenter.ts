@@ -150,6 +150,11 @@ export interface BalanceCenterManualRow {
   sort_order: number
 }
 
+export interface RechargeReviewPosition {
+  x: number
+  y: number
+}
+
 export interface BalanceCenterRechargeEvent {
   id: number
   source: string
@@ -302,6 +307,12 @@ export const balanceCenterAPI = {
   },
   async createRechargeEvent(item: Omit<BalanceCenterRechargeEvent, 'id'>) {
     return (await apiClient.post<BalanceCenterRechargeEvent>(`${base}/recharge-events`, item)).data
+  },
+  async rechargeReviewPosition() {
+    return (await apiClient.get<{ position: RechargeReviewPosition | null }>(`${base}/recharge-review-position`)).data.position
+  },
+  async saveRechargeReviewPosition(position: RechargeReviewPosition) {
+    await apiClient.put(`${base}/recharge-review-position`, position)
   },
   async pendingRechargeReviews() {
     return (await apiClient.get<BalanceCenterPage<BalanceCenterRechargeEvent>>(`${base}/recharge-reviews`)).data

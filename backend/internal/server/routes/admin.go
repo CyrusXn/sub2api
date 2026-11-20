@@ -169,6 +169,8 @@ func registerBalanceCenterRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		balanceCenter.GET("/recharge-summary", h.Admin.BalanceCenter.RechargeSummary)
 		balanceCenter.POST("/recharge-events", h.Admin.BalanceCenter.CreateRechargeEvent)
 		balanceCenter.GET("/recharge-reviews", h.Admin.BalanceCenter.PendingRechargeReviews)
+		balanceCenter.GET("/recharge-review-position", h.Admin.BalanceCenter.GetRechargeReviewPosition)
+		balanceCenter.PUT("/recharge-review-position", h.Admin.BalanceCenter.SaveRechargeReviewPosition)
 		balanceCenter.PATCH("/recharge-reviews/:id", h.Admin.BalanceCenter.UpdatePendingRechargeAmount)
 		balanceCenter.POST("/recharge-reviews/:id/confirm", h.Admin.BalanceCenter.ConfirmPendingRecharge)
 		balanceCenter.POST("/recharge-reviews/confirm-all", h.Admin.BalanceCenter.ConfirmAllPendingRecharges)
