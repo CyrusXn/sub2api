@@ -172,6 +172,16 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		responsesReq.ServiceTier = "priority"
 	}
 
+	// 3c. ChatGPT/Codex accounts whose model supports tool_search get Claude
+	// Code's ToolSearch as the native protocol, keeping deferred tools out of
+	// the top-level tools.
+	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok &&
+		string(accountCodexToolCapabilities(account, upstreamModel)["supports_search_tool"]) == "true" {
+		if err := apicompat.ApplyNativeToolSearch(&anthropicReq, responsesReq); err != nil {
+			return nil, fmt.Errorf("apply native tool_search: %w", err)
+		}
+	}
+
 	responsesReq.Model = upstreamModel
 	if responsesReq.Reasoning != nil {
 		responsesReq.Reasoning.Effort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, responsesReq.Reasoning.Effort)
@@ -214,12 +224,18 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		logFields = append(logFields, zap.Bool("compat_turn_state_attached", true))
 	}
 	logger.L().Debug("openai messages: model mapping applied", logFields...)
+	if account.Platform == PlatformOpenAI {
+		apicompat.IncludeWebSearchSources(responsesReq)
+	}
 
 	// 4. Marshal Responses request body, then apply the ChatGPT/Codex transform.
 	responsesBody, err := json.Marshal(responsesReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
 	}
+	// responsesReq lives until billing after the stream; only its scalar
+	// fields are read from here on, so drop the body-sized input.
+	responsesReq.Input = nil
 
 	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
 		var reqBody map[string]any
@@ -835,6 +851,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 ) (*apicompat.ResponsesResponse, OpenAIUsage, *apicompat.BufferedResponseAccumulator, openAICompatPriorModelAudit, []byte, error) {
 	acc := apicompat.NewBufferedResponseAccumulator()
 	acc.XAIServerSideSearch = account != nil && account.IsGrok()
+	outputSlots := &openAICompatOutputSlots{xaiServerSideSearch: acc.XAIServerSideSearch}
 	var usage OpenAIUsage
 	if resp == nil || resp.Body == nil {
 		return nil, usage, acc, openAICompatPriorModelAudit{}, nil, errors.New("upstream response body is nil")
@@ -923,6 +940,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 				if frame, ok := parser.Finish(); ok {
 					payload := openAICompatPayloadWithEventType(frame.Data, frame.EventType)
 					payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
+					outputSlots.Observe([]byte(payload))
 					var event apicompat.ResponsesStreamEvent
 					if err := json.Unmarshal([]byte(payload), &event); err == nil {
 						s.parseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
@@ -938,6 +956,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 							if response.Usage != nil {
 								usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
 							}
+							outputSlots.fillTerminalOutput(event.Type, response)
 							// 保留原始终止事件，不能因协议 DTO 未声明状态字段而把请求错误变成 502。
 							return response, usage, acc, prior, []byte(payload), nil
 						}
@@ -965,6 +984,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 			}
 			payload := openAICompatPayloadWithEventType(frame.Data, frame.EventType)
 			payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
+			outputSlots.Observe([]byte(payload))
 
 			var event apicompat.ResponsesStreamEvent
 			if err := json.Unmarshal([]byte(payload), &event); err != nil {
@@ -989,6 +1009,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 				if response.Usage != nil {
 					usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
 				}
+				outputSlots.fillTerminalOutput(event.Type, response)
 				return response, usage, acc, prior, []byte(payload), nil
 			}
 
@@ -1118,6 +1139,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		if countSearch {
 			searchCount += countGrokNativeSearchCallsInSSEDataDedup([]byte(payload), streamSearchSeen)
+			searchCount = grokSearchCountWithTerminalUsage(searchCount, []byte(payload))
 		}
 
 		var event apicompat.ResponsesStreamEvent

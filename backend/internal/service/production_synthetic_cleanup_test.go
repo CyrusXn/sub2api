@@ -33,13 +33,14 @@ func TestProductionPassiveUsageCannotOverrideRealStatsWithSyntheticValues(t *tes
 			"synthetic_window_stats": map[string]any{"requests": 9999, "tokens": 999999, "cost": 999},
 		},
 	}
-	svc := &AccountUsageService{cache: &UsageCache{}}
-	svc.cache.windowStatsCache.Store(account.ID, &windowStatsCache{
-		stats: &WindowStats{Requests: 7, Tokens: 120, Cost: 0.25}, timestamp: time.Now(),
+	svc := &AccountUsageService{cache: &UsageCache{}, usageLogRepo: &usageBatchLogRepoStub{}}
+	svc.cache.windowStatsCache.Store(windowStatsCacheKey{accountID: account.ID, duration: 5 * time.Hour}, &windowStatsCache{
+		stats: &WindowStats{Requests: 7, Tokens: 120, Cost: 0.25}, timestamp: time.Now(), startTime: reset.Add(-5 * time.Hour),
 	})
 	usage, err := svc.getPassiveUsageForAccount(context.Background(), account)
 	require.NoError(t, err)
 	require.NotNil(t, usage.FiveHour)
+	require.NotNil(t, usage.FiveHour.WindowStats)
 	require.Equal(t, int64(7), usage.FiveHour.WindowStats.Requests)
 	require.Equal(t, int64(120), usage.FiveHour.WindowStats.Tokens)
 	require.Equal(t, 0.25, usage.FiveHour.WindowStats.Cost)

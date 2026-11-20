@@ -49,7 +49,8 @@ func allowsOpenAINextAccount(status int, message string, body []byte) bool {
 		return true
 	}
 	// 此处已排除明确的请求错误；裸 403 仍来自供应侧，不能直接中断同组切号。
-	if status == http.StatusForbidden || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
+	if status == http.StatusForbidden || status == http.StatusMethodNotAllowed || status == http.StatusRequestTimeout ||
+		status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
 		return true
 	}
 	if isUpstreamModelNotFoundError(status, body) || (status == http.StatusBadRequest && isOpenAICompatibleModelNotFound400(body)) {
