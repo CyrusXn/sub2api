@@ -54,14 +54,12 @@
               type="number"
               min="0.01"
               step="0.01"
+              :disabled="busyId !== null"
               class="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 dark:border-dark-500 dark:bg-dark-900 dark:text-gray-100"
               :aria-label="`${t('admin.balanceCenter.reminder.amount')} ${item.site_label || item.source_key}`"
             />
           </label>
-          <button type="button" class="rounded border border-gray-300 px-2 py-1.5 text-xs disabled:opacity-50 dark:border-dark-500" :disabled="busyId === item.id" @click="saveAmount(item)">
-            {{ t('admin.balanceCenter.reminder.save') }}
-          </button>
-          <button type="button" class="rounded bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50" :disabled="busyId === item.id" @click="confirm(item)">
+          <button type="button" class="rounded bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50" :disabled="busyId !== null" @click="confirm(item)">
             {{ t('admin.balanceCenter.reminder.confirm') }}
           </button>
         </div>
@@ -91,7 +89,7 @@ const { t, locale } = useI18n()
 const app = useAppStore()
 const items = ref<BalanceCenterRechargeEvent[]>([])
 const total = ref(0)
-const amounts = ref<Record<number, string>>({})
+const amounts = ref<Record<number, string | number>>({})
 const collapsed = ref(true)
 const busyId = ref<number | null>(null)
 let unsubscribe: (() => void) | null = null
@@ -204,10 +202,15 @@ async function loadReviews() {
   try {
     const result = await balanceCenterAPI.pendingRechargeReviews()
     if (request !== requestId) return
+    // 实时刷新仅更新未编辑的金额，不覆盖正在输入的修改。
+    const previous = new Map(items.value.map(item => [item.id, item.amount]))
+    amounts.value = Object.fromEntries(result.items.map(item => {
+      const draft = amounts.value[item.id]
+      return [item.id, draft !== undefined && Number(draft) !== previous.get(item.id) ? draft : item.amount]
+    }))
     items.value = result.items
     total.value = result.total
     if (!result.items.length) collapsed.value = true
-    amounts.value = Object.fromEntries(result.items.map(item => [item.id!, String(item.amount)]))
   } catch {
     app.showError(t('admin.balanceCenter.reminder.loadError'))
   }
@@ -217,33 +220,22 @@ function onReminderEvent(event: UpstreamSiteBalanceReminderEvent) {
   if (event.type === 'upsert') void loadReviews()
 }
 
-async function saveAmount(item: BalanceCenterRechargeEvent) {
-  const amount = Number(amounts.value[item.id!])
-  if (!Number.isFinite(amount) || amount <= 0) return
-  busyId.value = item.id!
-  try {
-    await balanceCenterAPI.updatePendingRechargeAmount(item.id!, amount)
-    item.amount = amount
-    app.showSuccess(t('admin.balanceCenter.reminder.saved'))
-  } catch (error) {
-    app.showError(error instanceof Error ? error.message : t('admin.balanceCenter.reminder.loadError'))
-  } finally {
-    busyId.value = null
-  }
+function reviewAmount(item: BalanceCenterRechargeEvent) {
+  const amount = Number(amounts.value[item.id])
+  if (Number.isFinite(amount) && amount > 0) return amount
+  app.showError(t('admin.balanceCenter.reminder.invalidAmount'))
 }
 
 async function confirm(item: BalanceCenterRechargeEvent) {
-  busyId.value = item.id!
+  if (busyId.value !== null) return
+  const amount = reviewAmount(item)
+  if (amount === undefined) return
+  busyId.value = item.id
   try {
-		const amount = Number(amounts.value[item.id!])
-		if (!Number.isFinite(amount) || amount <= 0) return
-		if (amount !== item.amount) {
-			await balanceCenterAPI.updatePendingRechargeAmount(item.id!, amount)
-			item.amount = amount
-		}
-    await balanceCenterAPI.confirmPendingRecharge(item.id!)
+    await balanceCenterAPI.confirmPendingRecharge(item.id, amount === item.amount ? undefined : amount)
     ++requestId
     items.value = items.value.filter(row => row.id !== item.id)
+    delete amounts.value[item.id]
     total.value = Math.max(0, total.value - 1)
     if (!items.value.length) collapsed.value = true
     if (total.value > items.value.length) void loadReviews()
@@ -256,14 +248,24 @@ async function confirm(item: BalanceCenterRechargeEvent) {
 }
 
 async function confirmAll() {
+  if (busyId.value !== null || !items.value.length) return
+  const edits: { id: number; amount: number }[] = []
+  for (const item of items.value) {
+    const amount = reviewAmount(item)
+    if (amount === undefined) return
+    if (amount !== item.amount) edits.push({ id: item.id, amount })
+  }
   busyId.value = -1
   try {
-    await balanceCenterAPI.confirmAllPendingRecharges()
+    await balanceCenterAPI.confirmAllPendingRecharges(edits)
     ++requestId
     items.value = []
+    amounts.value = {}
     total.value = 0
     collapsed.value = true
     app.showSuccess(t('admin.balanceCenter.reminder.confirmedAll'))
+    // 确认期间新到达的待审记录仍应重新显示。
+    await loadReviews()
   } catch (error) {
     app.showError(error instanceof Error ? error.message : t('admin.balanceCenter.reminder.loadError'))
   } finally {

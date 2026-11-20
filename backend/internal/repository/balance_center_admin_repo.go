@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/shopspring/decimal"
 )
@@ -405,24 +406,60 @@ func (r *balanceCenterRepository) UpdatePendingRechargeAmount(ctx context.Contex
 	return nil
 }
 
-func (r *balanceCenterRepository) ConfirmPendingRecharge(ctx context.Context, id int64) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`, id)
+const confirmPendingRechargeSQL = `UPDATE balance_center_recharge_events SET amount=COALESCE($2, amount), review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
+
+func (r *balanceCenterRepository) ConfirmPendingRecharge(ctx context.Context, id int64, amount *float64) error {
+	return confirmPendingRecharge(ctx, r.db, id, amount)
+}
+
+func confirmPendingRecharge(ctx context.Context, db sqlExecutor, id int64, amount *float64) error {
+	result, err := db.ExecContext(ctx, confirmPendingRechargeSQL, id, amount)
 	if err != nil {
 		return err
 	}
-	count, _ := result.RowsAffected()
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if count == 0 {
-		return errors.New("待审核充值记录不存在")
+		return infraerrors.Conflict("RECHARGE_REVIEW_NOT_PENDING", "待审核充值记录已变化，请刷新后重试")
 	}
 	return nil
 }
 
-func (r *balanceCenterRepository) ConfirmAllPendingRecharges(ctx context.Context) (int64, error) {
-	result, err := r.db.ExecContext(ctx, `UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE review_status='pending'`)
+func (r *balanceCenterRepository) ConfirmAllPendingRecharges(ctx context.Context, edits []service.BalanceCenterRechargeEdit) (int64, error) {
+	const confirmAllSQL = `UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE review_status='pending'`
+	if len(edits) == 0 {
+		result, err := r.db.ExecContext(ctx, confirmAllSQL)
+		if err != nil {
+			return 0, err
+		}
+		return result.RowsAffected()
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	// 金额修改与审核一起提交；有一条已被他人处理就回滚整批。
+	for _, edit := range edits {
+		if err := confirmPendingRecharge(ctx, tx, edit.ID, &edit.Amount); err != nil {
+			return 0, err
+		}
+	}
+	result, err := tx.ExecContext(ctx, confirmAllSQL)
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count + int64(len(edits)), nil
 }
 
 func (r *balanceCenterRepository) ListBalanceCenterReconciliations(ctx context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterReconciliation], error) {

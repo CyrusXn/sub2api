@@ -317,14 +317,11 @@ export const balanceCenterAPI = {
   async pendingRechargeReviews() {
     return (await apiClient.get<BalanceCenterPage<BalanceCenterRechargeEvent>>(`${base}/recharge-reviews`)).data
   },
-  async updatePendingRechargeAmount(id: number, amount: number) {
-    await apiClient.patch(`${base}/recharge-reviews/${id}`, { amount })
+  async confirmPendingRecharge(id: number, amount?: number) {
+    await apiClient.post(`${base}/recharge-reviews/${id}/confirm`, amount === undefined ? undefined : { amount })
   },
-  async confirmPendingRecharge(id: number) {
-    await apiClient.post(`${base}/recharge-reviews/${id}/confirm`)
-  },
-  async confirmAllPendingRecharges() {
-    return (await apiClient.post<{ confirmed: number }>(`${base}/recharge-reviews/confirm-all`)).data
+  async confirmAllPendingRecharges(edits: { id: number; amount: number }[]) {
+    return (await apiClient.post<{ confirmed: number }>(`${base}/recharge-reviews/confirm-all`, { edits })).data
   },
   async deleteRechargeEvent(id: number) {
     await apiClient.delete(`${base}/recharge-events/${id}`)

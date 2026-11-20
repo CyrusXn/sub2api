@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,9 +17,69 @@ import (
 
 type balanceCenterHandlerServiceStub struct {
 	balanceCenterAdminService
-	filter         service.BalanceCenterListFilter
-	liandongCurl   string
-	automaticCount int
+	filter          service.BalanceCenterListFilter
+	liandongCurl    string
+	automaticCount  int
+	confirmedID     int64
+	confirmedAmount *float64
+	batchEdits      []service.BalanceCenterRechargeEdit
+	batchCalls      int
+}
+
+func (s *balanceCenterHandlerServiceStub) ConfirmPendingRecharge(_ context.Context, id int64, amount *float64) error {
+	s.confirmedID, s.confirmedAmount = id, amount
+	return nil
+}
+
+func (s *balanceCenterHandlerServiceStub) ConfirmAllPendingRecharges(_ context.Context, edits []service.BalanceCenterRechargeEdit) (int64, error) {
+	s.batchEdits = edits
+	s.batchCalls++
+	return 2, nil
+}
+
+func TestBalanceCenterHandlerRechargeReviewPassesEditedAmounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		path, body string
+		status     int
+		batch      bool
+		amount     float64
+	}{
+		{path: "/5/confirm", body: `{"amount":200}`, status: http.StatusOK, amount: 200},
+		{path: "/5/confirm", status: http.StatusOK},
+		{path: "/5/confirm", body: `{"amount":"invalid"}`, status: http.StatusBadRequest},
+		{path: "/confirm-all", body: `{"edits":[{"id":5,"amount":200}]}`, status: http.StatusOK, batch: true, amount: 200},
+		{path: "/confirm-all", status: http.StatusOK, batch: true},
+		{path: "/confirm-all", body: `{"edits":{}}`, status: http.StatusBadRequest, batch: true},
+	} {
+		stub := &balanceCenterHandlerServiceStub{}
+		h := &BalanceCenterHandler{service: stub}
+		router := gin.New()
+		router.POST("/:id/confirm", h.ConfirmPendingRecharge)
+		router.POST("/confirm-all", h.ConfirmAllPendingRecharges)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body)))
+		require.Equal(t, tc.status, recorder.Code, "%s %s", tc.path, tc.body)
+		switch {
+		case tc.status != http.StatusOK:
+			require.Zero(t, stub.batchCalls)
+			require.Zero(t, stub.confirmedID)
+		case tc.batch:
+			require.Equal(t, 1, stub.batchCalls)
+			if tc.amount > 0 {
+				require.Equal(t, []service.BalanceCenterRechargeEdit{{ID: 5, Amount: tc.amount}}, stub.batchEdits)
+			} else {
+				require.Empty(t, stub.batchEdits)
+			}
+		default:
+			require.Equal(t, int64(5), stub.confirmedID)
+			if tc.amount > 0 {
+				require.Equal(t, &tc.amount, stub.confirmedAmount)
+			} else {
+				require.Nil(t, stub.confirmedAmount)
+			}
+		}
+	}
 }
 
 func (s *balanceCenterHandlerServiceStub) GetRechargeSummary(_ context.Context, filter service.BalanceCenterListFilter) (*service.BalanceCenterRechargeSummary, error) {

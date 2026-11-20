@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -10,11 +11,13 @@ import (
 
 type balanceCenterAdminRepositoryStub struct {
 	BalanceCenterRepository
-	lastFilter    BalanceCenterListFilter
-	createdEvent  *BalanceCenterRechargeEvent
-	updatedID     int64
-	updatedAmount float64
-	confirmedIDs  []int64
+	lastFilter      BalanceCenterListFilter
+	createdEvent    *BalanceCenterRechargeEvent
+	updatedID       int64
+	updatedAmount   float64
+	confirmedIDs    []int64
+	confirmedAmount *float64
+	bulkEdits       []BalanceCenterRechargeEdit
 }
 
 type balanceCenterRechargeReminderRepositoryStub struct {
@@ -84,11 +87,13 @@ func (r *balanceCenterAdminRepositoryStub) UpdatePendingRechargeAmount(_ context
 	r.updatedID, r.updatedAmount = id, amount
 	return nil
 }
-func (r *balanceCenterAdminRepositoryStub) ConfirmPendingRecharge(_ context.Context, id int64) error {
+func (r *balanceCenterAdminRepositoryStub) ConfirmPendingRecharge(_ context.Context, id int64, amount *float64) error {
 	r.confirmedIDs = append(r.confirmedIDs, id)
+	r.confirmedAmount = amount
 	return nil
 }
-func (r *balanceCenterAdminRepositoryStub) ConfirmAllPendingRecharges(context.Context) (int64, error) {
+func (r *balanceCenterAdminRepositoryStub) ConfirmAllPendingRecharges(_ context.Context, edits []BalanceCenterRechargeEdit) (int64, error) {
+	r.bulkEdits = edits
 	return 2, nil
 }
 func (r *balanceCenterAdminRepositoryStub) ListBalanceCenterReconciliations(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterReconciliation], error) {
@@ -146,10 +151,23 @@ func TestBalanceCenterRechargeReviewUsesPendingFilterAndValidatesAmount(t *testi
 	require.NoError(t, svc.UpdatePendingRechargeAmount(context.Background(), 4, 15))
 	require.Equal(t, int64(4), repo.updatedID)
 	require.Equal(t, float64(15), repo.updatedAmount)
-	require.NoError(t, svc.ConfirmPendingRecharge(context.Background(), 4))
-	count, err := svc.ConfirmAllPendingRecharges(context.Background())
+	invalid := math.NaN()
+	require.Error(t, svc.ConfirmPendingRecharge(context.Background(), 4, &invalid))
+	require.Empty(t, repo.confirmedIDs)
+	amount := 200.0
+	require.NoError(t, svc.ConfirmPendingRecharge(context.Background(), 4, &amount))
+	require.Equal(t, []int64{4}, repo.confirmedIDs)
+	require.Equal(t, &amount, repo.confirmedAmount)
+	_, err = svc.ConfirmAllPendingRecharges(context.Background(), []BalanceCenterRechargeEdit{{ID: 4, Amount: 200}, {ID: 4, Amount: 50}})
+	require.Error(t, err)
+	_, err = svc.ConfirmAllPendingRecharges(context.Background(), []BalanceCenterRechargeEdit{{ID: 4, Amount: 0}})
+	require.Error(t, err)
+	require.Empty(t, repo.bulkEdits)
+	edits := []BalanceCenterRechargeEdit{{ID: 4, Amount: 200}}
+	count, err := svc.ConfirmAllPendingRecharges(context.Background(), edits)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
+	require.Equal(t, edits, repo.bulkEdits)
 }
 
 func TestBalanceCenterCreateRechargeEventDefaultsToCNY(t *testing.T) {

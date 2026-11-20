@@ -315,17 +315,40 @@ func TestBalanceCenterRechargeReviewUpdatesDoNotChangeOccurredAt(t *testing.T) {
 
 	mock.ExpectExec(`UPDATE balance_center_recharge_events SET amount=\$1, updated_at=NOW\(\) WHERE id=\$2 AND review_status='pending'`).
 		WithArgs(12.0, int64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW\(\), updated_at=NOW\(\) WHERE id=\$1 AND review_status='pending'`).
-		WithArgs(int64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
+	const confirmSQL = `UPDATE balance_center_recharge_events SET amount=COALESCE($2, amount), review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
+	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).
+		WithArgs(int64(5), 200.0).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).
+		WithArgs(int64(6), 50.0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW\(\), updated_at=NOW\(\) WHERE review_status='pending'`).
-		WillReturnResult(sqlmock.NewResult(0, 3))
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
 
 	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
 	require.NoError(t, repo.UpdatePendingRechargeAmount(context.Background(), 5, 12))
-	require.NoError(t, repo.ConfirmPendingRecharge(context.Background(), 5))
-	count, err := repo.ConfirmAllPendingRecharges(context.Background())
+	amount := 200.0
+	require.NoError(t, repo.ConfirmPendingRecharge(context.Background(), 5, &amount))
+	count, err := repo.ConfirmAllPendingRecharges(context.Background(), []service.BalanceCenterRechargeEdit{{ID: 6, Amount: 50}})
 	require.NoError(t, err)
 	require.Equal(t, int64(3), count)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBalanceCenterRechargeReviewRollsBackBatchWhenAnEditIsNoLongerPending(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	const confirmSQL = `UPDATE balance_center_recharge_events SET amount=COALESCE($2, amount), review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).WithArgs(int64(5), 200.0).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).WithArgs(int64(6), 50.0).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	repo := NewBalanceCenterRepository(db).(service.BalanceCenterAdminRepository)
+	count, err := repo.ConfirmAllPendingRecharges(context.Background(), []service.BalanceCenterRechargeEdit{{ID: 5, Amount: 200}, {ID: 6, Amount: 50}})
+	require.Error(t, err)
+	require.Zero(t, count)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

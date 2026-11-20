@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 type BalanceCenterListFilter struct {
@@ -135,6 +137,13 @@ type BalanceCenterPage[T any] struct {
 	PageSize int   `json:"page_size"`
 }
 
+type BalanceCenterRechargeEdit struct {
+	ID     int64   `json:"id"`
+	Amount float64 `json:"amount"`
+}
+
+var ErrInvalidRechargeReview = infraerrors.BadRequest("INVALID_RECHARGE_REVIEW", "充值记录或金额无效")
+
 type BalanceCenterAdminRepository interface {
 	ListBalanceCenterOverview(context.Context) ([]BalanceCenterOverviewItem, error)
 	ListBalanceCenterSites(context.Context) ([]BalanceCenterSite, error)
@@ -148,8 +157,8 @@ type BalanceCenterAdminRepository interface {
 	CreateBalanceCenterRechargeEvent(context.Context, *BalanceCenterRechargeEvent) (*BalanceCenterRechargeEvent, error)
 	DeleteBalanceCenterRechargeEvent(context.Context, int64) error
 	UpdatePendingRechargeAmount(context.Context, int64, float64) error
-	ConfirmPendingRecharge(context.Context, int64) error
-	ConfirmAllPendingRecharges(context.Context) (int64, error)
+	ConfirmPendingRecharge(context.Context, int64, *float64) error
+	ConfirmAllPendingRecharges(context.Context, []BalanceCenterRechargeEdit) (int64, error)
 	ListBalanceCenterReconciliations(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterReconciliation], error)
 	CreateBalanceCenterReconciliation(context.Context, *BalanceCenterReconciliation) (*BalanceCenterReconciliation, error)
 	ListBalanceCenterAlerts(context.Context, BalanceCenterListFilter) (*BalanceCenterPage[BalanceCenterAlertDelivery], error)
@@ -280,23 +289,35 @@ func (s *BalanceCenterService) UpdatePendingRechargeAmount(ctx context.Context, 
 	return repository.UpdatePendingRechargeAmount(ctx, id, amount)
 }
 
-func (s *BalanceCenterService) ConfirmPendingRecharge(ctx context.Context, id int64) error {
-	if id <= 0 {
-		return errors.New("充值记录 ID 无效")
+func validRechargeReviewAmount(amount float64) bool {
+	// 与数据库金额精度一致，避免正数写入后被舍入为零或超出范围。
+	return amount >= 0.00000000005 && amount < 1e20
+}
+
+func (s *BalanceCenterService) ConfirmPendingRecharge(ctx context.Context, id int64, amount *float64) error {
+	if id <= 0 || (amount != nil && !validRechargeReviewAmount(*amount)) {
+		return ErrInvalidRechargeReview
 	}
 	repository, err := s.adminRepository()
 	if err != nil {
 		return err
 	}
-	return repository.ConfirmPendingRecharge(ctx, id)
+	return repository.ConfirmPendingRecharge(ctx, id, amount)
 }
 
-func (s *BalanceCenterService) ConfirmAllPendingRecharges(ctx context.Context) (int64, error) {
+func (s *BalanceCenterService) ConfirmAllPendingRecharges(ctx context.Context, edits []BalanceCenterRechargeEdit) (int64, error) {
+	seen := make(map[int64]struct{}, len(edits))
+	for _, edit := range edits {
+		if _, exists := seen[edit.ID]; exists || edit.ID <= 0 || !validRechargeReviewAmount(edit.Amount) {
+			return 0, ErrInvalidRechargeReview
+		}
+		seen[edit.ID] = struct{}{}
+	}
 	repository, err := s.adminRepository()
 	if err != nil {
 		return 0, err
 	}
-	return repository.ConfirmAllPendingRecharges(ctx)
+	return repository.ConfirmAllPendingRecharges(ctx, edits)
 }
 
 func (s *BalanceCenterService) CreateRechargeEvent(ctx context.Context, event *BalanceCenterRechargeEvent) (*BalanceCenterRechargeEvent, error) {

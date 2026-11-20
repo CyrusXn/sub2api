@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,8 +35,8 @@ type balanceCenterAdminService interface {
 	GetRechargeReviewPosition(context.Context, int64) (*service.RechargeReviewPosition, error)
 	SaveRechargeReviewPosition(context.Context, int64, service.RechargeReviewPosition) error
 	UpdatePendingRechargeAmount(context.Context, int64, float64) error
-	ConfirmPendingRecharge(context.Context, int64) error
-	ConfirmAllPendingRecharges(context.Context) (int64, error)
+	ConfirmPendingRecharge(context.Context, int64, *float64) error
+	ConfirmAllPendingRecharges(context.Context, []service.BalanceCenterRechargeEdit) (int64, error)
 	ListReconciliations(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterReconciliation], error)
 	CreateReconciliation(context.Context, *service.BalanceCenterReconciliation) (*service.BalanceCenterReconciliation, error)
 	ListAlerts(context.Context, service.BalanceCenterListFilter) (*service.BalanceCenterPage[service.BalanceCenterAlertDelivery], error)
@@ -368,7 +369,15 @@ func (h *BalanceCenterHandler) ConfirmPendingRecharge(c *gin.Context) {
 		response.BadRequest(c, "充值记录 ID 无效")
 		return
 	}
-	if err := h.service.ConfirmPendingRecharge(c.Request.Context(), id); err != nil {
+	var input struct {
+		Amount *float64 `json:"amount"`
+	}
+	// 兼容发布切换期间尚未刷新的旧页面：没有请求体则按已入库金额审核。
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "充值审核参数无效")
+		return
+	}
+	if err := h.service.ConfirmPendingRecharge(c.Request.Context(), id, input.Amount); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -376,7 +385,14 @@ func (h *BalanceCenterHandler) ConfirmPendingRecharge(c *gin.Context) {
 }
 
 func (h *BalanceCenterHandler) ConfirmAllPendingRecharges(c *gin.Context) {
-	count, err := h.service.ConfirmAllPendingRecharges(c.Request.Context())
+	var input struct {
+		Edits []service.BalanceCenterRechargeEdit `json:"edits"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "充值审核参数无效")
+		return
+	}
+	count, err := h.service.ConfirmAllPendingRecharges(c.Request.Context(), input.Edits)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
