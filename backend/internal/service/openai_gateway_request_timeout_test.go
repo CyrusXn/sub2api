@@ -27,7 +27,7 @@ func TestShouldFailoverOpenAIUpstreamResponse_RequestTimeout(t *testing.T) {
 		{"plain_timeout", http.StatusRequestTimeout, `Request Timeout`, true},
 		{"bad_gateway", http.StatusBadGateway, `{"error":{"message":"Upstream service temporarily unavailable","type":"upstream_error"}}`, true},
 		{"rate_limit", http.StatusTooManyRequests, `{"error":{"message":"rate limited","type":"rate_limit_error"}}`, true},
-		{"method_not_allowed", http.StatusMethodNotAllowed, ``, true},
+		{"method_not_allowed", http.StatusMethodNotAllowed, ``, false},
 		{"bad_request", http.StatusBadRequest, `{"error":{"message":"Invalid image size","type":"invalid_request_error"}}`, false},
 		{"not_found", http.StatusNotFound, `{"error":{"message":"Not found"}}`, false},
 		{"unprocessable_entity", http.StatusUnprocessableEntity, `{"error":{"message":"Invalid request"}}`, false},
