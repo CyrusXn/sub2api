@@ -40,13 +40,14 @@ type UpstreamSiteBalanceReminder struct {
 }
 
 type UpstreamSiteBalanceObservation struct {
-	Host         string
-	DisplayName  string
-	BaseURL      string
-	Balance      float64
-	Currency     string
-	ObservedAt   time.Time
-	FailureCount int
+	Host                    string
+	DisplayName             string
+	BaseURL                 string
+	Balance                 float64
+	Currency                string
+	ObservedAt              time.Time
+	FailureCount            int
+	RechargeConversionScale float64
 }
 
 type UpstreamSiteBalanceReminderRepository interface {
@@ -129,7 +130,8 @@ func (s *UpstreamBillingProbeService) probeDueUpstreamSiteBalances(ctx context.C
 		}
 		group.Go(func() error {
 			if err := s.probeUpstreamSiteBalance(ctx, observation, account); err != nil {
-				delay := upstreamSiteBalanceFailureDelay(observation.FailureCount + 1)
+				hasAPIKey := account.Type == AccountTypeAPIKey && account.GetCredential("api_key") != ""
+				delay := upstreamSiteBalanceFailureDelay(observation.FailureCount+1, hasAPIKey, err)
 				if deferErr := s.upstreamSiteBalanceReminderRepo.DeferUpstreamSiteBalanceObservation(ctx, observation.Host, s.currentTime().UTC().Add(delay), safeUpstreamSiteBalanceFailure(err)); deferErr != nil {
 					logger.LegacyPrintf("service.upstream_billing_probe", "site_balance_failure_state_save_failed: error_type=%T", deferErr)
 				}
@@ -257,6 +259,7 @@ func (s *UpstreamBillingProbeService) probeUpstreamSiteBalance(ctx context.Conte
 	reminder, err := s.upstreamSiteBalanceReminderRepo.SaveUpstreamSiteBalanceObservation(ctx, UpstreamSiteBalanceObservation{
 		Host: observation.Host, DisplayName: observation.DisplayName, BaseURL: observation.BaseURL,
 		Balance: *result.Amount, Currency: currency, ObservedAt: s.currentTime().UTC(),
+		RechargeConversionScale: account.UpstreamRechargeConversionScale(),
 	})
 	if err != nil {
 		return errors.New("observation_save_failed")
@@ -369,11 +372,16 @@ func (s *UpstreamBillingProbeService) fetchSiteBalanceWithToken(ctx context.Cont
 	return s.fetchInnomAccountBalance(ctx, account, baseURL, token, proxyURL, tlsProfile, now)
 }
 
-func upstreamSiteBalanceFailureDelay(failureCount int) time.Duration {
+func upstreamSiteBalanceFailureDelay(failureCount int, hasAPIKey bool, err error) time.Duration {
 	if failureCount < 1 {
 		failureCount = 1
 	}
 	delay := time.Minute * time.Duration(1<<min(failureCount-1, 6))
+	var probeErr *upstreamSiteBalanceProbeError
+	if hasAPIKey && errors.As(err, &probeErr) && probeErr != nil && probeErr.stage == "login" && probeErr.httpStatus == http.StatusBadRequest {
+		// 网页回退失败时，仍需及时重试可能已恢复的密钥查余额路径。
+		return min(delay, UpstreamSiteBalancePollInterval)
+	}
 	return min(delay, time.Hour)
 }
 

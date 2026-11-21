@@ -50,7 +50,7 @@ func TestProbeUpstreamSiteBalanceUsesAPIKeyBeforeWebLogin(t *testing.T) {
 	require.Len(t, repo.saved, 1)
 	require.Equal(t, UpstreamSiteBalanceObservation{
 		Host: "site.example", DisplayName: "测试站点", BaseURL: "https://site.example",
-		Balance: 20, Currency: "USD", ObservedAt: now,
+		Balance: 20, Currency: "USD", ObservedAt: now, RechargeConversionScale: 0.1,
 	}, repo.saved[0])
 	require.Empty(t, bus.events)
 
@@ -67,6 +67,15 @@ func TestProbeUpstreamSiteBalanceUsesAPIKeyBeforeWebLogin(t *testing.T) {
 	require.Equal(t, []string{"GET /v1/usage", "GET /v1/usage"}, upstream.requestPaths())
 	require.Equal(t, 0.1, account.UpstreamRechargeScale)
 	require.Empty(t, account.Extra)
+}
+
+func TestUpstreamSiteBalanceRetryAfterRejectedWebLogin(t *testing.T) {
+	loginRejected := &upstreamSiteBalanceProbeError{stage: "login", reason: "http_error", httpStatus: http.StatusBadRequest}
+	loginLimited := &upstreamSiteBalanceProbeError{stage: "login", reason: "http_error", httpStatus: http.StatusTooManyRequests}
+	require.Equal(t, time.Minute, upstreamSiteBalanceFailureDelay(1, true, loginRejected))
+	require.Equal(t, UpstreamSiteBalancePollInterval, upstreamSiteBalanceFailureDelay(8, true, loginRejected))
+	require.Equal(t, time.Hour, upstreamSiteBalanceFailureDelay(8, false, loginRejected))
+	require.Equal(t, time.Hour, upstreamSiteBalanceFailureDelay(8, true, loginLimited))
 }
 
 func TestProbeUpstreamSiteBalanceDoesNotRequireWebCredentialsForAPIKey(t *testing.T) {

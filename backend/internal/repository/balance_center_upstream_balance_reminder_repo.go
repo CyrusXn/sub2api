@@ -122,8 +122,12 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		alertDelta = delta
 		alertDetectedAt = detectedAt
 		// 充值归属检测时间；审核时间仅用于 review 字段，绝不回写 occurred_at。
-		// 轮询间隔内可能已经发生消费，按本次实测增量向上匹配充值档位。
-		amount := upstreamAutomaticRechargeAmount(observedDelta)
+		// 余额基线保留上游原值。入账前换算为实际充值口径，再按净增量向上匹配档位。
+		scale := item.RechargeConversionScale
+		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+			scale = 1
+		}
+		amount := upstreamAutomaticRechargeAmount(observedDelta * scale)
 		if amount > 0 {
 			sourceKey := fmt.Sprintf("%s:%s", strings.ToLower(item.Host), item.ObservedAt.UTC().Format(time.RFC3339Nano))
 			_, err = tx.ExecContext(ctx, `

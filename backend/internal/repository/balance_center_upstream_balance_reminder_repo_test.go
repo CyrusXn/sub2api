@@ -74,14 +74,17 @@ func TestUpstreamSiteBalanceObservationIncreasePersistsReminderAndFiveMinuteNext
 
 func TestUpstreamSiteBalanceObservationRoundsAutomaticRechargeAmount(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		delta float64
-		want  int64
+		name     string
+		previous float64
+		current  float64
+		scale    float64
+		want     int64
 	}{
-		{"small", 2.3, 5}, {"exact-five", 5, 5}, {"float-noise", 5.000000000000001, 5}, {"above-five", 5.1, 10}, {"near-ten", 8.2, 10},
-		{"near-twenty", 18, 20}, {"near-fifty", 49, 50}, {"near-hundred", 98, 100}, {"exact-hundred", 100, 100},
-		{"near-two-hundred", 198.7, 200}, {"net-after-consumption", 280, 300}, {"near-three-hundred", 298, 300},
-		{"above-five-hundred", 501, 600}, {"exact-six-hundred", 600, 600},
+		{"small", 0, 2.3, 1, 5}, {"exact-five", 0, 5, 1, 5}, {"float-noise", 0, 5.000000000000001, 1, 5}, {"above-five", 0, 5.1, 1, 10}, {"near-ten", 0, 8.2, 1, 10},
+		{"near-twenty", 0, 18, 1, 20}, {"near-fifty", 0, 49, 1, 50}, {"near-hundred", 0, 98, 1, 100}, {"exact-hundred", 0, 100, 1, 100},
+		{"near-two-hundred", 0, 198.7, 1, 200}, {"net-after-consumption", 0, 280, 1, 300}, {"near-three-hundred", 0, 298, 1, 300},
+		{"above-five-hundred", 0, 501, 1, 600}, {"exact-six-hundred", 0, 600, 1, 600},
+		{"scaled-wallet", 22, 471.75, 0.1, 50},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
@@ -89,23 +92,24 @@ func TestUpstreamSiteBalanceObservationRoundsAutomaticRechargeAmount(t *testing.
 			defer db.Close()
 
 			now := time.Date(2026, 11, 19, 13, 25, 4, 0, time.UTC)
+			delta := tc.current - tc.previous
 			mock.ExpectBegin()
 			mock.ExpectQuery(regexp.QuoteMeta("SELECT balance, currency, alert_active, alert_old_balance, alert_delta, alert_currency, alert_detected_at FROM upstream_site_balance_observations WHERE host=$1 FOR UPDATE")).
 				WithArgs("site.example").
-				WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).AddRow(0.0, "CNY", false, nil, nil, "CNY", nil))
+				WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).AddRow(tc.previous, "USD", false, nil, nil, "USD", nil))
 			expectAutomaticRechargeReview(mock, "site.example", now, tc.want)
 			mock.ExpectExec(regexp.QuoteMeta("INSERT INTO upstream_site_balance_observations")).
-				WithArgs("site.example", "站点", "https://site.example", tc.delta, "CNY", now, now.Add(service.UpstreamSiteBalancePollInterval), true, 0.0, tc.delta, tc.delta, "CNY", now).
+				WithArgs("site.example", "站点", "https://site.example", tc.current, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), true, tc.previous, tc.current, delta, "USD", now).
 				WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery(regexp.QuoteMeta("SELECT host, display_name, alert_old_balance, alert_new_balance, alert_delta, alert_currency, alert_detected_at, alert_version")).
 				WithArgs("site.example").
 				WillReturnRows(sqlmock.NewRows([]string{"host", "display_name", "alert_old_balance", "alert_new_balance", "alert_delta", "alert_currency", "alert_detected_at", "alert_version"}).
-					AddRow("site.example", "站点", 0.0, tc.delta, tc.delta, "CNY", now, 1))
+					AddRow("site.example", "站点", tc.previous, tc.current, delta, "USD", now, 1))
 			mock.ExpectCommit()
 
 			_, err = NewUpstreamSiteBalanceReminderRepository(db).SaveUpstreamSiteBalanceObservation(context.Background(), service.UpstreamSiteBalanceObservation{
-				Host: "site.example", DisplayName: "站点", BaseURL: "https://site.example", Balance: tc.delta,
-				Currency: "CNY", ObservedAt: now,
+				Host: "site.example", DisplayName: "站点", BaseURL: "https://site.example", Balance: tc.current,
+				Currency: "USD", ObservedAt: now, RechargeConversionScale: tc.scale,
 			})
 			require.NoError(t, err)
 			require.NoError(t, mock.ExpectationsWereMet())
