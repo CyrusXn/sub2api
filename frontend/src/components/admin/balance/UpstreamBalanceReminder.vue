@@ -10,7 +10,7 @@
     <button
       type="button"
       class="flex items-center"
-      :class="collapsed ? 'h-8 w-8 touch-none select-none justify-center rounded-full bg-amber-600 text-xs font-bold tabular-nums text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500' : 'w-full justify-between gap-3 bg-amber-50 px-4 py-3 text-left dark:bg-amber-950/40'"
+      :class="collapsed ? 'h-8 w-8 touch-none select-none justify-center rounded-full text-xs font-bold tabular-nums text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500' : 'w-full justify-between gap-3 bg-amber-50 px-4 py-3 text-left dark:bg-amber-950/40'"
       :style="collapsed ? { cursor: drag ? 'grabbing' : 'grab' } : undefined"
       :aria-label="collapsed ? t('admin.balanceCenter.reminder.expand') : t('admin.balanceCenter.reminder.collapse')"
       :aria-expanded="!collapsed"
@@ -22,7 +22,18 @@
       @lostpointercapture="finishDrag($event, false)"
       @click="toggleReminder"
     >
-      <span v-if="collapsed" data-testid="collapsed-review-dot" aria-hidden="true">{{ total > 99 ? '99+' : total }}</span>
+      <span
+        v-if="collapsed"
+        class="pointer-events-none relative grid h-full w-full place-items-center"
+        :class="{ 'review-dot-held': drag }"
+        data-testid="collapsed-review-dot"
+        aria-hidden="true"
+      >
+        <span class="review-dot-orbit"></span>
+        <span class="review-dot-face relative grid h-full w-full place-items-center rounded-full bg-amber-600">
+          {{ total > 99 ? '99+' : total }}
+        </span>
+      </span>
       <template v-else>
         <span class="flex min-w-0 items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
           <span aria-hidden="true">!</span>
@@ -294,3 +305,63 @@ onBeforeUnmount(() => {
   unsubscribe = null
 })
 </script>
+
+<style scoped>
+/* 动效只作用于视觉层，保持按钮的拖拽坐标和点击区域稳定。 */
+.review-dot-face {
+  box-shadow: 0 0 9px rgb(245 158 11 / 65%);
+  animation: review-dot-breathe 1.8s ease-in-out infinite;
+}
+
+.review-dot-orbit {
+  position: absolute;
+  inset: -7px;
+  border: 1px solid rgb(245 158 11 / 28%);
+  border-block-color: rgb(245 158 11 / 85%);
+  border-radius: 50%;
+  animation: review-dot-spin 3.2s linear infinite;
+}
+
+.review-dot-orbit::before,
+.review-dot-orbit::after {
+  position: absolute;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #fbbf24;
+  box-shadow: 0 0 6px 1px #f59e0b;
+  transform: translateX(-50%);
+  content: '';
+}
+
+.review-dot-orbit::before {
+  top: -2px;
+}
+
+.review-dot-orbit::after {
+  bottom: -2px;
+  opacity: 0.7;
+}
+
+.review-dot-held .review-dot-face,
+.review-dot-held .review-dot-orbit {
+  animation-play-state: paused;
+}
+
+@keyframes review-dot-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+}
+
+@keyframes review-dot-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-dot-face,
+  .review-dot-orbit {
+    animation: none;
+  }
+}
+</style>
