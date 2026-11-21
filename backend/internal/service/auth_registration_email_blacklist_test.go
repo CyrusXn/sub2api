@@ -47,13 +47,13 @@ func TestAuthService_Registration_BlacklistCheckedBeforeInvitation(t *testing.T)
 			svc := newAuthService(repo, map[string]string{
 				SettingKeyRegistrationEnabled:        "true",
 				SettingKeyInvitationCodeEnabled:      "true",
-				SettingKeyRegistrationEmailBlacklist: `["blocked@163.com"]`,
+				SettingKeyRegistrationEmailBlacklist: `["blocked@qq.com"]`,
 			}, nil, nil)
 			var err error
 			if source == "email" {
-				_, _, err = svc.RegisterWithOptions(context.Background(), "blocked@163.com", "password", "", "", "")
+				_, _, err = svc.RegisterWithOptions(context.Background(), "blocked@qq.com", "password", "", "", "")
 			} else {
-				_, _, err = svc.RegisterOAuthAccount(context.Background(), "blocked@163.com", "password", "", source)
+				_, _, err = svc.RegisterOAuthAccount(context.Background(), "blocked@qq.com", "password", "", source)
 			}
 			require.ErrorIs(t, err, ErrEmailBlocked)
 			require.Empty(t, repo.created)

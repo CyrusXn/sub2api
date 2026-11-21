@@ -357,10 +357,11 @@ func TestAuthService_Register_ValidatesSupportedEmail(t *testing.T) {
 		email       string
 		wantMessage string
 	}{
-		{name: "empty", email: "", wantMessage: "仅支持 qq.com 和 163.com 邮箱注册"},
-		{name: "malformed", email: "not-an-email", wantMessage: "仅支持 qq.com 和 163.com 邮箱注册"},
-		{name: "unsupported domain", email: "user@gmail.com", wantMessage: "仅支持 qq.com 和 163.com 邮箱注册"},
-		{name: "qq subdomain", email: "user@mail.qq.com", wantMessage: "仅支持 qq.com 和 163.com 邮箱注册"},
+		{name: "empty", email: "", wantMessage: "仅支持 qq.com 邮箱注册"},
+		{name: "malformed", email: "not-an-email", wantMessage: "仅支持 qq.com 邮箱注册"},
+		{name: "unsupported domain", email: "user@gmail.com", wantMessage: "仅支持 qq.com 邮箱注册"},
+		{name: "qq subdomain", email: "user@mail.qq.com", wantMessage: "仅支持 qq.com 邮箱注册"},
+		{name: "163 domain", email: "user@163.com", wantMessage: "仅支持 qq.com 邮箱注册"},
 	}
 
 	for _, tt := range tests {
@@ -379,8 +380,8 @@ func TestAuthService_Register_ValidatesSupportedEmail(t *testing.T) {
 	}
 }
 
-func TestAuthService_Register_AllowsQQAnd163Email(t *testing.T) {
-	for _, email := range []string{"user@qq.com", "user@163.com"} {
+func TestAuthService_Register_AllowsQQEmail(t *testing.T) {
+	for _, email := range []string{"user@qq.com", "USER@QQ.COM"} {
 		t.Run(email, func(t *testing.T) {
 			repo := &userRepoStub{nextID: 91}
 			service := newAuthService(repo, map[string]string{
@@ -390,7 +391,7 @@ func TestAuthService_Register_AllowsQQAnd163Email(t *testing.T) {
 			_, user, err := service.Register(context.Background(), email, "password")
 
 			require.NoError(t, err)
-			require.Equal(t, email, user.Email)
+			require.Equal(t, "user@qq.com", user.Email)
 		})
 	}
 }
@@ -423,7 +424,7 @@ func TestAuthService_Register_UsesExactAccountCreate(t *testing.T) {
 		SettingKeyRegistrationEnabled: "true",
 	}, nil, nil)
 
-	_, user, err := service.Register(context.Background(), "newuser@163.com", "password")
+	_, user, err := service.Register(context.Background(), "newuser@qq.com", "password")
 	require.NoError(t, err)
 	require.NotNil(t, user)
 	require.Zero(t, repo.guardedCreates)

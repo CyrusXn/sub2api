@@ -229,6 +229,23 @@ func TestRegisterOAuthAccount_RejectsUnsupportedEmailDomain(t *testing.T) {
 	require.Zero(t, userRepo.domainLimitedCreates)
 }
 
+func TestRegisterOAuthAccount_Rejects163Email(t *testing.T) {
+	userRepo := &userRepoStub{nextID: 43}
+	authService := newOAuthEmailFlowAuthService(
+		userRepo,
+		&redeemCodeRepoStub{},
+		&refreshTokenCacheStub{},
+		map[string]string{SettingKeyRegistrationEnabled: "true"},
+		&emailCacheStub{},
+		nil,
+	)
+
+	_, _, err := authService.RegisterOAuthAccount(context.Background(), "new@163.com", "secret-123", "", "google")
+
+	require.ErrorIs(t, err, ErrRegistrationEmailDomainNotAllowed)
+	require.Empty(t, userRepo.created)
+}
+
 func TestRegisterVerifiedOAuthEmailAccount_NonWhitelistDomainLimit(t *testing.T) {
 	userRepo := &userRepoStub{domainCounts: map[string]int{"custom.example": 1}}
 	authService := newOAuthEmailFlowAuthService(
@@ -309,7 +326,7 @@ func TestRegisterOAuthAccountKeepsGitHubAndGoogleSignupSource(t *testing.T) {
 		},
 		{
 			name:         "google",
-			email:        "google@163.com",
+			email:        "google@qq.com",
 			signupSource: " Google ",
 			want:         "google",
 		},

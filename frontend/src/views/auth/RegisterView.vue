@@ -51,7 +51,7 @@
               :disabled="registrationActionDisabled"
               class="input pl-11"
               :class="{ 'input-error': errors.email }"
-              :placeholder="t('auth.emailPlaceholder')"
+              :placeholder="t('auth.registrationEmailPlaceholder')"
             />
           </div>
         </div>

@@ -29,7 +29,7 @@ var (
 	ErrEmailExists                       = infraerrors.Conflict("EMAIL_EXISTS", "这个账号已注册")
 	ErrRegistrationEmailDomainNotAllowed = infraerrors.BadRequest(
 		"REGISTRATION_EMAIL_DOMAIN_NOT_ALLOWED",
-		"仅支持 qq.com 和 163.com 邮箱注册",
+		"仅支持 qq.com 邮箱注册",
 	)
 	ErrEmailReserved                = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
 	ErrInvalidToken                 = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
@@ -483,7 +483,6 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 			if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 				return "", nil, ErrRegDisabled
 			}
-
 			randomPassword, err := randomHexString(32)
 			if err != nil {
 				logger.LegacyPrintf("service.auth", "[Auth] Failed to generate random password for oauth signup: %v", err)
@@ -612,7 +611,6 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 			if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 				return nil, nil, ErrRegDisabled
 			}
-
 			// 检查是否需要邀请码
 			var invitationRedeemCode *RedeemCode
 			if s.settingService != nil && s.settingService.IsInvitationCodeEnabled(ctx) {

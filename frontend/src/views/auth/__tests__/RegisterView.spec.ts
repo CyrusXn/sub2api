@@ -55,7 +55,7 @@ vi.mock('vue-i18n', () => ({
     t: (key: string) => {
       const messages: Record<string, string> = {
         'auth.invalidEmail': '请输入正确的邮箱地址',
-        'auth.registrationEmailDomainNotAllowed': '仅支持 qq.com 和 163.com 邮箱注册',
+        'auth.registrationEmailDomainNotAllowed': '仅支持 qq.com 邮箱注册',
         'auth.emailDomainRegistrationLimit':
           '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
       }
@@ -287,7 +287,7 @@ describe('RegisterView', () => {
 
     expect(registerMock).not.toHaveBeenCalled()
     expect(showErrorMock).toHaveBeenCalledOnce()
-    expect(showErrorMock).toHaveBeenCalledWith('仅支持 qq.com 和 163.com 邮箱注册')
+    expect(showErrorMock).toHaveBeenCalledWith('仅支持 qq.com 邮箱注册')
   })
 
   it('shows the supported-domain message for another valid email domain', async () => {
@@ -301,7 +301,20 @@ describe('RegisterView', () => {
 
     expect(registerMock).not.toHaveBeenCalled()
     expect(showErrorMock).toHaveBeenCalledOnce()
-    expect(showErrorMock).toHaveBeenCalledWith('仅支持 qq.com 和 163.com 邮箱注册')
+    expect(showErrorMock).toHaveBeenCalledWith('仅支持 qq.com 邮箱注册')
+  })
+
+  it('rejects 163.com registration before calling the API', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({ ...publicSettings, turnstile_enabled: false })
+
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@163.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(registerMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('仅支持 qq.com 邮箱注册')
   })
 
   it('shows the localized duplicate account message returned by the backend', async () => {

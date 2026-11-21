@@ -10,8 +10,8 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// normalizeSupportedRegistrationEmail 统一校验用户手动填写的注册邮箱。
-// OAuth 提供方已验证的邮箱走独立流程，不受这里的域名限制。
+// normalizeSupportedRegistrationEmail 统一校验新注册账号的邮箱。
+// 仅在建号时调用，避免影响已有非 QQ 邮箱账号登录。
 func normalizeSupportedRegistrationEmail(email string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	if normalized == "" || len(normalized) > 255 {
@@ -27,7 +27,7 @@ func normalizeSupportedRegistrationEmail(email string) (string, error) {
 		return "", ErrRegistrationEmailDomainNotAllowed
 	}
 	switch normalized[at+1:] {
-	case "qq.com", "163.com":
+	case "qq.com":
 		return normalized, nil
 	default:
 		return "", ErrRegistrationEmailDomainNotAllowed

@@ -6,7 +6,7 @@
       type="email"
       autocomplete="email"
       class="input w-full"
-      :placeholder="t('auth.emailPlaceholder')"
+      :placeholder="t('auth.registrationEmailPlaceholder')"
       :disabled="isSubmitting"
     />
     <input
