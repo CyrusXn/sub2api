@@ -155,7 +155,8 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 	if err != nil {
 		return nil, err
 	}
-	if !settings.Enabled {
+	_, mobileEnabled := mobileAlertDigest()
+	if !settings.Enabled && !mobileEnabled {
 		return nil, nil
 	}
 	persisted, err := s.repository.PersistSnapshot(ctx, snapshot)
@@ -166,31 +167,46 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 	if persisted.Status != "ok" && persisted.ConvertedBalance == nil {
 		return persisted, nil
 	}
+	var mobileErr error
+	if mobileEnabled {
+		if mobileRepo, ok := s.repository.(mobileAlertRepository); ok {
+			mobileCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			mobileErr = mobileRepo.CaptureMobileBalanceAlerts(mobileCtx, persisted, settings.LowBalanceThreshold)
+			cancel()
+		}
+	}
+	if !settings.Enabled {
+		return persisted, mobileErr
+	}
+	return persisted, errors.Join(mobileErr, s.processSnapshotEmailAlerts(ctx, persisted, settings))
+}
+
+func (s *BalanceCenterService) processSnapshotEmailAlerts(ctx context.Context, persisted *BalanceCenterSnapshot, settings *BalanceCenterSettings) error {
 	alertRepo, ok := s.repository.(BalanceCenterAlertRepository)
 	if !ok {
-		return persisted, errors.New("余额告警仓储不可用")
+		return errors.New("余额告警仓储不可用")
 	}
 	identityKey := balanceCenterAlertIdentityKey(persisted)
 	state, err := alertRepo.GetAlertState(ctx, identityKey, persisted.SiteID, persisted.AccountID)
 	if err != nil {
-		return persisted, fmt.Errorf("读取余额告警状态失败: %w", err)
+		return fmt.Errorf("读取余额告警状态失败: %w", err)
 	}
 	decisions, next := EvaluateBalanceCenterAlerts(state, BalanceCenterSuccessfulSnapshot{
 		ConvertedBalance: persisted.ConvertedBalance,
 		RateMultiplier:   persisted.RateMultiplier,
 	}, settings.LowBalanceThreshold)
 	if err := alertRepo.SaveAlertState(ctx, identityKey, persisted.SiteID, persisted.AccountID, persisted.ID, next, nil, persisted.ProbedAt); err != nil {
-		return persisted, fmt.Errorf("保存余额告警基线失败: %w", err)
+		return fmt.Errorf("保存余额告警基线失败: %w", err)
 	}
 	if len(decisions) == 0 || !settings.EmailEnabled || (s.alertEmailOutbox == nil && s.emailSender == nil) {
-		return persisted, nil
+		return nil
 	}
 	recipients, err := s.balanceCenterAlertRecipients(ctx)
 	if err != nil {
-		return persisted, err
+		return err
 	}
 	if len(recipients) == 0 {
-		return persisted, nil
+		return nil
 	}
 
 	current := next
@@ -244,7 +260,7 @@ func (s *BalanceCenterService) PersistSnapshot(ctx context.Context, snapshot *Ba
 			}
 		}
 	}
-	return persisted, errors.Join(sendErrors...)
+	return errors.Join(sendErrors...)
 }
 
 func balanceCenterAlertTypeName(alertType string) string {
