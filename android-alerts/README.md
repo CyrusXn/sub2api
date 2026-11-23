@@ -15,7 +15,14 @@
 1. 安装 APK。打开 App，输入 HTTPS 站点和专用口令，允许通知，然后点击「保存并开始监控」。Android 13 及以上首次授权后需再点击一次。
 2. 点击「发送测试通知」后锁屏。5 秒后检查锁屏、下拉通知栏、声音和振动。手机的锁屏、弹出、免打扰和后台管理设置会影响展示和到达时间。
 3. 保留「Sub2API 告警监控」前台服务。退出界面后该服务在后台维持长连接，断线恢复后按游标补收。重启解锁后自动连接。深度休眠、厂商后台限制或离线可能延迟到达。系统设置中强行停止后需手动打开 App。
+4. 从 v0.3.0 起，打开 App 或告警服务运行时会自动检查并下载新版。可在 App 内点「检查更新」立即查询。点击「授权应用内安装」，在系统设置中允许此来源安装应用。授权后会尝试自动安装。手机要求确认时，点更新通知或 App 里的「安装更新」，再按系统提示确认。覆盖安装会保留原站点、口令和告警读取进度。
 
 ## 构建 APK
 
 安装 Android SDK Platform 35、Build Tools 35.0.0 以及 JDK 17 或 21。设置 `ANDROID_SDK_ROOT` 与 `JAVA_HOME` 后运行 `./build-apk.sh`。APK 输出到 `build/sub2api-alerts.apk`。默认使用本机调试签名，后续覆盖安装需沿用同一签名。已有专用签名可通过 `SUB2API_ANDROID_KEYSTORE` 传入安全存放的 keystore 路径。
+
+## 发布应用内更新
+
+1. 在 `AndroidManifest.xml` 提升 `versionCode` 和 `versionName`，沿用已发布版本的包名和签名密钥。核对 APK 的包名、版本和签名证书，审核、提交并推送安卓源码到 `CyrusXn/sub2api` 的 `xnkaixin`。
+2. 以已推送的发布提交创建 GitHub 预发布 `android-alerts-<versionName>`，上传文件 `sub2api-alerts.apk`。匿名下载校验签名和 SHA-256。
+3. 在公开下载验证通过后，更新同一分支 `android-alerts/update.json` 的 `versionCode`、`versionName` 和 `sha256`，提交并推送。确认 Raw 地址返回新清单。App 按版本号比较，只安装比当前更新且签名一致的包。

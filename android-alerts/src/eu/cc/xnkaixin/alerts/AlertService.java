@@ -2,7 +2,9 @@ package eu.cc.xnkaixin.alerts;
 
 import android.app.Service;
 import android.content.Intent;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 
 import org.json.JSONObject;
 
@@ -18,6 +20,13 @@ import javax.net.ssl.HttpsURLConnection;
 public final class AlertService extends Service {
     static final String RECONNECT = "eu.cc.xnkaixin.alerts.RECONNECT";
     private final ScheduledThreadPoolExecutor worker = new ScheduledThreadPoolExecutor(1);
+    private final Handler updateTimer = new Handler(Looper.getMainLooper());
+    private final Runnable checkUpdate = new Runnable() {
+        @Override public void run() {
+            AlertUpdater.check(AlertService.this, false);
+            updateTimer.postDelayed(this, AlertUpdater.CHECK_INTERVAL);
+        }
+    };
     private AlertSettings settings;
     private volatile int generation;
     private boolean started;
@@ -38,6 +47,7 @@ public final class AlertService extends Service {
             return START_NOT_STICKY;
         }
         startForeground(1, AlertNotifications.serviceNotification(this));
+        if (!started) updateTimer.post(checkUpdate);
         if (!started || (intent != null && RECONNECT.equals(intent.getAction()))) {
             started = true;
             int current = ++generation;
@@ -126,6 +136,7 @@ public final class AlertService extends Service {
     }
 
     @Override public void onDestroy() {
+        updateTimer.removeCallbacks(checkUpdate);
         ++generation;
         worker.shutdownNow();
         super.onDestroy();

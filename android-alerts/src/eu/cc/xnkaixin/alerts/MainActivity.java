@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -28,11 +29,16 @@ public final class MainActivity extends Activity implements SharedPreferences.On
     private EditText site;
     private EditText token;
     private TextView status;
+    private TextView updateStatus;
+    private SharedPreferences updatePrefs;
+    private Button installButton;
+    private boolean waitingForInstallPermission;
     private LinearLayout form;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         settings = new AlertSettings(this);
+        updatePrefs = AlertUpdater.prefs(this);
         AlertNotifications.createChannels(this);
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(Color.rgb(19, 23, 29));
@@ -62,25 +68,79 @@ public final class MainActivity extends Activity implements SharedPreferences.On
         button("发送测试通知", this::testNotification);
         button("系统通知设置", this::openNotificationSettings);
         label("允许锁屏通知和弹出提醒。退出界面后后台继续接收，重启解锁后自动连接。若系统强行停止应用，请重新打开。", 14);
+        updateStatus = label("", 14);
+        button("检查更新", () -> AlertUpdater.check(this, true));
+        installButton = button("安装更新", this::installUpdate);
+        waitingForInstallPermission = state != null && state.getBoolean("waiting_for_install_permission");
         refreshStatus();
+        refreshUpdateStatus();
     }
 
     @Override protected void onStart() {
         super.onStart();
         settings.prefs.registerOnSharedPreferenceChangeListener(this);
+        updatePrefs.registerOnSharedPreferenceChangeListener(this);
         if (settings.hasToken() && AlertNotifications.canNotify(this, null)) {
             startForegroundService(new Intent(this, AlertService.class));
         }
         refreshStatus();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (waitingForInstallPermission) {
+            waitingForInstallPermission = false;
+            if (getPackageManager().canRequestPackageInstalls()) AlertUpdater.check(this, true);
+        } else {
+            AlertUpdater.check(this, false);
+        }
+        refreshUpdateStatus();
+    }
+
     @Override protected void onStop() {
         settings.prefs.unregisterOnSharedPreferenceChangeListener(this);
+        updatePrefs.unregisterOnSharedPreferenceChangeListener(this);
         super.onStop();
     }
 
+    @Override protected void onSaveInstanceState(Bundle state) {
+        state.putBoolean("waiting_for_install_permission", waitingForInstallPermission);
+        super.onSaveInstanceState(state);
+    }
+
     @Override public void onSharedPreferenceChanged(SharedPreferences preferences, String key) {
-        refreshStatus();
+        if (preferences == updatePrefs) refreshUpdateStatus();
+        else refreshStatus();
+    }
+
+    private void refreshUpdateStatus() {
+        updateStatus.setText("当前版本 v" + AlertUpdater.versionName(this) + "\n"
+                + updatePrefs.getString("status", "自动检查并下载更新"));
+        installButton.setText(getPackageManager().canRequestPackageInstalls() ? "安装更新" : "授权应用内安装");
+    }
+
+    private void installUpdate() {
+        Intent confirmation = AlertUpdater.confirmation();
+        if (confirmation != null) {
+            try {
+                startActivity(confirmation);
+                return;
+            } catch (android.content.ActivityNotFoundException | SecurityException error) {
+                AlertUpdater.retryInstall(this);
+                return;
+            }
+        }
+        if (getPackageManager().canRequestPackageInstalls()) {
+            AlertUpdater.retryInstall(this);
+            return;
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.fromParts("package", getPackageName(), null)));
+            waitingForInstallPermission = true;
+        } catch (android.content.ActivityNotFoundException | SecurityException error) {
+            updateStatus.setText("请在手机设置中允许 Sub2API 告警安装应用，然后重试");
+        }
     }
 
     private void refreshStatus() {
@@ -174,11 +234,12 @@ public final class MainActivity extends Activity implements SharedPreferences.On
         return field;
     }
 
-    private void button(String text, Runnable action) {
+    private Button button(String text, Runnable action) {
         Button button = new Button(this);
         button.setText(text);
         button.setOnClickListener(view -> action.run());
         form.addView(button, new LinearLayout.LayoutParams(-1, -2));
+        return button;
     }
 
     private int dp(int value) {
