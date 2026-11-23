@@ -18,6 +18,7 @@ const (
 	SettingKeyBalanceCenterEnabled             = "balance_center_enabled"
 	SettingKeyBalanceCenterEventProbeEnabled   = "balance_center_event_probe_enabled"
 	SettingKeyBalanceCenterEmailEnabled        = "balance_center_email_enabled"
+	SettingKeyBalanceCenterEmailRecipient      = "balance_center_email_recipient"
 	SettingKeyBalanceCenterLowBalanceThreshold = "balance_center_low_balance_threshold"
 
 	BalanceCenterAlertLowBalance        = "low_balance"
@@ -34,6 +35,7 @@ type BalanceCenterSettings struct {
 	Enabled             bool    `json:"enabled"`
 	EventProbeEnabled   bool    `json:"event_probe_enabled"`
 	EmailEnabled        bool    `json:"email_enabled"`
+	EmailRecipient      *string `json:"email_recipient"`
 	LowBalanceThreshold float64 `json:"low_balance_threshold"`
 }
 
@@ -201,9 +203,19 @@ func (s *BalanceCenterService) processSnapshotEmailAlerts(ctx context.Context, p
 	if len(decisions) == 0 || !settings.EmailEnabled || (s.alertEmailOutbox == nil && s.emailSender == nil) {
 		return nil
 	}
-	recipients, err := s.balanceCenterAlertRecipients(ctx)
-	if err != nil {
-		return err
+	var recipients []string
+	if settings.EmailRecipient != nil {
+		address, err := parseSMTPAddress(*settings.EmailRecipient, "recipient")
+		if err != nil {
+			return errors.New("余额中心告警收件邮箱无效")
+		}
+		recipients = []string{address.Address}
+	} else {
+		var err error
+		recipients, err = s.balanceCenterAlertRecipients(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	if len(recipients) == 0 {
 		return nil
@@ -359,6 +371,7 @@ func (s *BalanceCenterService) GetSettings(ctx context.Context) (*BalanceCenterS
 		SettingKeyBalanceCenterEnabled,
 		SettingKeyBalanceCenterEventProbeEnabled,
 		SettingKeyBalanceCenterEmailEnabled,
+		SettingKeyBalanceCenterEmailRecipient,
 		SettingKeyBalanceCenterLowBalanceThreshold,
 	})
 	if err != nil {
@@ -367,6 +380,9 @@ func (s *BalanceCenterService) GetSettings(ctx context.Context) (*BalanceCenterS
 	settings.Enabled = parseBalanceCenterBool(values[SettingKeyBalanceCenterEnabled])
 	settings.EventProbeEnabled = parseBalanceCenterBool(values[SettingKeyBalanceCenterEventProbeEnabled])
 	settings.EmailEnabled = parseBalanceCenterBool(values[SettingKeyBalanceCenterEmailEnabled])
+	if recipient := strings.TrimSpace(values[SettingKeyBalanceCenterEmailRecipient]); recipient != "" {
+		settings.EmailRecipient = &recipient
+	}
 	// 页面只暴露邮件开关；开启邮件即需要采集，兼容历史隐藏总开关关闭的配置。
 	settings.Enabled = settings.Enabled || settings.EmailEnabled
 	settings.EventProbeEnabled = settings.EventProbeEnabled || settings.EmailEnabled
@@ -383,12 +399,26 @@ func (s *BalanceCenterService) UpdateSettings(ctx context.Context, settings *Bal
 	if settings == nil || settings.LowBalanceThreshold < 0 || math.IsInf(settings.LowBalanceThreshold, 0) || math.IsNaN(settings.LowBalanceThreshold) {
 		return errors.New("低余额阈值必须是大于或等于 0 的有限数值")
 	}
-	return s.settingRepo.SetMultiple(ctx, map[string]string{
+	values := map[string]string{
 		SettingKeyBalanceCenterEnabled:             strconv.FormatBool(settings.Enabled),
 		SettingKeyBalanceCenterEventProbeEnabled:   strconv.FormatBool(settings.EventProbeEnabled),
 		SettingKeyBalanceCenterEmailEnabled:        strconv.FormatBool(settings.EmailEnabled),
 		SettingKeyBalanceCenterLowBalanceThreshold: strconv.FormatFloat(settings.LowBalanceThreshold, 'f', -1, 64),
-	})
+	}
+	// 旧客户端省略此字段时保留已配置的邮箱，显式空字符串才恢复沿用运维告警收件人。
+	if settings.EmailRecipient != nil {
+		recipient := strings.TrimSpace(*settings.EmailRecipient)
+		if recipient != "" {
+			address, err := parseSMTPAddress(*settings.EmailRecipient, "recipient")
+			if err != nil {
+				return errors.New("余额中心告警收件邮箱无效")
+			}
+			recipient = address.Address
+		}
+		values[SettingKeyBalanceCenterEmailRecipient] = recipient
+		settings.EmailRecipient = &recipient
+	}
+	return s.settingRepo.SetMultiple(ctx, values)
 }
 
 func (s *BalanceCenterService) SetNextLowBalanceThreshold(ctx context.Context, accountID int64, threshold float64) error {

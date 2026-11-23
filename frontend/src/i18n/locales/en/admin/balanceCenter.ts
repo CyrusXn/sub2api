@@ -6,6 +6,8 @@ export default {
     alertSettings: 'Low balance alerts',
     alertThresholdRule: 'Send once below the threshold, then send again after recovery and another drop',
     emailAlert: 'Email alerts',
+    emailRecipient: 'Balance and multiplier alert email',
+    emailRecipientFallback: 'Leave blank to use the Ops recipient',
     lowBalanceThreshold: 'Low balance threshold',
     alertSettingsSaved: 'Low balance alert settings saved',
     invalidLowBalanceThreshold: 'The low balance threshold must be a number greater than or equal to 0',

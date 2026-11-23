@@ -27,6 +27,10 @@
             <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.lowBalanceThreshold') }}</span>
             <input v-model.number="alertSettings.low_balance_threshold" data-test="low-balance-threshold" type="number" min="0" step="0.01" inputmode="decimal" class="input h-10 w-full" />
           </label>
+          <label class="w-56 max-w-full">
+            <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.balanceCenter.emailRecipient') }}</span>
+            <input v-model.trim="alertSettings.email_recipient" data-test="balance-email-recipient" type="email" class="input h-10 w-full" :placeholder="t('admin.balanceCenter.emailRecipientFallback')" />
+          </label>
           <button type="button" data-test="save-alert-settings" class="btn btn-primary h-10" :disabled="settingsSaving" @click="saveAlertSettings">
             <Icon name="check" size="sm" />{{ t('common.save') }}
           </button>

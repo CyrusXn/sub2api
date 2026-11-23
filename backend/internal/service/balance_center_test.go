@@ -122,6 +122,24 @@ func TestBalanceCenterSnapshotWithoutAlertsDoesNotRequireRecipients(t *testing.T
 	require.Equal(t, int64(1), repo.persistedCount())
 }
 
+func TestBalanceCenterEmailRecipientSettings(t *testing.T) {
+	ctx := context.Background()
+	repo := &balanceCenterSettingRepoStub{values: map[string]string{}}
+	svc := NewBalanceCenterService(nil, repo)
+	settings := &BalanceCenterSettings{LowBalanceThreshold: 5, EmailRecipient: new(" balance@example.com ")}
+	require.NoError(t, svc.UpdateSettings(ctx, settings))
+	require.Equal(t, "balance@example.com", *settings.EmailRecipient)
+	require.NoError(t, svc.UpdateSettings(ctx, &BalanceCenterSettings{LowBalanceThreshold: 5}))
+	loaded, err := svc.GetSettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, settings.EmailRecipient, loaded.EmailRecipient)
+	require.Error(t, svc.UpdateSettings(ctx, &BalanceCenterSettings{LowBalanceThreshold: 5, EmailRecipient: new("invalid")}))
+	require.NoError(t, svc.UpdateSettings(ctx, &BalanceCenterSettings{LowBalanceThreshold: 5, EmailRecipient: new("")}))
+	loaded, err = svc.GetSettings(ctx)
+	require.NoError(t, err)
+	require.Nil(t, loaded.EmailRecipient)
+}
+
 func TestEvaluateBalanceCenterAlertsLowBalanceLifecycle(t *testing.T) {
 	state := BalanceCenterAlertState{}
 
@@ -443,6 +461,7 @@ func TestBalanceCenterServiceSendsBothAlertTypesAndIgnoresQuietHours(t *testing.
 		SettingKeyBalanceCenterEnabled:             "true",
 		SettingKeyBalanceCenterEmailEnabled:        "true",
 		SettingKeyBalanceCenterLowBalanceThreshold: "5",
+		"balance_center_email_recipient":           "balance@example.com",
 		SettingKeyOpsEmailNotificationConfig:       `{"alert":{"enabled":false,"recipients":["ops@example.com"],"quiet_hours_enabled":true,"quiet_hours_start":"00:00","quiet_hours_end":"23:59"}}`,
 	}}
 	baseline := 0.1
@@ -468,6 +487,12 @@ func TestBalanceCenterServiceSendsBothAlertTypesAndIgnoresQuietHours(t *testing.
 
 	require.NoError(t, err)
 	require.Len(t, email.sends, 2, "余额中心不继承运维告警总开关或夜间静默")
+	for _, sent := range email.sends {
+		require.Contains(t, sent, "balance@example.com|")
+	}
+	legacy, err := svc.balanceCenterAlertRecipients(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"ops@example.com"}, legacy)
 	require.True(t, repo.state.LowBalanceActive)
 	require.Equal(t, 0.2, *repo.state.MultiplierBaseline)
 }

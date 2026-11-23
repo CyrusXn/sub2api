@@ -6,6 +6,8 @@ export default {
     alertSettings: '低余额告警',
     alertThresholdRule: '折算余额低于阈值时发送一次，恢复后再次跌破会重新发送',
     emailAlert: '邮件告警',
+    emailRecipient: '余额和倍率告警邮箱',
+    emailRecipientFallback: '留空沿用运维告警邮箱',
     lowBalanceThreshold: '低余额阈值',
     alertSettingsSaved: '低余额告警设置已保存',
     invalidLowBalanceThreshold: '低余额阈值必须是大于或等于 0 的数字',

@@ -100,6 +100,7 @@ export interface BalanceCenterSettings {
   enabled: boolean
   event_probe_enabled: boolean
   email_enabled: boolean
+  email_recipient?: string | null
   low_balance_threshold: number
 }
 

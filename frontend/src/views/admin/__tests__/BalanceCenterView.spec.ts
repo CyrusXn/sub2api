@@ -230,7 +230,7 @@ describe('BalanceCenterView', () => {
     expect(wrapper.text()).toContain('VoVo')
   })
 
-  it('在余额中心直接设置低余额邮件阈值', async () => {
+  it('在余额中心直接设置告警邮箱和低余额阈值', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -239,6 +239,7 @@ describe('BalanceCenterView', () => {
     expect(wrapper.get('[data-test="balance-email-enabled"]').attributes('aria-checked')).toBe('true')
 
     await threshold.setValue('8.5')
+    await wrapper.get('[data-test="balance-email-recipient"]').setValue('balance@example.com')
     await wrapper.get('[data-test="save-alert-settings"]').trigger('click')
     await flushPromises()
 
@@ -246,6 +247,7 @@ describe('BalanceCenterView', () => {
       enabled: true,
       event_probe_enabled: true,
       email_enabled: true,
+      email_recipient: 'balance@example.com',
       low_balance_threshold: 8.5
     })
     expect(notifications.showSuccess).toHaveBeenCalledWith('admin.balanceCenter.alertSettingsSaved')
