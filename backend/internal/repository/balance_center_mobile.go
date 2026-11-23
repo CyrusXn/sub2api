@@ -118,9 +118,9 @@ func (r *balanceCenterRepository) ListMobileAlerts(ctx context.Context, after in
 	if after == 0 {
 		// 首次连接从近 24 小时的第一条开始，历史积压沿同一游标分批补收。
 		rows, err = r.db.QueryContext(ctx, `SELECT `+columns+`
-FROM mobile_alerts WHERE created_at >= now() - interval '24 hours' AND`+visible+` ORDER BY id LIMIT 100`)
+FROM mobile_alerts WHERE created_at >= now() - interval '24 hours' AND `+visible+` ORDER BY id LIMIT 100`)
 	} else {
-		rows, err = r.db.QueryContext(ctx, `SELECT `+columns+` FROM mobile_alerts WHERE id > $1 AND`+visible+` ORDER BY id LIMIT 100`, after)
+		rows, err = r.db.QueryContext(ctx, `SELECT `+columns+` FROM mobile_alerts WHERE id > $1 AND `+visible+` ORDER BY id LIMIT 100`, after)
 	}
 	if err != nil {
 		return nil, err

@@ -3,12 +3,38 @@ package repository
 import (
 	"context"
 	"errors"
+	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestListMobileAlertsFiltersByUpstreamWithValidSQL(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	repo := &balanceCenterRepository{db: db}
+	const prefix = "SELECT id, kind, title, body, created_at FROM mobile_alerts WHERE "
+	const suffix = " AND upstream_host IS NOT NULL ORDER BY id LIMIT 100"
+	for _, tc := range []struct {
+		after     int64
+		condition string
+	}{
+		{0, "created_at >= now() - interval '24 hours'"},
+		{42, "id > $1"},
+	} {
+		query := mock.ExpectQuery(regexp.QuoteMeta(prefix + tc.condition + suffix))
+		if tc.after != 0 {
+			query.WithArgs(tc.after)
+		}
+		query.WillReturnRows(sqlmock.NewRows([]string{"id", "kind", "title", "body", "created_at"}))
+		_, err := repo.ListMobileAlerts(context.Background(), tc.after)
+		require.NoError(t, err)
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestMobileRateEventAdvancesStateOnlyAfterSave(t *testing.T) {
 	for _, fail := range []bool{false, true} {
