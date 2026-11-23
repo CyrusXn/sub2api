@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -54,21 +53,32 @@ func (s *BalanceCenterService) ListMobileAlerts(ctx context.Context, after int64
 	return repo.ListMobileAlerts(ctx, after)
 }
 
-func NewMobileBalanceAlert(snapshot *BalanceCenterSnapshot, decision BalanceCenterAlertDecision) MobileAlert {
-	label := strings.TrimSpace(balanceCenterAlertAccountLabel(snapshot))
-	site := strings.TrimSpace(snapshot.SiteName)
-	if site != "" && label != "" && site != label {
-		label = site + " · " + label
+func (s *BalanceCenterService) WatchMobileAlerts(ctx context.Context) (<-chan struct{}, error) {
+	repo, ok := s.repository.(interface {
+		WatchMobileAlerts(context.Context) (<-chan struct{}, error)
+	})
+	if !ok {
+		return nil, errors.New("手机告警推送仓储不可用")
 	}
-	if label == "" {
-		label = site
+	return repo.WatchMobileAlerts(ctx)
+}
+
+// CaptureMobileSiteWallet 使用上游站点钱包的实测余额，并沿用余额中心充值换算与阈值。
+func (s *BalanceCenterService) CaptureMobileSiteWallet(ctx context.Context, item UpstreamSiteBalanceObservation) error {
+	if _, enabled := mobileAlertDigest(); !enabled {
+		return nil
 	}
-	label = redactOpsAlertEmailText(label)
-	alert := MobileAlert{Kind: decision.Type, Title: balanceCenterAlertTypeName(decision.Type)}
-	if decision.Type == BalanceCenterAlertLowBalance {
-		alert.Body = fmt.Sprintf("%s，余额 %g 元，提醒阈值 %g 元", label, *decision.NewValue, *decision.Threshold)
-	} else {
-		alert.Body = fmt.Sprintf("%s，%g → %g", label, *decision.OldValue, *decision.NewValue)
+	repo, ok := s.repository.(interface {
+		CaptureMobileSiteWallet(context.Context, UpstreamSiteBalanceObservation, float64) error
+	})
+	if !ok {
+		return errors.New("手机告警仓储不可用")
 	}
-	return alert
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	settings, err := s.GetSettings(ctx)
+	if err != nil {
+		return err
+	}
+	return repo.CaptureMobileSiteWallet(ctx, item, settings.LowBalanceThreshold)
 }

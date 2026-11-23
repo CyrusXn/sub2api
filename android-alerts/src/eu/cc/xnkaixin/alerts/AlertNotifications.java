@@ -36,7 +36,7 @@ final class AlertNotifications {
         return new Notification.Builder(context, SERVICE)
                 .setSmallIcon(R.drawable.ic_alert)
                 .setContentTitle("Sub2API 告警监控")
-                .setContentText("每 30 秒检查余额和倍率告警")
+                .setContentText("在后台接收服务器推送")
                 .setContentIntent(openApp(context)).setOngoing(true).build();
     }
 
@@ -50,13 +50,14 @@ final class AlertNotifications {
 
     static void show(Context context, String id, String kind, String title, String body) {
         String channel = "multiplier_changed".equals(kind) ? RATE : BALANCE;
-        Notification notification = new Notification.Builder(context, channel)
+        Notification.Builder builder = new Notification.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_alert).setColor(Color.rgb(220, 74, 63))
-                .setContentTitle(title).setContentText(body)
-                .setStyle(new Notification.BigTextStyle().bigText(body))
+                .setContentTitle(title)
                 .setContentIntent(openApp(context)).setAutoCancel(true).setOnlyAlertOnce(true)
-                .setCategory(Notification.CATEGORY_ERROR).setVisibility(Notification.VISIBILITY_PUBLIC).build();
-        manager(context).notify(id, 2, notification);
+                .setCategory(Notification.CATEGORY_ERROR).setVisibility(Notification.VISIBILITY_PUBLIC);
+        if (!body.isEmpty()) builder.setContentText(body);
+        builder.setStyle(new Notification.BigTextStyle().bigText(body.isEmpty() ? title : body));
+        manager(context).notify(id, 2, builder.build());
     }
 
     private static NotificationManager manager(Context context) {

@@ -256,13 +256,21 @@ func (s *UpstreamBillingProbeService) probeUpstreamSiteBalance(ctx context.Conte
 	if currency == "" {
 		currency = "USD"
 	}
-	reminder, err := s.upstreamSiteBalanceReminderRepo.SaveUpstreamSiteBalanceObservation(ctx, UpstreamSiteBalanceObservation{
+	observation = UpstreamSiteBalanceObservation{
 		Host: observation.Host, DisplayName: observation.DisplayName, BaseURL: observation.BaseURL,
 		Balance: *result.Amount, Currency: currency, ObservedAt: s.currentTime().UTC(),
 		RechargeConversionScale: account.UpstreamRechargeConversionScale(),
-	})
+	}
+	reminder, err := s.upstreamSiteBalanceReminderRepo.SaveUpstreamSiteBalanceObservation(ctx, observation)
 	if err != nil {
 		return errors.New("observation_save_failed")
+	}
+	if svc, ok := s.balanceCenterStore.(interface {
+		CaptureMobileSiteWallet(context.Context, UpstreamSiteBalanceObservation) error
+	}); ok {
+		if err := svc.CaptureMobileSiteWallet(ctx, observation); err != nil {
+			logger.LegacyPrintf("service.upstream_billing_probe", "mobile_site_balance_capture_failed: error_type=%T", err)
+		}
 	}
 	if reminder != nil && s.upstreamSiteBalanceReminderBus != nil {
 		if err := s.upstreamSiteBalanceReminderBus.PublishUpstreamSiteBalanceReminder(ctx, UpstreamSiteBalanceReminderEvent{Type: "upsert", Reminder: reminder}); err != nil {

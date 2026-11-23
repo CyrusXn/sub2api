@@ -21,8 +21,9 @@ func RegisterAdminRoutes(
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
 	if h.Admin.BalanceCenter != nil {
-		// 独立只读口令仅访问这条路由，不进入管理员权限树。
+		// 手机告警只读口令与管理员权限分离。
 		v1.GET("/mobile-alerts", panelRateLimiter.PublicIP(), h.Admin.BalanceCenter.MobileAlerts)
+		v1.GET("/mobile-alerts/stream", panelRateLimiter.PublicIP(), h.Admin.BalanceCenter.MobileAlertStream)
 	}
 	// 插件 UI 使用短时能力 URL，仅提供经过安装校验的静态资源。
 	v1.GET("/plugin-ui/:token/*path", h.Admin.Plugin.ServeUIAsset)

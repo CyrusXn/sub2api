@@ -61,17 +61,16 @@ public final class MainActivity extends Activity implements SharedPreferences.On
         button("保存并开始监控", this::saveAndStart);
         button("发送测试通知", this::testNotification);
         button("系统通知设置", this::openNotificationSettings);
-        button("停止监控", () -> {
-            stopService(new Intent(this, AlertService.class));
-            settings.prefs.edit().putString("status", "监控已停止").apply();
-        });
-        label("请在系统通知设置中允许弹出和显示锁屏内容。重启手机或强制停止应用后，请重新开启监控。", 14);
+        label("允许锁屏通知和弹出提醒。退出界面后后台继续接收，重启解锁后自动连接。若系统强行停止应用，请重新打开。", 14);
         refreshStatus();
     }
 
     @Override protected void onStart() {
         super.onStart();
         settings.prefs.registerOnSharedPreferenceChangeListener(this);
+        if (settings.hasToken() && AlertNotifications.canNotify(this, null)) {
+            startForegroundService(new Intent(this, AlertService.class));
+        }
         refreshStatus();
     }
 
@@ -124,7 +123,7 @@ public final class MainActivity extends Activity implements SharedPreferences.On
         token.setText("");
         token.setHint("已保存口令，修改时输入");
         settings.prefs.edit().putString("status", "正在连接").apply();
-        startForegroundService(new Intent(this, AlertService.class));
+        startForegroundService(new Intent(this, AlertService.class).setAction(AlertService.RECONNECT));
     }
 
     private void testNotification() {

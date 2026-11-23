@@ -13,7 +13,8 @@ import (
 )
 
 type balanceCenterRepository struct {
-	db *sql.DB
+	db        *sql.DB
+	listenDSN string
 }
 
 func NewBalanceCenterRepository(db *sql.DB) service.BalanceCenterRepository {

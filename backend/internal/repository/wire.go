@@ -13,6 +13,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func ProvideBalanceCenterRepository(db *sql.DB, cfg *config.Config) service.BalanceCenterRepository {
+	return &balanceCenterRepository{db: db, listenDSN: cfg.Database.DSNWithTimezone(cfg.Timezone) + " connect_timeout=5"}
+}
+
 // ProvideConcurrencyCache 创建并发控制缓存，从配置读取 TTL 参数
 // 性能优化：TTL 可配置，支持长时间运行的 LLM 请求场景
 func ProvideConcurrencyCache(rdb *redis.Client, cfg *config.Config) service.ConcurrencyCache {
@@ -71,7 +75,7 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
 	NewUserRepository,
-	NewBalanceCenterRepository,
+	ProvideBalanceCenterRepository,
 	NewUpstreamSiteBalanceReminderRepository,
 	NewAlertEmailOutboxRepository,
 	NewTablePreferenceRepository,
