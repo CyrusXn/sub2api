@@ -29,7 +29,7 @@ func TestUpstreamBillingProbePersistsLastRateChange(t *testing.T) {
 		current, err := repo.GetByID(ctx, 1)
 		require.NoError(t, err)
 		snapshot, err := svc.persistProbeSuccess(ctx, current, 30, now, http.StatusOK,
-			map[string]any{"effective_rate_multiplier": rate}, nil)
+			map[string]any{"effective_rate_multiplier": rate}, nil, BillingGroupInfo{})
 		require.NoError(t, err)
 		now = now.Add(time.Minute)
 		return snapshot

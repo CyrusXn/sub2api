@@ -125,6 +125,8 @@ func cloneAccountJSONMap(value map[string]any) (map[string]any, error) {
 var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	// A retry identity belongs to the operation that created one copy, not to later copies.
 	duplicateAccountOperationIDExtraKey: {},
+	// Keep the copy's local name until its administrator opts into group sync.
+	UpstreamBillingGroupSyncEnabledExtraKey: {},
 	// External sync identity belongs to one local account only.
 	"crs_account_id": {},
 	"crs_kind":       {},
@@ -445,6 +447,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	// 探测快照属于系统运行态；新建 OpenAI API Key 默认开启自动探测，调用方仍可显式关闭。
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
+	delete(accountExtra, UpstreamBillingGroupSyncEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingProbeExtraKey)
 	delete(accountExtra, OllamaCloudUsageSessionExtraKey)
 	delete(accountExtra, OllamaCloudUsageAutoRefreshExtraKey)
@@ -465,11 +468,15 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Status:      StatusActive,
 		Schedulable: true,
 	}
+	groupSync := input.GroupSyncEnabled != nil && *input.GroupSyncEnabled
+	if groupSync && input.ProbeEnabled != nil && !*input.ProbeEnabled {
+		return nil, ErrUpstreamBillingGroupSyncRequiresProbe
+	}
 	probeEnabled := input.Platform == PlatformOpenAI && input.Type == AccountTypeAPIKey
 	if input.ProbeEnabled != nil {
 		probeEnabled = *input.ProbeEnabled
 	}
-	if probeEnabled {
+	if probeEnabled || groupSync {
 		if !isUpstreamBillingProbeAccount(account) {
 			return nil, ErrUpstreamBillingProbeAccountInvalid
 		}
@@ -477,6 +484,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 			account.Extra = make(map[string]any)
 		}
 		account.Extra[UpstreamBillingProbeEnabledExtraKey] = true
+		if groupSync {
+			account.Extra[UpstreamBillingGroupSyncEnabledExtraKey] = true
+		}
 	}
 	// 预计算固定时间重置的下次重置时间
 	if account.Extra != nil {
@@ -768,6 +778,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库。
 	requestedProbeEnabledUpdate := input.ProbeEnabled
 	requestedRateSyncEnabledUpdate := input.RateSyncEnabled
+	groupSyncUpdate := input.GroupSyncEnabled
 	if input.Extra != nil {
 		requestedProbeEnabled, hasRequestedProbeEnabled := normalizedExtra[UpstreamBillingProbeEnabledExtraKey]
 		if hasRequestedProbeEnabled {
@@ -782,6 +793,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		delete(normalizedExtra, UpstreamBillingProbeEnabledExtraKey)
 		delete(normalizedExtra, UpstreamBillingRateSyncEnabledExtraKey)
+		delete(normalizedExtra, UpstreamBillingGroupSyncEnabledExtraKey)
 		delete(normalizedExtra, UpstreamBillingProbeExtraKey)
 		delete(normalizedExtra, upstreamSubscriptionRateKey)
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
@@ -806,6 +818,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			UpstreamModelCatalogExtraKey,
 			UpstreamBillingProbeEnabledExtraKey,
 			UpstreamBillingRateSyncEnabledExtraKey,
+			UpstreamBillingGroupSyncEnabledExtraKey,
 			UpstreamBillingProbeExtraKey,
 			upstreamSubscriptionRateKey,
 			OllamaCloudUsageSessionExtraKey,
@@ -842,6 +855,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.Extra == nil {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
 	}
+	if groupSyncUpdate != nil && *groupSyncUpdate {
+		if requestedProbeEnabledUpdate != nil && !*requestedProbeEnabledUpdate {
+			return nil, ErrUpstreamBillingGroupSyncRequiresProbe
+		}
+		requestedProbeEnabledUpdate = groupSyncUpdate
+	}
 	if input.UpstreamSubscriptionRate != nil {
 		if input.UpstreamSubscriptionRate.Enabled && previousSubscriptionKey != subscriptionRateKeyFingerprint(account) {
 			return nil, infraerrors.BadRequest("SUBSCRIPTION_KEY_CHANGED", "更换 API Key 后请先保存，再核对新 Key 所属分组并开启订阅倍率")
@@ -867,6 +886,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if requestedProbeEnabledUpdate != nil && !*requestedProbeEnabledUpdate {
 		disabled := false
 		requestedRateSyncEnabledUpdate = &disabled
+		groupSyncUpdate = &disabled
 	}
 	if (requestedProbeEnabledUpdate != nil && *requestedProbeEnabledUpdate) ||
 		(requestedRateSyncEnabledUpdate != nil && *requestedRateSyncEnabledUpdate) {
@@ -874,7 +894,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, ErrUpstreamBillingProbeAccountInvalid
 		}
 	}
-	if account.Extra == nil && (requestedProbeEnabledUpdate != nil || requestedRateSyncEnabledUpdate != nil) {
+	if account.Extra == nil && (requestedProbeEnabledUpdate != nil || requestedRateSyncEnabledUpdate != nil || groupSyncUpdate != nil) {
 		account.Extra = make(map[string]any)
 	}
 	if requestedProbeEnabledUpdate != nil {
@@ -882,6 +902,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if requestedRateSyncEnabledUpdate != nil {
 		account.Extra[UpstreamBillingRateSyncEnabledExtraKey] = *requestedRateSyncEnabledUpdate
+	}
+	if groupSyncUpdate != nil {
+		account.Extra[UpstreamBillingGroupSyncEnabledExtraKey] = *groupSyncUpdate
 	}
 	// 影子代理恒继承母账号(由 propagateProxyToShadows 同步),不接受独立编辑——外审 B/P1;
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
@@ -899,6 +922,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if !isUpstreamBillingProbeAccount(account) {
 			delete(account.Extra, UpstreamBillingProbeEnabledExtraKey)
 			delete(account.Extra, UpstreamBillingRateSyncEnabledExtraKey)
+			delete(account.Extra, UpstreamBillingGroupSyncEnabledExtraKey)
 		}
 	}
 	if account.Extra != nil {
@@ -1033,11 +1057,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if updater != nil {
 		if err := updater.UpdateWithAccountBillingSettings(
-			ctx,
-			account,
-			requestedProbeEnabledUpdate,
-			requestedRateSyncEnabledUpdate,
-			input.RateMultiplier,
+			ctx, account, AccountBillingSettingsUpdate{
+				ProbeEnabled: requestedProbeEnabledUpdate, RateSyncEnabled: requestedRateSyncEnabledUpdate,
+				GroupSyncEnabled: groupSyncUpdate, RateMultiplier: input.RateMultiplier,
+				SetName: input.Name != "", SetNotes: input.Notes != nil,
+			},
 		); err != nil {
 			return nil, err
 		}
@@ -1047,14 +1071,17 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err := s.accountRepo.Update(ctx, account); err != nil {
 			return nil, err
 		}
-		if (requestedProbeEnabledUpdate != nil || requestedRateSyncEnabledUpdate != nil) &&
+		if (requestedProbeEnabledUpdate != nil || requestedRateSyncEnabledUpdate != nil || groupSyncUpdate != nil) &&
 			isUpstreamBillingProbeAccount(account) {
-			settings := make(map[string]any, 2)
+			settings := make(map[string]any, 3)
 			if requestedProbeEnabledUpdate != nil {
 				settings[UpstreamBillingProbeEnabledExtraKey] = *requestedProbeEnabledUpdate
 			}
 			if requestedRateSyncEnabledUpdate != nil {
 				settings[UpstreamBillingRateSyncEnabledExtraKey] = *requestedRateSyncEnabledUpdate
+			}
+			if groupSyncUpdate != nil {
+				settings[UpstreamBillingGroupSyncEnabledExtraKey] = *groupSyncUpdate
 			}
 			if err := s.accountRepo.UpdateExtra(ctx, account.ID, settings); err != nil {
 				return nil, err
@@ -1092,6 +1119,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	updates = stripOpenAIAutoResetCreditManagedExtra(updates, true)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
+	delete(updates, UpstreamBillingGroupSyncEnabledExtraKey)
 	delete(updates, UpstreamBillingProbeExtraKey)
 	delete(updates, upstreamSubscriptionRateKey)
 	delete(updates, OllamaCloudUsageSessionExtraKey)
@@ -1122,6 +1150,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
+	delete(input.Extra, UpstreamBillingGroupSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)
 	delete(input.Extra, upstreamSubscriptionRateKey)
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
@@ -1292,6 +1321,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		repoUpdates.Extra[UpstreamBillingProbeEnabledExtraKey] = *input.ProbeEnabled
 		if !*input.ProbeEnabled {
 			repoUpdates.Extra[UpstreamBillingRateSyncEnabledExtraKey] = false
+			repoUpdates.Extra[UpstreamBillingGroupSyncEnabledExtraKey] = false
 		}
 	}
 	if updatesUpstreamBillingProbeIdentity(input.Credentials) || input.ProxyID != nil {

@@ -12,6 +12,7 @@ vi.mock('@/api/client', () => ({
 
 import {
   getUpstreamBillingProbeSettings,
+  previewUpstreamGroup,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
   refreshBusinessBalances,
@@ -129,5 +130,14 @@ describe('admin account upstream billing probe API', () => {
     expect(result.refreshed_at).toBe('2026-10-22T01:00:00Z')
     expect(post).not.toHaveBeenCalled()
     vi.unstubAllEnvs()
+  })
+
+  it('maps upstream group text to editable fields and skips empty values', async () => {
+    const source = { account_id: 7 }
+    post.mockResolvedValueOnce({ data: { group_name: '标准组', group_description: '共享账号' } })
+    await expect(previewUpstreamGroup(source)).resolves.toEqual({ name: '标准组', notes: '共享账号' })
+    post.mockResolvedValueOnce({ data: { group_name: '标准组', group_description: '' } })
+    await expect(previewUpstreamGroup(source)).resolves.toEqual({ name: '标准组' })
+    expect(post).toHaveBeenCalledWith('/admin/accounts/upstream-billing-probe/group-preview', source, { signal: undefined })
   })
 })

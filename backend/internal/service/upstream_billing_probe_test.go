@@ -116,6 +116,7 @@ func (r *upstreamBillingProbeAccountRepo) UpdateUpstreamBillingProbeSnapshot(
 	expected *Account,
 	snapshot *UpstreamBillingProbeSnapshot,
 	rateMultiplier *float64,
+	group BillingGroupInfo,
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -127,6 +128,12 @@ func (r *upstreamBillingProbeAccountRepo) UpdateUpstreamBillingProbeSnapshot(
 		account.Extra = make(map[string]any)
 	}
 	account.Extra[UpstreamBillingProbeExtraKey] = snapshot
+	if group.Name != "" {
+		account.Name = group.Name
+	}
+	if group.Description != "" {
+		account.Notes = &group.Description
+	}
 	if snapshot.Status == UpstreamBillingProbeStatusOK &&
 		rateMultiplier != nil &&
 		upstreamBillingRateSyncEnabled(account) {
@@ -516,6 +523,7 @@ func TestUpstreamBillingProbePersistsSuccessfulBalanceCenterSnapshot(t *testing.
 	snapshot, err := svc.persistProbeSuccess(context.Background(), account, 30, now, http.StatusOK,
 		map[string]any{"resolved_rate_multiplier": 0.7, "secret": "must-not-persist"},
 		&UpstreamAccountBalanceSnapshot{Status: UpstreamBillingProbeStatusOK, Amount: &amount, Unit: "USD"},
+		BillingGroupInfo{},
 	)
 
 	require.NoError(t, err)
@@ -798,7 +806,7 @@ func TestUpstreamBillingProbeNormalizesExactHBYHostBeforePersistingAndSyncing(t 
 	}
 	balance := &UpstreamAccountBalanceSnapshot{Status: UpstreamBillingProbeStatusOK, Amount: &balanceAmount, Unit: "USD"}
 
-	snapshot, err := svc.persistProbeSuccess(context.Background(), account, 30, now, http.StatusOK, data, balance)
+	snapshot, err := svc.persistProbeSuccess(context.Background(), account, 30, now, http.StatusOK, data, balance, BillingGroupInfo{})
 
 	require.NoError(t, err)
 	require.InDelta(t, 0.05, snapshot.Data["group_rate_multiplier"], 1e-12)
@@ -834,6 +842,7 @@ func TestUpstreamBillingProbeDoesNotNormalizeNonExactHBYHosts(t *testing.T) {
 			snapshot, err := svc.persistProbeSuccess(context.Background(), account, 30, time.Now(), http.StatusOK,
 				map[string]any{"resolved_rate_multiplier": 0.5},
 				&UpstreamAccountBalanceSnapshot{Status: UpstreamBillingProbeStatusOK, Amount: &amount},
+				BillingGroupInfo{},
 			)
 
 			require.NoError(t, err)
@@ -2453,4 +2462,76 @@ func TestUpstreamBillingProbeLeaderLockCoversStaggeredInstancesInCadenceWindow(t
 	staggered.SetLeaderLock(cache, nil)
 	require.NoError(t, staggered.RunDue(context.Background()))
 	require.Equal(t, int64(1), upstream.billingCalls.Load(), "a staggered instance must not start a second batch inside the cadence window")
+}
+
+func TestUpstreamBillingGroupSyncSharesOneProbeAndPreservesLocalFields(t *testing.T) {
+	for _, tt := range []struct {
+		name                        string
+		groupSync, rateSync         bool
+		fields, wantName, wantNotes string
+		wantRate                    float64
+	}{
+		{"group only", true, false, `"group_name":"Pro","group_description":"shared"`, "Pro", "shared", 1},
+		{"both with blank notes", true, true, `"group_name":"Pro","group_description":"  "`, "Pro", "local notes", 0.5},
+		{"invalid name", true, true, `"group_name":12,"group_description":"shared"`, "local", "shared", 0.5},
+		{"old upstream", true, true, `"unrelated":true`, "local", "local notes", 0.5},
+		{"rate only", false, true, `"group_name":"Pro","group_description":"shared"`, "local", "local notes", 0.5},
+		// 上游文字与快照、倍率在同一条 UPDATE 里写库：PostgreSQL 会拒绝的内容必须只丢弃该字段，
+		// 倍率与另一个字段照常同步。
+		{"invalid utf8 name", true, true, `"group_name":"A` + "\xff" + `B","group_description":"shared"`, "local", "shared", 0.5},
+		{"invalid utf8 notes", true, true, `"group_name":"Pro","group_description":"bad ` + "\xc3" + `"`, "Pro", "local notes", 0.5},
+		{"nul in name", true, true, `"group_name":"Pro\u0000","group_description":"shared"`, "local", "shared", 0.5},
+		{"control character in name", true, true, `"group_name":"Pro\nGroup","group_description":"shared"`, "local", "shared", 0.5},
+		{"surrounding whitespace is trimmed", true, true, `"group_name":"\t Pro\n","group_description":"\n shared \r\n"`, "Pro", "shared", 0.5},
+		{"escape sequence in notes", true, true, `"group_name":"Pro","group_description":"a\u001b[31mb"`, "Pro", "local notes", 0.5},
+		{"multiline notes", true, true, `"group_name":"Pro","group_description":"line one\n\tline two"`, "Pro", "line one\n\tline two", 0.5},
+		{"name over 100 bytes", true, true, `"group_name":"` + strings.Repeat("组", 34) + `","group_description":"shared"`, "local", "shared", 0.5},
+		{"name at 100 bytes", true, true, `"group_name":"` + strings.Repeat("a", 100) + `","group_description":"shared"`, strings.Repeat("a", 100), "shared", 0.5},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rate, notes := 1.0, "local notes"
+			account := &Account{
+				ID: 17, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive,
+				Name: "local", Notes: &notes, RateMultiplier: &rate,
+				Credentials: map[string]any{"api_key": "key", "base_url": "https://upstream.example"},
+				Extra: map[string]any{
+					UpstreamBillingProbeEnabledExtraKey:     true,
+					UpstreamBillingGroupSyncEnabledExtraKey: tt.groupSync,
+					UpstreamBillingRateSyncEnabledExtraKey:  tt.rateSync,
+				},
+			}
+			body := `{"object":"sub2api.key_billing","schema_version":1,"billing_scope":"token","group_rate_multiplier":0.5,"resolved_rate_multiplier":0.5,"effective_rate_multiplier":0.5,"peak_rate_enabled":false,"observed_at":"2026-07-13T01:00:00Z",` + tt.fields + "}"
+			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}}
+			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+			svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+			snapshot, err := svc.probeScheduledAccount(context.Background(), account.ID, 30)
+			require.NoError(t, err)
+			require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+			// 定制版还会探测余额；分组与倍率仍须共用同一个标准账单请求。
+			var billingRequests []*http.Request
+			for _, req := range upstream.requests {
+				if req.URL.Path == "/v1/sub2api/billing" {
+					billingRequests = append(billingRequests, req)
+				}
+			}
+			require.Len(t, billingRequests, 1)
+			require.Equal(t, tt.groupSync, billingRequests[0].URL.Query().Get("include") == "group")
+			require.Equal(t, tt.wantName, account.Name)
+			require.Equal(t, tt.wantNotes, *account.Notes)
+			require.Equal(t, tt.wantRate, *account.RateMultiplier)
+		})
+	}
+}
+
+func TestUpstreamBillingGroupInfoNeverReturnsTextPostgresRejects(t *testing.T) {
+	for _, raw := range []string{
+		"A\xffB", "\xff", "\xc3", "\xe2\x82", "ok\x00", "\xed\xa0\x80",
+	} {
+		body := []byte(`{"group_name":"` + raw + `","group_description":"` + raw + `"}`)
+		got := upstreamBillingGroupInfo(body)
+		require.Empty(t, got.Name, "%q", raw)
+		require.Empty(t, got.Description, "%q", raw)
+	}
+	got := upstreamBillingGroupInfo([]byte(`{"group_name":"  标准组 🚀 ","group_description":"支持推理模型\r\n第二行"}`))
+	require.Equal(t, BillingGroupInfo{Name: "标准组 🚀", Description: "支持推理模型\r\n第二行"}, got)
 }

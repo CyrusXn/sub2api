@@ -107,7 +107,7 @@ func TestFishSubscriptionProbePersistsIndependentObservation(t *testing.T) {
 	svc := newUpstreamBillingProbeTestService(repo, &fishSubscriptionHTTP{}, &upstreamBillingProbeSettingRepo{})
 	attachUpstreamSiteCredential(svc, "sub.anzhiyu.com")
 	snapshot := &UpstreamBillingProbeSnapshot{Status: UpstreamBillingProbeStatusOK, LastAttemptAt: now, Data: map[string]any{"resolved_rate_multiplier": 0.15}}
-	require.NoError(t, svc.updateSnapshot(context.Background(), a, snapshot, nil))
+	require.NoError(t, svc.updateSnapshot(context.Background(), a, snapshot, nil, BillingGroupInfo{}))
 	require.NotNil(t, snapshot.Subscription)
 	require.Empty(t, snapshot.Subscription.Error)
 	require.Equal(t, 50.0, *snapshot.Subscription.RemainingUSD)

@@ -437,6 +437,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/upstream-sites", h.Admin.Account.ListUpstreamSites)
 		accounts.PUT("/upstream-sites/credentials", h.Admin.Account.UpsertUpstreamSiteCredential)
 		accounts.DELETE("/upstream-sites/:host/credentials", h.Admin.Account.DeleteUpstreamSiteCredential)
+		accounts.POST("/upstream-billing-probe/group-preview", h.Admin.Account.PreviewUpstreamGroup)
 		accounts.GET("/ollama-cloud-usage/settings", h.Admin.Account.GetOllamaCloudUsageSettings)
 		accounts.PUT("/ollama-cloud-usage/settings", h.Admin.Account.UpdateOllamaCloudUsageSettings)
 		accounts.GET("/opencode-go-usage/settings", h.Admin.Account.GetOpenCodeGoUsageSettings)
