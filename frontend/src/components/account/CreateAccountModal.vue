@@ -2493,6 +2493,7 @@
 
           <HeaderOverrideEditor
             :rows="headerOverrideRows"
+            :allow-variables="false"
             @update:rows="headerOverrideRows = $event"
           />
         </div>
@@ -4764,7 +4765,9 @@ const validateGrokOAuthUpstreamConfig = (): boolean => {
     }
   }
   if (headerOverrideEnabled.value) {
-    const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+    const headerError = validateHeaderOverrideRows(headerOverrideRows.value, {
+      allowVariables: false
+    })
     if (headerError) {
       appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
       return false
