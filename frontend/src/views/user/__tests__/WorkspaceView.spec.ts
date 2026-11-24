@@ -78,12 +78,27 @@ describe('创作工作台', () => {
     expect(selectedValue(view, 'workspace-model')).toBe('gpt-5.6-sol')
   })
 
-  it('部分模型加载失败不阻塞其他 Key 匹配，同时提示刷新', async () => {
+  it('部分模型加载失败不阻塞当前可用 Key', async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError('network failed'))
     const { view } = await mountView('/workspace?tab=image')
     expect(selectedValue(view, 'workspace-model')).toBe('grok-imagine-image')
     expect(view.get('.key-label-row [role="status"]').text()).toBe('workspace.matched')
-    expect(view.get('[role="alert"]').text()).toBe('workspace.modelsLoadError')
+    expect(view.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('其他 Key 被拒绝时不打扰可用选择，切换到受拒 Key 时仍显示权限问题', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('', { status: 403 }))
+    const { view } = await mountView('/workspace?tab=image')
+    expect(selectedValue(view, 'workspace-model')).toBe('grok-imagine-image')
+    expect(view.find('[role="alert"]').exists()).toBe(false)
+    await view.get('#workspace-key').trigger('click')
+    document.body.querySelector<HTMLElement>('[data-test="show-all-keys"]')!.click()
+    await flushPromises()
+    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(item => item.textContent?.includes('Text group'))!
+    option.click()
+    await flushPromises()
+    expect(view.get('[role="alert"]').text()).toBe('workspace.modelsAccessDenied')
+    expect(view.get('#workspace-model').attributes('disabled')).toBeDefined()
   })
 
   it('移除内容区介绍，保留创作方式切换', async () => {

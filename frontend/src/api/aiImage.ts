@@ -8,6 +8,7 @@ export type AIImageErrorCode =
   | 'invalid-base-url'
   | 'insecure-http'
   | 'invalid-key'
+  | 'invalid-size'
   | 'endpoint-not-found'
   | 'rate-limited'
   | 'server-error'
@@ -66,6 +67,7 @@ export interface GenerateAIImageOptions {
   apiKey: string
   prompt: string
   sizeTier: AIImageSizeTier
+  aspectRatio?: string
   referenceImages?: File[]
   signal?: AbortSignal
   model?: string
@@ -84,6 +86,7 @@ interface OpenAIErrorResponse {
   error?: {
     code?: unknown
     type?: unknown
+    message?: unknown
   }
 }
 
@@ -157,9 +160,13 @@ async function mapHTTPError(response: Response): Promise<AIImageAPIError> {
   if (status === 429) return new AIImageAPIError('rate-limited', status)
   if (status >= 500) return new AIImageAPIError('server-error', status)
 
-  // 只读取错误标识用于分类，不把供应商原始消息带到页面或日志。
+  // 只分类已知错误，不把供应商原始消息带到页面或日志。
   try {
     const payload = (await response.json()) as OpenAIErrorResponse
+    if (status === 400 && typeof payload.error?.message === 'string' &&
+      payload.error.message.trim().toLowerCase() === 'invalid image target size') {
+      return new AIImageAPIError('invalid-size', status)
+    }
     const identifier = [payload.error?.code, payload.error?.type]
       .filter((value): value is string => typeof value === 'string')
       .join(' ')
@@ -229,7 +236,21 @@ function parseImageResult(payload: OpenAIImageResponse): AIImageResult {
   throw new AIImageAPIError('empty-response')
 }
 
+const GPT_IMAGE_DIMENSIONS: Record<AIImageSizeTier, Record<string, string>> = {
+  // 1K 的宽屏尺寸兼顾 1024 长边与 GPT Image 的最小像素数。
+  '1K': { '1:1': '1024x1024', '16:9': '1024x640', '9:16': '640x1024', '16:10': '1024x640' },
+  '2K': { '1:1': '2048x2048', '16:9': '2048x1152', '9:16': '1152x2048', '16:10': '2048x1280' },
+  // 正方形和 16:10 不直接用 3840 长边，避免超过 4K 像素上限。
+  '4K': { '1:1': '2880x2880', '16:9': '3840x2160', '9:16': '2160x3840', '16:10': '3584x2240' }
+}
+
 export async function generateAIImage(options: GenerateAIImageOptions): Promise<AIImageResult> {
+  const model = options.model || AI_IMAGE_MODEL
+  const isGPTImage = /^gpt-image-/i.test(model)
+  const dimensions = GPT_IMAGE_DIMENSIONS[options.sizeTier]
+  const size = isGPTImage ? dimensions[options.aspectRatio || '1:1'] ?? dimensions['1:1'] : options.sizeTier
+  // GPT Image 默认返回 base64；保留 Grok 等兼容接口原有的响应格式参数。
+  const responseFormat = isGPTImage ? {} : { response_format: 'b64_json' }
   const referenceImages = options.referenceImages?.slice(0, 3) || []
   const endpoint = resolveAIImageEndpoint(
     options.baseURL,
@@ -251,14 +272,14 @@ export async function generateAIImage(options: GenerateAIImageOptions): Promise<
 
   try {
     const requestBody = referenceImages.length
-      ? createEditRequestBody(options.prompt, options.sizeTier, referenceImages, options.model)
+      ? createEditRequestBody(options.prompt, size, referenceImages, model, responseFormat.response_format)
       : JSON.stringify({
-          model: options.model || AI_IMAGE_MODEL,
+          model,
           prompt: options.prompt,
           n: 1,
-          size: options.sizeTier,
+          size,
           output_format: 'png',
-          response_format: 'b64_json'
+          ...responseFormat
         })
 
     const response = await fetch(endpoint.requestURL, {
@@ -306,14 +327,14 @@ export async function generateAIImage(options: GenerateAIImageOptions): Promise<
   }
 }
 
-function createEditRequestBody(prompt: string, sizeTier: AIImageSizeTier, referenceImages: File[], model = AI_IMAGE_MODEL): FormData {
+function createEditRequestBody(prompt: string, size: string, referenceImages: File[], model: string, responseFormat?: string): FormData {
   const body = new FormData()
   body.set('model', model)
   body.set('prompt', prompt)
   body.set('n', '1')
-  body.set('size', sizeTier)
+  body.set('size', size)
   body.set('output_format', 'png')
-  body.set('response_format', 'b64_json')
+  if (responseFormat) body.set('response_format', responseFormat)
   for (const image of referenceImages) {
     body.append('image', image, image.name)
   }

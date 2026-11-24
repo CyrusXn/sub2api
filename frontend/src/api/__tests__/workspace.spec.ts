@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { keysAPI } from '../keys'
+import { userGroupsAPI } from '../groups'
 import { apiClient } from '../client'
 import { generateWorkspaceVideo, getWorkspaceSelection, loadWorkspaceKeys, loadWorkspaceSelection, modelMatchesTab, preferredModels, streamWorkspaceChat, workspaceModelsForKey, workspaceSelectableModels, type WorkspaceKey } from '../workspace'
 
 vi.mock('../keys', () => ({ keysAPI: { list: vi.fn() } }))
+vi.mock('../groups', () => ({ userGroupsAPI: { getAvailable: vi.fn() } }))
 vi.mock('../client', () => ({ apiClient: { post: vi.fn() } }))
 
 const key = (id: number, models: string[] = [], groupName = '分组'): WorkspaceKey => ({
@@ -80,6 +82,31 @@ describe('workspace model selection', () => {
     expect((await loadWorkspaceKeys('https://relay.example')).map(item => item.allowImageGeneration)).toEqual([true, false, false])
   })
 
+  it('只查询仍有可用分组权限的密钥，跳过已删除、停用、无权限的分组', async () => {
+    const active = { id: 11, status: 'active', platform: 'openai' }
+    const base = { key: 'test-only-key', status: 'active', quota: 0, quota_used: 0 }
+    vi.mocked(keysAPI.list).mockResolvedValue({ items: [
+      { ...base, id: 1, group_id: 11, group: active },
+      { ...base, id: 2, group_id: 12 },
+      { ...base, id: 3, group_id: 13, group: { ...active, id: 13, status: 'inactive' } },
+      { ...base, id: 4, group_id: 14, group: { ...active, id: 14, subscription_type: 'subscription' } }
+    ], pages: 1 } as Awaited<ReturnType<typeof keysAPI.list>>)
+    vi.mocked(userGroupsAPI.getAvailable).mockResolvedValueOnce([active] as Awaited<ReturnType<typeof userGroupsAPI.getAvailable>>)
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'gpt-6.2-sol' }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const keys = await loadWorkspaceKeys('https://relay.example')
+    expect(keys.map(item => item.id)).toEqual([1])
+    expect((await loadWorkspaceSelection(keys, 'chat'))?.model).toBe('gpt-6.2-sol')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('辅助分组接口暂不可用时，不丢弃由网关最终鉴权的密钥', async () => {
+    const result = { items: [{ id: 1, group_id: 11, status: 'active', quota: 0, key: 'test-only-key', group: { status: 'active' } }], pages: 1 }
+    vi.mocked(keysAPI.list).mockResolvedValueOnce(result as Awaited<ReturnType<typeof keysAPI.list>>)
+    vi.mocked(userGroupsAPI.getAvailable).mockRejectedValueOnce(new Error('temporarily unavailable'))
+    expect((await loadWorkspaceKeys('https://relay.example')).map(item => item.id)).toEqual([1])
+  })
+
   it('禁用媒体生成的 Key 不参与图片或视频选择，但仍可对话', async () => {
     const blocked = { ...key(1, ['gpt-image-2', 'seedance-1-5-pro', 'gpt-5.6-sol']), platform: 'openai', allowImageGeneration: false, modelsLoaded: true }
     const allowed = { ...key(2, ['grok-imagine-image', 'grok-imagine-video'], 'SuperGrok Heavy'), modelsLoaded: true }
@@ -146,6 +173,14 @@ describe('workspace model selection', () => {
 
   it('图片优先使用现有 gpt-image-2', () => {
     expect(preferredModels(['grok-imagine-image', 'gpt-image-2'], 'image')[0]).toBe('gpt-image-2')
+  })
+
+  it('按数字版本降序，不把快照日期当成子版本，也覆盖展开全部', () => {
+    expect(preferredModels(['gpt-image-2-2026-04-21', 'gpt-image-2.6', 'gpt-image-2.5-flare', 'gpt-image-2.10'], 'image'))
+      .toEqual(['gpt-image-2.10', 'gpt-image-2.6', 'gpt-image-2.5-flare', 'gpt-image-2-2026-04-21'])
+    expect(preferredModels(['gpt-6.1-sol', 'gpt-6.2-astra'], 'chat')[0]).toBe('gpt-6.2-astra')
+    expect(preferredModels(['seedance-1-5-pro', 'seedance-2-0-pro'], 'video')[0]).toBe('seedance-2-0-pro')
+    expect(workspaceSelectableModels(key(1, ['gpt-6.1-sol', 'gpt-6.2-sol']), 'image', true)[0]).toBe('gpt-6.2-sol')
   })
 
   it('跨 Key 优先选择 Seedance，而非第一个 Key 的 Grok', async () => {

@@ -106,7 +106,7 @@
               <div>
                 <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('aiImage.prompts.title') }}</h2>
                 <p class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                  {{ t('aiImage.prompts.selectedCount', { count: selectedPromptIds.length }) }}
+                  {{ t('aiImage.prompts.applyHint') }}
                 </p>
               </div>
               <button
@@ -126,9 +126,9 @@
                 v-for="prompt in builtInPrompts"
                 :key="prompt.id"
                 :prompt="prompt"
-                :selected="isPromptSelected(prompt.id)"
+                :selected="selectedPromptId === prompt.id"
                 :disabled="generationBusy"
-                @toggle="togglePrompt(prompt.id)"
+                @toggle="applyPrompt(prompt)"
               />
 
               <div class="flex items-center justify-between px-3 pb-1 pt-3 text-[10px] font-semibold uppercase text-gray-400">
@@ -140,10 +140,10 @@
                   v-for="prompt in customPrompts"
                   :key="prompt.id"
                   :prompt="prompt"
-                  :selected="isPromptSelected(prompt.id)"
+                  :selected="selectedPromptId === prompt.id"
                   :disabled="generationBusy"
                   editable
-                  @toggle="togglePrompt(prompt.id)"
+                  @toggle="applyPrompt(prompt)"
                   @edit="openPromptDialog(prompt)"
                   @delete="requestDeletePrompt(prompt)"
                 />
@@ -162,7 +162,6 @@
                 <span class="rounded-full border border-gray-200 px-2 py-0.5 dark:border-dark-600">png</span>
               </span>
             </div>
-            <p v-if="selectionError" class="mb-2 text-center text-[11px] text-red-600 dark:text-red-400">{{ selectionError }}</p>
             <button type="button" class="btn btn-primary h-11 w-full" :disabled="!canGenerate" @click="requestGeneration">
               <Icon :name="generationBusy ? 'refresh' : 'sparkles'" size="sm" :class="generationBusy ? 'animate-spin' : ''" :stroke-width="2" />
               {{ t(generationBusy ? 'aiImage.generation.generating' : 'aiImage.generation.start', { count: generationCount }) }}
@@ -419,7 +418,6 @@ const HISTORY_MAX_ITEMS = 30
 const HISTORY_MAX_BYTES = 120 * 1024 * 1024
 const HISTORY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_CUSTOM_PROMPTS = 50
-const MAX_SELECTED_PROMPTS = 10
 const MAX_REFERENCE_IMAGES = 3
 const MAX_REFERENCE_BYTES = 20 * 1024 * 1024
 const MIN_IMAGES_PER_PROMPT = 1
@@ -541,8 +539,7 @@ const referenceImages = ref<ReferenceImage[]>([])
 const referenceInputRef = ref<HTMLInputElement | null>(null)
 const referenceError = ref('')
 const customPrompts = ref<AIImagePrompt[]>([])
-const selectedPromptIds = ref<string[]>([])
-const selectionError = ref('')
+const selectedPromptId = ref('')
 const tasks = ref<WorkbenchTask[]>([])
 const activeTaskID = ref('')
 const generationBusy = ref(false)
@@ -578,9 +575,7 @@ const builtInPrompts = computed<AIImagePrompt[]>(() => [
   { id: 'builtin-astronaut-sticker', name: t('aiImage.builtInPrompts.astronautSticker'), prompt: 'Generate a cute orange cat astronaut sticker on a clean pastel background. Centered composition, crisp white sticker outline, soft studio lighting, polished 3D illustration, no text, no watermark.', builtIn: true }
 ])
 
-const allPrompts = computed(() => [...builtInPrompts.value, ...customPrompts.value])
-const promptCount = computed(() => selectedPromptIds.value.length + (freePrompt.value.trim() ? 1 : 0))
-const generationCount = computed(() => promptCount.value * imagesPerPrompt.value)
+const generationCount = computed(() => freePrompt.value.trim() ? imagesPerPrompt.value : 0)
 const currentTask = computed(() => tasks.value.find((task) => task.id === activeTaskID.value) || tasks.value[0] || null)
 const currentTaskIndex = computed(() => currentTask.value ? tasks.value.findIndex((task) => task.id === currentTask.value?.id) : -1)
 
@@ -596,8 +591,7 @@ const canGenerate = computed(() => (
   !generationBusy.value && !props.loading && !!props.selection &&
   !!endpoint.value &&
   !!apiKey.value.trim() &&
-  promptCount.value > 0 &&
-  promptCount.value <= MAX_SELECTED_PROMPTS
+  generationCount.value > 0
 ))
 const canSavePrompt = computed(() => !!promptDraftName.value.trim() && !!promptDraftContent.value.trim() && (!!editingPromptID.value || customPrompts.value.length < MAX_CUSTOM_PROMPTS))
 const generationConfirmMessage = computed(() => t('aiImage.generation.confirmMessage', { count: generationCount.value, host: endpoint.value?.host || '-' }))
@@ -666,22 +660,9 @@ function loadCustomPrompts(): void {
   }
 }
 
-function isPromptSelected(id: string): boolean {
-  return selectedPromptIds.value.includes(id)
-}
-
-function togglePrompt(id: string): void {
-  selectionError.value = ''
-  const index = selectedPromptIds.value.indexOf(id)
-  if (index >= 0) {
-    selectedPromptIds.value.splice(index, 1)
-    return
-  }
-  if (promptCount.value >= MAX_SELECTED_PROMPTS) {
-    selectionError.value = t('aiImage.errors.maxSelectedPrompts')
-    return
-  }
-  selectedPromptIds.value.push(id)
+function applyPrompt(template: AIImagePrompt): void {
+  selectedPromptId.value = template.id
+  freePrompt.value = template.prompt
 }
 
 function openPromptDialog(prompt?: AIImagePrompt): void {
@@ -720,7 +701,7 @@ function deletePrompt(): void {
   const target = promptPendingDeletion.value
   if (!target) return
   customPrompts.value = customPrompts.value.filter((prompt) => prompt.id !== target.id)
-  selectedPromptIds.value = selectedPromptIds.value.filter((id) => id !== target.id)
+  if (selectedPromptId.value === target.id) selectedPromptId.value = ''
   promptPendingDeletion.value = null
   persistCustomPrompts()
 }
@@ -820,23 +801,16 @@ function clampImagesPerPrompt(): void {
 }
 
 function buildTaskPrompts(): AIImagePrompt[] {
-  const prompts: AIImagePrompt[] = []
-  if (freePrompt.value.trim()) {
-    prompts.push({ id: createID('free-prompt'), name: t('aiImage.composer.customPromptName'), prompt: appendRatioPrompt(freePrompt.value), builtIn: false })
-  }
-  for (const id of selectedPromptIds.value) {
-    const source = allPrompts.value.find((prompt) => prompt.id === id)
-    if (source) prompts.push({ ...source, prompt: appendRatioPrompt(source.prompt) })
-  }
-  return prompts.slice(0, MAX_SELECTED_PROMPTS).flatMap((prompt) => (
-    Array.from({ length: imagesPerPrompt.value }, (_, index) => ({
-      ...prompt,
-      id: `${prompt.id}-copy-${index + 1}`,
-      name: imagesPerPrompt.value > 1
-        ? t('aiImage.composer.copyName', { name: prompt.name, index: index + 1 })
-        : prompt.name
-    }))
-  ))
+  const name = [...builtInPrompts.value, ...customPrompts.value].find(template => template.id === selectedPromptId.value)?.name ||
+    t('aiImage.composer.customPromptName')
+  const prompt = appendRatioPrompt(freePrompt.value)
+  // 不再另提交模板原文，防止编辑过的 Prompt 和原模板各生成一批。
+  return Array.from({ length: generationCount.value }, (_, index) => ({
+    id: createID('free-prompt'),
+    prompt,
+    builtIn: false,
+    name: generationCount.value > 1 ? t('aiImage.composer.copyName', { name, index: index + 1 }) : name
+  }))
 }
 
 function requestGeneration(): void {
@@ -854,6 +828,7 @@ function errorMessageForCode(code: AIImageErrorCode): string {
     'invalid-base-url': 'aiImage.errors.invalidBaseURL',
     'insecure-http': 'aiImage.errors.insecureHTTP',
     'invalid-key': 'aiImage.errors.invalidKey',
+    'invalid-size': 'aiImage.errors.invalidSize',
     'endpoint-not-found': 'aiImage.errors.endpointNotFound',
     'rate-limited': 'aiImage.errors.rateLimited',
     'server-error': 'aiImage.errors.serverError',
@@ -906,6 +881,7 @@ async function runTask(task: WorkbenchTask, endpointSnapshot: AIImageEndpoint, k
       apiKey: keySnapshot,
       prompt: task.prompt.prompt,
       sizeTier: task.sizeTier,
+      aspectRatio: task.aspectRatio,
       model: task.model,
       referenceImages: references,
       signal: controller.signal
@@ -1101,9 +1077,6 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
 }
 
 watch([aspectRatio, sizeTier, imagesPerPrompt, historyCollapsed], persistSettings)
-watch(freePrompt, () => {
-  selectionError.value = promptCount.value > MAX_SELECTED_PROMPTS ? t('aiImage.errors.maxSelectedPrompts') : ''
-})
 watch(generationBusy, value => emit('busy-change', value))
 
 onMounted(() => {

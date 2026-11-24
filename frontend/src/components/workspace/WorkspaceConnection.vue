@@ -19,7 +19,7 @@
       <label for="workspace-model">{{ t('workspace.model') }}</label>
       <button type="button" class="text-button" :disabled="loading || busy" :title="t('workspace.refresh')" @click="emit('refresh')"><Icon name="refresh" size="xs" />{{ t('common.refresh') }}</button>
     </div>
-    <Select id="workspace-model" :model-value="model" :options="modelOptions" :searchable="true" :creatable="showAll" :disabled="loading || busy || !models.length && !showAll" :aria-label="t('workspace.model')" :placeholder="t('workspace.noModel')" @update:model-value="emit('update:model', $event)" @change="emit('model-change')" />
+    <Select id="workspace-model" :model-value="model" :options="modelOptions" :searchable="true" :creatable="showAll" :disabled="loading || busy || selectedKey?.modelsLoadError === 'access' || !models.length && !showAll" :aria-label="t('workspace.model')" :placeholder="t('workspace.noModel')" @update:model-value="emit('update:model', $event)" @change="emit('model-change')" />
     <p v-if="matched && tab === 'chat'" class="protocol-hint">{{ t('workspace.protocol') }}<code>{{ /^gemini-/i.test(model) ? 'Gemini · streamGenerateContent' : 'OpenAI · chat/completions' }}</code></p>
     <div v-if="!loading && !matched && !modelsLoadError && !error" class="key-guide"><p>{{ t(keys.length ? 'workspace.noModelHint' : 'workspace.noKey') }}</p><button type="button" class="outline-button" data-test="create-key" @click="emit('create-key')"><Icon name="key" size="sm" />{{ t('workspace.createKey') }}</button></div>
     <p v-if="error || videoModelError || modelsLoadError" class="error-message" role="alert">{{ error || videoModelError || modelsLoadError }}</p>
@@ -39,15 +39,19 @@ const emit = defineEmits<{
   (event: 'all-keys-change', value: boolean): void
 }>()
 const { t } = useI18n()
-const modelsLoadError = computed(() => !props.loading && props.keys.some(key => key.modelsLoadFailed) ? t('workspace.modelsLoadError') : '')
 const keyOptions = computed(() => props.keys.filter(key => props.showAll || workspaceModelsForKey(key, props.tab).length > 0).map(key => ({ value: String(key.id), label: `${key.name} · ${key.groupName}` })))
-const models = computed(() => {
-  const key = props.keys.find(key => String(key.id) === props.keyId)
-  return key ? workspaceSelectableModels(key, props.tab, props.showAll) : []
-})
+const selectedKey = computed(() => props.keys.find(key => String(key.id) === props.keyId))
+const models = computed(() => selectedKey.value ? workspaceSelectableModels(selectedKey.value, props.tab, props.showAll) : [])
 const modelOptions = computed(() => models.value.map(model => ({ value: model, label: model })))
 const videoModelError = computed(() => props.tab === 'video' && props.model.trim() && !modelMatchesTab(props.model, 'video') ? t('workspace.videoModelUnsupported') : '')
-const matched = computed(() => Boolean(props.keyId && props.model.trim()) && !videoModelError.value && (props.showAll || models.value.includes(props.model)))
+const matched = computed(() => Boolean(selectedKey.value && props.model.trim()) && selectedKey.value?.modelsLoadError !== 'access' && !videoModelError.value && (props.showAll || models.value.includes(props.model)))
+const modelsLoadError = computed(() => {
+  if (props.loading || matched.value) return ''
+  const errors = selectedKey.value ? [selectedKey.value.modelsLoadError] : props.keys.map(key => key.modelsLoadError)
+  if (errors.includes('request')) return t('workspace.modelsLoadError')
+  if (errors.includes('access')) return t('workspace.modelsAccessDenied')
+  return ''
+})
 </script>
 
 <style scoped>

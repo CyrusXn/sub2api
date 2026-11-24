@@ -1,7 +1,8 @@
 import { keysAPI } from './keys'
+import { userGroupsAPI } from './groups'
 import { apiClient } from './client'
 import type { ApiKey, PaginatedResponse } from '@/types'
-import { fetchKeyTestModels, protocolForKeyTestModel, streamKeyTest, type TestMessage } from './keyTest'
+import { fetchKeyTestModels, KeyTestError, protocolForKeyTestModel, streamKeyTest, type TestMessage } from './keyTest'
 
 export type WorkspaceTab = 'chat' | 'image' | 'video'
 
@@ -15,7 +16,7 @@ export interface WorkspaceKey {
   models: string[]
   allowImageGeneration: boolean
   modelsLoaded?: boolean
-  modelsLoadFailed?: boolean
+  modelsLoadError?: 'access' | 'request'
 }
 
 export interface WorkspaceSelection {
@@ -31,7 +32,8 @@ function isSeedanceModel(model: string): boolean {
 
 function isUsableKey(key: ApiKey): boolean {
   return key.status === 'active' && (!key.expires_at || new Date(key.expires_at).getTime() > Date.now()) &&
-    (key.quota <= 0 || key.quota_used < key.quota) && key.group?.status !== 'inactive' && Boolean(key.key && !key.key.includes('...'))
+    (key.quota <= 0 || key.quota_used < key.quota) && (key.group_id == null || key.group?.status === 'active') &&
+    Boolean(key.key && !key.key.includes('...'))
 }
 
 export function modelMatchesTab(model: string, tab: WorkspaceTab): boolean {
@@ -43,14 +45,27 @@ export function modelMatchesTab(model: string, tab: WorkspaceTab): boolean {
   return isSeedanceModel(model) || (/grok.*video/i.test(model) && !/grok-(?:imagine-)?video-1\.5/i.test(model))
 }
 
-function modelPriority(model: string, tab: WorkspaceTab): number {
-  if (tab === 'video') return isSeedanceModel(model) ? 0 : 1
-  if (tab === 'image') return model === 'gpt-image-2' ? 0 : 1
-  return /^(?:gpt-6\.1-sol|gemini-4-argon-high|claude-opus-5[.-]5|grok-4\.7)$/i.test(model) ? 0 : 1
+function modelVersion(model: string): number[] {
+  // 日期快照不是子版本；同时兼容 6.2、5-5、2-0 等版本写法。
+  const normalized = model.trim().replace(/-(?:20\d{2}-\d{2}-\d{2}|20\d{6})$/, '')
+  const version = /(?:^|[-_/])v?(\d+(?:[._-]\d+)*)/i.exec(normalized)?.[1]
+  return version?.split(/[._-]/).map(Number) || []
+}
+
+function compareModelVersions(a: string, b: string): number {
+  const left = modelVersion(a)
+  const right = modelVersion(b)
+  if (!left.length || !right.length) return right.length - left.length
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const order = (right[index] ?? 0) - (left[index] ?? 0)
+    if (order) return order
+  }
+  // 同版本时保留 Gemini 的 high 档优先，其余沿用接口顺序。
+  return Number(/^gemini-.*-high$/i.test(b)) - Number(/^gemini-.*-high$/i.test(a))
 }
 
 export function preferredModels(models: string[], tab: WorkspaceTab): string[] {
-  return models.filter((model) => modelMatchesTab(model, tab)).sort((a, b) => modelPriority(a, tab) - modelPriority(b, tab))
+  return models.filter((model) => modelMatchesTab(model, tab)).sort(compareModelVersions)
 }
 
 export function workspaceModelsForKey(key: WorkspaceKey, tab: WorkspaceTab): string[] {
@@ -66,7 +81,7 @@ export function workspaceModelsForKey(key: WorkspaceKey, tab: WorkspaceTab): str
 export function workspaceSelectableModels(key: WorkspaceKey, tab: WorkspaceTab, showAll: boolean): string[] {
   const matched = workspaceModelsForKey(key, tab)
   // 展开全部不放开视频输入协议限制；跨分组权限仍由网关最终校验。
-  return showAll && !matched.length ? key.models.filter(model => tab !== 'video' || modelMatchesTab(model, tab)) : matched
+  return showAll && !matched.length ? key.models.filter(model => tab !== 'video' || modelMatchesTab(model, tab)).sort(compareModelVersions) : matched
 }
 
 export async function loadWorkspaceKeys(baseUrl: string, signal?: AbortSignal): Promise<WorkspaceKey[]> {
@@ -74,7 +89,15 @@ export async function loadWorkspaceKeys(baseUrl: string, signal?: AbortSignal): 
   const pages = await Promise.all(Array.from({ length: Math.max(0, first.pages - 1) }, (_, index) =>
     keysAPI.list(index + 2, 100, { status: 'active' }, { signal })))
   const keys = [first, ...pages].flatMap((page: PaginatedResponse<ApiKey>) => page.items).filter(isUsableKey)
-  return keys.map((key) => ({
+  // 复用站内分组授权列表，不用每个 Key 向网关试探失效订阅或已收回的分组权限。
+  const availableGroupIDs = keys.some(key => key.group_id != null)
+    ? await userGroupsAPI.getAvailable({ signal }).then(groups => new Set(groups.map(group => group.id))).catch(() => {
+      signal?.throwIfAborted()
+      return null // 辅助接口不可用时，仍交由网关校验，不误判所有 Key 无权限。
+    })
+    : null
+  signal?.throwIfAborted()
+  return keys.filter(key => key.group_id == null || !availableGroupIDs || availableGroupIDs.has(key.group_id)).map((key) => ({
     id: key.id,
     name: key.name,
     key: key.key,
@@ -100,12 +123,12 @@ export async function loadWorkspaceModels(keys: WorkspaceKey[], signal?: AbortSi
       const timeout = window.setTimeout(() => abort.abort(), 8000)
       try {
         key.models = await fetchKeyTestModels(key.baseUrl, key.key, abort.signal)
-        key.modelsLoadFailed = false
-      } catch {
+        key.modelsLoadError = undefined
+      } catch (error) {
         signal?.throwIfAborted()
         // 单个 Key 失败或超时不阻塞其他 Key，也不在切 Tab 时反复重试。
         key.models = []
-        key.modelsLoadFailed = true
+        key.modelsLoadError = error instanceof KeyTestError && (error.status === 401 || error.status === 403) ? 'access' : 'request'
       } finally {
         window.clearTimeout(timeout)
         signal?.removeEventListener('abort', onAbort)
@@ -123,7 +146,8 @@ export function getWorkspaceSelection(keys: WorkspaceKey[], tab: WorkspaceTab): 
   if (tab === 'chat') return candidates.find(item => isOfficial(item.key)) || candidates[0] || null
   // 视频默认只匹配 Seedance 或 Heavy；其他 Grok 分组仍可手动选择，不悄悄降级到 free。
   const defaults = tab === 'video' ? candidates.filter(item => isSeedanceModel(item.model) || /heavy/i.test(item.key.groupName)) : candidates
-  return defaults.sort((a, b) => modelPriority(a.model, tab) - modelPriority(b.model, tab) || Number(isOfficial(b.key)) - Number(isOfficial(a.key)))[0] || null
+  return defaults.sort((a, b) => (tab === 'video' ? Number(isSeedanceModel(b.model)) - Number(isSeedanceModel(a.model)) : 0) ||
+    compareModelVersions(a.model, b.model) || Number(isOfficial(b.key)) - Number(isOfficial(a.key)))[0] || null
 }
 
 export async function loadWorkspaceSelection(keys: WorkspaceKey[], tab: WorkspaceTab, signal?: AbortSignal): Promise<WorkspaceSelection | null> {

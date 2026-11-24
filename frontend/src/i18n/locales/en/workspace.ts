@@ -25,6 +25,7 @@ export default {
     noMatch: 'No matching model',
     modelsLoadFailed: 'Model loading failed',
     modelsLoadError: 'Model lists failed to load for some or all keys. Check your network or key permissions, then refresh models. This does not mean there are no matching models.',
+    modelsAccessDenied: 'The gateway denied access. Check the key’s group permissions, subscription, balance, or IP restrictions, or switch to another key.',
     selectKey: 'Select an API Key',
     noModel: 'No compatible model for this key',
     noModelHint: 'Switch keys or create a key for the appropriate group.',
