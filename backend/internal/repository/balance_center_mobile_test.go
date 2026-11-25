@@ -11,26 +11,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestListMobileAlertsFiltersByUpstreamWithValidSQL(t *testing.T) {
+func TestListMobileAlertsSeparatesSiteAlertsFromEmailMirrors(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
 	repo := &balanceCenterRepository{db: db}
 	const prefix = "SELECT id, kind, title, body, created_at FROM mobile_alerts WHERE "
-	const suffix = " AND upstream_host IS NOT NULL ORDER BY id LIMIT 100"
 	for _, tc := range []struct {
 		after     int64
 		condition string
+		mirror    bool
+		filter    string
 	}{
-		{0, "created_at >= now() - interval '24 hours'"},
-		{42, "id > $1"},
+		{0, "created_at >= now() - interval '24 hours'", false, "upstream_host IS NOT NULL"},
+		{42, "id > $1", false, "upstream_host IS NOT NULL"},
+		{0, "created_at >= now() - interval '24 hours'", true, "kind = 'email_mirror'"},
+		{42, "id > $1", true, "kind = 'email_mirror'"},
 	} {
-		query := mock.ExpectQuery(regexp.QuoteMeta(prefix + tc.condition + suffix))
+		query := mock.ExpectQuery(regexp.QuoteMeta(prefix + tc.condition + " AND " + tc.filter + " ORDER BY id LIMIT 100"))
 		if tc.after != 0 {
 			query.WithArgs(tc.after)
 		}
 		query.WillReturnRows(sqlmock.NewRows([]string{"id", "kind", "title", "body", "created_at"}))
-		_, err := repo.ListMobileAlerts(context.Background(), tc.after)
+		_, err := repo.ListMobileAlerts(context.Background(), tc.after, tc.mirror)
 		require.NoError(t, err)
 	}
 	require.NoError(t, mock.ExpectationsWereMet())

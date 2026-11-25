@@ -65,10 +65,10 @@ func TestAlertEmailOutboxRepositoryMarksSentAndRetriesClaimedBatch(t *testing.T)
 	repo := NewAlertEmailOutboxRepository(db)
 	now := time.Date(2026, 8, 14, 10, 1, 0, 0, time.UTC)
 
-	mock.ExpectExec("(?s)WITH sent AS .*UPDATE balance_center_alert_deliveries.*UPDATE ops_alert_email_deliveries.*UPDATE ops_alert_events").
-		WithArgs(sqlmock.AnyArg(), now).
+	mock.ExpectExec("(?s)WITH sent AS .*UPDATE balance_center_alert_deliveries.*UPDATE ops_alert_email_deliveries.*UPDATE ops_alert_events.*email_mirror").
+		WithArgs(sqlmock.AnyArg(), now, "余额不足", "<p>余额不足</p>", true).
 		WillReturnResult(sqlmock.NewResult(0, 2))
-	require.NoError(t, repo.MarkAlertEmailBatchSent(context.Background(), []int64{1, 2}, now))
+	require.NoError(t, repo.MarkAlertEmailBatchSent(context.Background(), []int64{1, 2}, now, "余额不足", "<p>余额不足</p>", true))
 
 	nextRetry := now.Add(2 * time.Minute)
 	mock.ExpectExec(`(?s)WITH retried AS .*attempt_count = attempt_count \+ 1.*UPDATE balance_center_alert_deliveries.*UPDATE ops_alert_email_deliveries`).

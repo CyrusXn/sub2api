@@ -110,9 +110,12 @@ func (r *balanceCenterRepository) CaptureMobileSiteWallet(ctx context.Context, i
 	return err
 }
 
-func (r *balanceCenterRepository) ListMobileAlerts(ctx context.Context, after int64) ([]service.MobileAlert, error) {
+func (r *balanceCenterRepository) ListMobileAlerts(ctx context.Context, after int64, emailMirror bool) ([]service.MobileAlert, error) {
 	const columns = `id, kind, title, body, created_at`
-	const visible = `upstream_host IS NOT NULL`
+	visible := `upstream_host IS NOT NULL`
+	if emailMirror {
+		visible = `kind = 'email_mirror'`
+	}
 	var rows *sql.Rows
 	var err error
 	if after == 0 {

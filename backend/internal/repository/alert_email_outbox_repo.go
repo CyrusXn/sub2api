@@ -119,7 +119,7 @@ ORDER BY created_at ASC, id ASC`, now.UTC(), leaseSeconds, limit)
 	return items, nil
 }
 
-func (r *alertEmailOutboxRepository) MarkAlertEmailBatchSent(ctx context.Context, ids []int64, sentAt time.Time) error {
+func (r *alertEmailOutboxRepository) MarkAlertEmailBatchSent(ctx context.Context, ids []int64, sentAt time.Time, subject, body string, mirror bool) error {
 	if r == nil || r.db == nil {
 		return errors.New("告警邮件队列仓储未初始化")
 	}
@@ -161,12 +161,26 @@ WITH sent AS (
         WHERE source_type = 'ops_alert' AND source_id ~ '^[0-9]+$'
     )
     RETURNING event.id
+), mirror_gate AS (
+    SELECT COALESCE(BOOL_OR(alert_type IN ('low_balance', 'multiplier_changed')), FALSE) AS eligible
+    FROM sent
+), mirror_lock AS (
+    SELECT pg_advisory_xact_lock(20914, 276) AS locked
+    FROM mirror_gate WHERE $5 AND eligible
+), email_mirror AS (
+    INSERT INTO mobile_alerts (kind, title, body, email_batch_key)
+    SELECT 'email_mirror', $3, $4, array_to_string($1::BIGINT[], ',')
+    FROM mirror_gate CROSS JOIN mirror_lock
+    WHERE eligible
+    ON CONFLICT (email_batch_key) WHERE email_batch_key IS NOT NULL DO NOTHING
+    RETURNING id
 )
 SELECT
     (SELECT COUNT(*) FROM sent),
     (SELECT COUNT(*) FROM balance_audit),
     (SELECT COUNT(*) FROM ops_audit),
-    (SELECT COUNT(*) FROM ops_events)`, pq.Array(ids), sentAt.UTC())
+    (SELECT COUNT(*) FROM ops_events),
+    (SELECT COUNT(*) FROM email_mirror)`, pq.Array(ids), sentAt.UTC(), subject, body, mirror)
 	if err != nil {
 		return fmt.Errorf("确认告警邮件发送成功失败: %w", err)
 	}

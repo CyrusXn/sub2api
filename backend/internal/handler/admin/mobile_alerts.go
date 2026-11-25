@@ -15,7 +15,7 @@ import (
 )
 
 type mobileAlertReader interface {
-	ListMobileAlerts(context.Context, int64) ([]service.MobileAlert, error)
+	ListMobileAlerts(context.Context, int64, bool) ([]service.MobileAlert, error)
 }
 
 var mobileStreamSlots = make(chan struct{}, 8)
@@ -46,7 +46,8 @@ func (h *BalanceCenterHandler) MobileAlerts(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	alerts, err := reader.ListMobileAlerts(ctx, cursor)
+	// 微信显式读取邮件镜像；安卓及旧轮询客户端保持原有事件和通知格式。
+	alerts, err := reader.ListMobileAlerts(ctx, cursor, c.Query("kind") == "email_mirror")
 	if err != nil {
 		response.Error(c, http.StatusServiceUnavailable, "读取手机告警失败")
 		return
@@ -94,7 +95,7 @@ func (h *BalanceCenterHandler) MobileAlertStream(c *gin.Context) {
 	for ctx.Err() == nil {
 		// 先订阅再读取历史。历史和实时事件都由同一个持久游标补读。
 		query, done := context.WithTimeout(ctx, 5*time.Second)
-		alerts, err := reader.ListMobileAlerts(query, cursor)
+		alerts, err := reader.ListMobileAlerts(query, cursor, false)
 		done()
 		if err != nil {
 			return

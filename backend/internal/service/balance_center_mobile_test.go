@@ -18,7 +18,7 @@ func (r *mobileBalanceRepositoryStub) CaptureMobileBalanceAlerts(_ context.Conte
 	return nil
 }
 
-func (r *mobileBalanceRepositoryStub) ListMobileAlerts(context.Context, int64) ([]MobileAlert, error) {
+func (r *mobileBalanceRepositoryStub) ListMobileAlerts(context.Context, int64, bool) ([]MobileAlert, error) {
 	return nil, nil
 }
 

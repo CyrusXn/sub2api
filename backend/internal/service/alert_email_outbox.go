@@ -59,7 +59,7 @@ type AlertEmailOutboxOptions struct {
 type AlertEmailOutboxRepository interface {
 	EnqueueAlertEmail(context.Context, *AlertEmailOutboxInput) error
 	ClaimAlertEmailBatch(context.Context, time.Time, time.Duration, int) ([]*AlertEmailOutboxItem, error)
-	MarkAlertEmailBatchSent(context.Context, []int64, time.Time) error
+	MarkAlertEmailBatchSent(context.Context, []int64, time.Time, string, string, bool) error
 	RetryAlertEmailBatch(context.Context, []int64, string, time.Time) error
 }
 
@@ -163,11 +163,20 @@ func (s *AlertEmailOutboxService) RunOnce(ctx context.Context, now time.Time) (i
 			runErrors = append(runErrors, fmt.Errorf("发送告警汇总邮件失败: %w", sendErr))
 			continue
 		}
-		if markErr := s.repository.MarkAlertEmailBatchSent(ctx, ids, now); markErr != nil {
+		if markErr := s.repository.MarkAlertEmailBatchSent(ctx, ids, now, subject, body, containsBalanceAlert(batch)); markErr != nil {
 			runErrors = append(runErrors, fmt.Errorf("确认告警邮件批次失败: %w", markErr))
 		}
 	}
 	return processed, errors.Join(runErrors...)
+}
+
+func containsBalanceAlert(items []*AlertEmailOutboxItem) bool {
+	for _, item := range items {
+		if item != nil && (item.AlertType == BalanceCenterAlertLowBalance || item.AlertType == BalanceCenterAlertMultiplierChanged) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *AlertEmailOutboxService) Start() {

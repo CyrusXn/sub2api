@@ -21,7 +21,7 @@ type MobileAlert struct {
 
 type mobileAlertRepository interface {
 	CaptureMobileBalanceAlerts(context.Context, *BalanceCenterSnapshot, float64) error
-	ListMobileAlerts(context.Context, int64) ([]MobileAlert, error)
+	ListMobileAlerts(context.Context, int64, bool) ([]MobileAlert, error)
 }
 
 func mobileAlertDigest() ([sha256.Size]byte, bool) {
@@ -45,12 +45,12 @@ func AuthorizeMobileAlerts(header string) bool {
 	return enabled && subtle.ConstantTimeCompare(expected[:], actual[:]) == 1
 }
 
-func (s *BalanceCenterService) ListMobileAlerts(ctx context.Context, after int64) ([]MobileAlert, error) {
+func (s *BalanceCenterService) ListMobileAlerts(ctx context.Context, after int64, emailMirror bool) ([]MobileAlert, error) {
 	repo, ok := s.repository.(mobileAlertRepository)
 	if !ok {
 		return nil, errors.New("手机告警仓储不可用")
 	}
-	return repo.ListMobileAlerts(ctx, after)
+	return repo.ListMobileAlerts(ctx, after, emailMirror)
 }
 
 func (s *BalanceCenterService) WatchMobileAlerts(ctx context.Context) (<-chan struct{}, error) {

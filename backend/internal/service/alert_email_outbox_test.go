@@ -12,12 +12,15 @@ import (
 )
 
 type alertEmailOutboxRepositoryStub struct {
-	claimed   []*AlertEmailOutboxItem
-	enqueued  []*AlertEmailOutboxInput
-	sentIDs   []int64
-	failedIDs []int64
-	nextRetry time.Time
-	claims    atomic.Int32
+	claimed       []*AlertEmailOutboxItem
+	enqueued      []*AlertEmailOutboxInput
+	sentIDs       []int64
+	mirrorSubject string
+	mirrorBody    string
+	mirror        bool
+	failedIDs     []int64
+	nextRetry     time.Time
+	claims        atomic.Int32
 }
 
 func (r *alertEmailOutboxRepositoryStub) EnqueueAlertEmail(_ context.Context, input *AlertEmailOutboxInput) error {
@@ -46,8 +49,9 @@ func TestProvideAlertEmailOutboxServiceStartsOnlyOnPrimary(t *testing.T) {
 	require.Eventually(t, func() bool { return primaryRepo.claims.Load() > 0 }, time.Second, 10*time.Millisecond)
 }
 
-func (r *alertEmailOutboxRepositoryStub) MarkAlertEmailBatchSent(_ context.Context, ids []int64, _ time.Time) error {
+func (r *alertEmailOutboxRepositoryStub) MarkAlertEmailBatchSent(_ context.Context, ids []int64, _ time.Time, subject, body string, mirror bool) error {
 	r.sentIDs = append(r.sentIDs, ids...)
+	r.mirrorSubject, r.mirrorBody, r.mirror = subject, body, mirror
 	return nil
 }
 
@@ -72,8 +76,8 @@ func (s *alertEmailSenderStub) SendEmail(_ context.Context, to, subject, body st
 func TestAlertEmailOutboxAggregatesSameRecipientIntoOneEmail(t *testing.T) {
 	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
 	repo := &alertEmailOutboxRepositoryStub{claimed: []*AlertEmailOutboxItem{
-		{ID: 1, Recipient: "ops@example.com", Subject: "HBY 余额不足", BodyHTML: "<p>HBY</p>", CreatedAt: now.Add(-time.Minute)},
-		{ID: 2, Recipient: "ops@example.com", Subject: "VoVo 倍率变化", BodyHTML: "<p>VoVo</p>", CreatedAt: now.Add(-30 * time.Second)},
+		{ID: 1, Recipient: "ops@example.com", AlertType: "low_balance", Subject: "HBY 余额不足", BodyHTML: "<p>HBY</p>", CreatedAt: now.Add(-time.Minute)},
+		{ID: 2, Recipient: "ops@example.com", AlertType: "multiplier_changed", Subject: "VoVo 倍率变化", BodyHTML: "<p>VoVo</p>", CreatedAt: now.Add(-30 * time.Second)},
 	}}
 	sender := &alertEmailSenderStub{}
 	svc := NewAlertEmailOutboxService(repo, sender, AlertEmailOutboxOptions{BatchWindow: time.Minute})
@@ -87,6 +91,9 @@ func TestAlertEmailOutboxAggregatesSameRecipientIntoOneEmail(t *testing.T) {
 	require.Contains(t, sender.body, "HBY 余额不足")
 	require.Contains(t, sender.body, "VoVo 倍率变化")
 	require.Equal(t, []int64{1, 2}, repo.sentIDs)
+	require.True(t, repo.mirror)
+	require.Equal(t, sender.subject, repo.mirrorSubject)
+	require.Equal(t, sender.body, repo.mirrorBody)
 	require.Empty(t, repo.failedIDs)
 }
 
@@ -103,6 +110,22 @@ func TestAlertEmailOutboxRetriesWholeBatchAfterSendFailure(t *testing.T) {
 	require.Equal(t, []int64{7}, repo.failedIDs)
 	require.Equal(t, now.Add(2*time.Minute), repo.nextRetry)
 	require.Empty(t, repo.sentIDs)
+	require.False(t, repo.mirror)
+}
+
+func TestAlertEmailOutboxDoesNotMirrorUnrelatedEmail(t *testing.T) {
+	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
+	repo := &alertEmailOutboxRepositoryStub{claimed: []*AlertEmailOutboxItem{{
+		ID: 9, Recipient: "ops@example.com", AlertType: "account_request_failure",
+		Subject: "上游请求异常", BodyHTML: "<p>请求失败</p>", CreatedAt: now,
+	}}}
+	svc := NewAlertEmailOutboxService(repo, &alertEmailSenderStub{}, AlertEmailOutboxOptions{})
+
+	_, err := svc.RunOnce(context.Background(), now)
+
+	require.NoError(t, err)
+	require.Equal(t, []int64{9}, repo.sentIDs)
+	require.False(t, repo.mirror)
 }
 
 func TestAlertEmailOutboxEnqueueRejectsSensitiveOrIncompleteInput(t *testing.T) {

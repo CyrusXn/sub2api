@@ -18,6 +18,7 @@ import (
 type mobileReaderStub struct {
 	balanceCenterAdminService
 	cursor int64
+	mirror bool
 }
 
 type mobileStreamReader struct {
@@ -30,7 +31,10 @@ func (s *mobileStreamReader) WatchMobileAlerts(context.Context) (<-chan struct{}
 	return s.wake, nil
 }
 
-func (s *mobileStreamReader) ListMobileAlerts(_ context.Context, after int64) ([]service.MobileAlert, error) {
+func (s *mobileStreamReader) ListMobileAlerts(_ context.Context, after int64, mirror bool) ([]service.MobileAlert, error) {
+	if mirror {
+		return nil, fmt.Errorf("安卓推送不应读取邮件镜像")
+	}
 	select {
 	case row := <-s.rows:
 		if row.ID > after {
@@ -75,8 +79,9 @@ func TestMobileAlertStreamPushesNewRowsAndHonorsCursor(t *testing.T) {
 	require.Contains(t, lines.Text(), "『派大星』余额不足，当前余额8.88")
 }
 
-func (s *mobileReaderStub) ListMobileAlerts(_ context.Context, cursor int64) ([]service.MobileAlert, error) {
+func (s *mobileReaderStub) ListMobileAlerts(_ context.Context, cursor int64, mirror bool) ([]service.MobileAlert, error) {
 	s.cursor = cursor
+	s.mirror = mirror
 	return []service.MobileAlert{{ID: 43, Kind: "low_balance", Title: "余额不足"}}, nil
 }
 
@@ -90,11 +95,13 @@ func TestMobileAlertRouteRequiresDedicatedTokenAndValidCursor(t *testing.T) {
 	for _, tc := range []struct {
 		method, query, authorization string
 		status                       int
+		mirror                       bool
 	}{
-		{"GET", "?after=42", "", http.StatusUnauthorized},
-		{"GET", "?after=-1", "Bearer " + token, http.StatusBadRequest},
-		{"POST", "", "Bearer " + token, http.StatusNotFound},
-		{"GET", "?after=42", "Bearer " + token, http.StatusOK},
+		{"GET", "?after=42&kind=email_mirror", "", http.StatusUnauthorized, false},
+		{"GET", "?after=-1", "Bearer " + token, http.StatusBadRequest, false},
+		{"POST", "", "Bearer " + token, http.StatusNotFound, false},
+		{"GET", "?after=42", "Bearer " + token, http.StatusOK, false},
+		{"GET", "?after=42&kind=email_mirror", "Bearer " + token, http.StatusOK, true},
 	} {
 		req := httptest.NewRequest(tc.method, "/mobile-alerts"+tc.query, nil)
 		req.Header.Set("Authorization", tc.authorization)
@@ -105,6 +112,7 @@ func TestMobileAlertRouteRequiresDedicatedTokenAndValidCursor(t *testing.T) {
 			require.Equal(t, "no-store", res.Header().Get("Cache-Control"))
 			require.Contains(t, res.Body.String(), `"id":43`)
 			require.Equal(t, int64(42), reader.cursor)
+			require.Equal(t, tc.mirror, reader.mirror)
 		} else {
 			require.Zero(t, reader.cursor)
 		}
