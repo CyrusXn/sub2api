@@ -315,12 +315,12 @@ func TestBalanceCenterRechargeReviewUpdatesDoNotChangeOccurredAt(t *testing.T) {
 
 	mock.ExpectExec(`UPDATE balance_center_recharge_events SET amount=\$1, updated_at=NOW\(\) WHERE id=\$2 AND review_status='pending'`).
 		WithArgs(12.0, int64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
-	const confirmSQL = `UPDATE balance_center_recharge_events SET amount=COALESCE($2, amount), review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
+	const confirmSQL = `UPDATE balance_center_recharge_events SET amount=CASE WHEN $2::numeric = 0 THEN amount ELSE COALESCE($2, amount) END, review_status=CASE WHEN $2::numeric = 0 THEN 'ignored' ELSE 'confirmed' END, reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
 	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).
 		WithArgs(int64(5), 200.0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).
-		WithArgs(int64(6), 50.0).WillReturnResult(sqlmock.NewResult(0, 1))
+		WithArgs(int64(6), 0.0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE balance_center_recharge_events SET review_status='confirmed', reviewed_at=NOW\(\), updated_at=NOW\(\) WHERE review_status='pending'`).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
@@ -329,7 +329,7 @@ func TestBalanceCenterRechargeReviewUpdatesDoNotChangeOccurredAt(t *testing.T) {
 	require.NoError(t, repo.UpdatePendingRechargeAmount(context.Background(), 5, 12))
 	amount := 200.0
 	require.NoError(t, repo.ConfirmPendingRecharge(context.Background(), 5, &amount))
-	count, err := repo.ConfirmAllPendingRecharges(context.Background(), []service.BalanceCenterRechargeEdit{{ID: 6, Amount: 50}})
+	count, err := repo.ConfirmAllPendingRecharges(context.Background(), []service.BalanceCenterRechargeEdit{{ID: 6, Amount: 0}})
 	require.NoError(t, err)
 	require.Equal(t, int64(3), count)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -339,7 +339,7 @@ func TestBalanceCenterRechargeReviewRollsBackBatchWhenAnEditIsNoLongerPending(t 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
-	const confirmSQL = `UPDATE balance_center_recharge_events SET amount=COALESCE($2, amount), review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
+	const confirmSQL = `UPDATE balance_center_recharge_events SET amount=CASE WHEN $2::numeric = 0 THEN amount ELSE COALESCE($2, amount) END, review_status=CASE WHEN $2::numeric = 0 THEN 'ignored' ELSE 'confirmed' END, reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).WithArgs(int64(5), 200.0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(confirmSQL)).WithArgs(int64(6), 50.0).WillReturnResult(sqlmock.NewResult(0, 0))

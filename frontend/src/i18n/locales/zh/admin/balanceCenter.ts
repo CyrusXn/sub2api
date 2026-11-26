@@ -20,14 +20,16 @@ export default {
       collapse: '收起审核列表',
       expand: '展开审核列表',
       amount: '充值金额',
-      invalidAmount: '充值金额必须大于 0',
+      invalidAmount: '充值金额不能为负数',
+      ignoreAmountHint: '填 0 或留空则忽略',
       confirm: '确认',
       confirmAll: '一键确认全部',
       loading: '正在读取待审核充值…',
       loadError: '待审核充值读取失败',
       positionSaveError: '审核提醒位置保存失败',
       confirmed: '充值记录已确认',
-      confirmedAll: '已确认全部待审核充值'
+      ignored: '已忽略，不计入充值',
+      confirmedAll: '已处理全部待审核记录'
     },
     addRecharge: '新增充值',
     addRechargeHint: '输入金额后按回车即可添加，时间默认精确到当前秒。',

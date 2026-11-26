@@ -63,7 +63,8 @@
             <input
               v-model="amounts[item.id]"
               type="number"
-              min="0.01"
+              min="0"
+              :placeholder="t('admin.balanceCenter.reminder.ignoreAmountHint')"
               step="0.01"
               :disabled="busyId !== null"
               class="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 dark:border-dark-500 dark:bg-dark-900 dark:text-gray-100"
@@ -232,8 +233,9 @@ function onReminderEvent(event: UpstreamSiteBalanceReminderEvent) {
 }
 
 function reviewAmount(item: BalanceCenterRechargeEvent) {
-  const amount = Number(amounts.value[item.id])
-  if (Number.isFinite(amount) && amount > 0) return amount
+  const draft = amounts.value[item.id] ?? item.amount
+  const amount = Number(draft)
+  if (Number.isFinite(amount) && amount >= 0) return amount
   app.showError(t('admin.balanceCenter.reminder.invalidAmount'))
 }
 
@@ -243,14 +245,14 @@ async function confirm(item: BalanceCenterRechargeEvent) {
   if (amount === undefined) return
   busyId.value = item.id
   try {
-    await balanceCenterAPI.confirmPendingRecharge(item.id, amount === item.amount ? undefined : amount)
+    await balanceCenterAPI.confirmPendingRecharge(item.id, amount > 0 && amount === item.amount ? undefined : amount)
     ++requestId
     items.value = items.value.filter(row => row.id !== item.id)
     delete amounts.value[item.id]
     total.value = Math.max(0, total.value - 1)
     if (!items.value.length) collapsed.value = true
     if (total.value > items.value.length) void loadReviews()
-    app.showSuccess(t('admin.balanceCenter.reminder.confirmed'))
+    app.showSuccess(t(amount === 0 ? 'admin.balanceCenter.reminder.ignored' : 'admin.balanceCenter.reminder.confirmed'))
   } catch (error) {
     app.showError(error instanceof Error ? error.message : t('admin.balanceCenter.reminder.loadError'))
   } finally {
@@ -264,7 +266,7 @@ async function confirmAll() {
   for (const item of items.value) {
     const amount = reviewAmount(item)
     if (amount === undefined) return
-    if (amount !== item.amount) edits.push({ id: item.id, amount })
+    if (amount === 0 || amount !== item.amount) edits.push({ id: item.id, amount })
   }
   busyId.value = -1
   try {

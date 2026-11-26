@@ -295,7 +295,7 @@ func validRechargeReviewAmount(amount float64) bool {
 }
 
 func (s *BalanceCenterService) ConfirmPendingRecharge(ctx context.Context, id int64, amount *float64) error {
-	if id <= 0 || (amount != nil && !validRechargeReviewAmount(*amount)) {
+	if id <= 0 || (amount != nil && *amount != 0 && !validRechargeReviewAmount(*amount)) {
 		return ErrInvalidRechargeReview
 	}
 	repository, err := s.adminRepository()
@@ -308,7 +308,7 @@ func (s *BalanceCenterService) ConfirmPendingRecharge(ctx context.Context, id in
 func (s *BalanceCenterService) ConfirmAllPendingRecharges(ctx context.Context, edits []BalanceCenterRechargeEdit) (int64, error) {
 	seen := make(map[int64]struct{}, len(edits))
 	for _, edit := range edits {
-		if _, exists := seen[edit.ID]; exists || edit.ID <= 0 || !validRechargeReviewAmount(edit.Amount) {
+		if _, exists := seen[edit.ID]; exists || edit.ID <= 0 || (edit.Amount != 0 && !validRechargeReviewAmount(edit.Amount)) {
 			return 0, ErrInvalidRechargeReview
 		}
 		seen[edit.ID] = struct{}{}

@@ -20,14 +20,16 @@ export default {
       collapse: 'Collapse reminders',
       expand: 'Expand review list',
       amount: 'Recharge amount',
-      invalidAmount: 'Recharge amount must be greater than zero',
+      invalidAmount: 'Recharge amount cannot be negative',
+      ignoreAmountHint: 'Enter 0 or leave blank to ignore',
       confirm: 'Confirm',
       confirmAll: 'Confirm all',
       loading: 'Loading pending recharges…',
       loadError: 'Could not load pending recharges',
       positionSaveError: 'Could not save the review badge position',
       confirmed: 'Recharge confirmed',
-      confirmedAll: 'All pending recharges confirmed'
+      ignored: 'Ignored and excluded from recharge totals',
+      confirmedAll: 'All pending records processed'
     },
     addRecharge: 'Add recharge',
     addRechargeHint: 'Enter an amount and press Enter. The current second is used by default.',

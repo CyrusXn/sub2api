@@ -406,7 +406,7 @@ func (r *balanceCenterRepository) UpdatePendingRechargeAmount(ctx context.Contex
 	return nil
 }
 
-const confirmPendingRechargeSQL = `UPDATE balance_center_recharge_events SET amount=COALESCE($2, amount), review_status='confirmed', reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
+const confirmPendingRechargeSQL = `UPDATE balance_center_recharge_events SET amount=CASE WHEN $2::numeric = 0 THEN amount ELSE COALESCE($2, amount) END, review_status=CASE WHEN $2::numeric = 0 THEN 'ignored' ELSE 'confirmed' END, reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 AND review_status='pending'`
 
 func (r *balanceCenterRepository) ConfirmPendingRecharge(ctx context.Context, id int64, amount *float64) error {
 	return confirmPendingRecharge(ctx, r.db, id, amount)

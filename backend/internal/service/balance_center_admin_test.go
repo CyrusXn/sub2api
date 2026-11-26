@@ -160,10 +160,13 @@ func TestBalanceCenterRechargeReviewUsesPendingFilterAndValidatesAmount(t *testi
 	require.Equal(t, &amount, repo.confirmedAmount)
 	_, err = svc.ConfirmAllPendingRecharges(context.Background(), []BalanceCenterRechargeEdit{{ID: 4, Amount: 200}, {ID: 4, Amount: 50}})
 	require.Error(t, err)
-	_, err = svc.ConfirmAllPendingRecharges(context.Background(), []BalanceCenterRechargeEdit{{ID: 4, Amount: 0}})
+	_, err = svc.ConfirmAllPendingRecharges(context.Background(), []BalanceCenterRechargeEdit{{ID: 4, Amount: -1}})
 	require.Error(t, err)
 	require.Empty(t, repo.bulkEdits)
-	edits := []BalanceCenterRechargeEdit{{ID: 4, Amount: 200}}
+	zero := 0.0
+	require.NoError(t, svc.ConfirmPendingRecharge(context.Background(), 5, &zero))
+	require.Equal(t, &zero, repo.confirmedAmount)
+	edits := []BalanceCenterRechargeEdit{{ID: 4, Amount: 200}, {ID: 5, Amount: 0}}
 	count, err := svc.ConfirmAllPendingRecharges(context.Background(), edits)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)

@@ -168,7 +168,7 @@ export interface BalanceCenterRechargeEvent {
   occurred_at: string
   note: string
   record_type: 'recharge' | 'subscription'
-  review_status?: 'pending' | 'confirmed'
+  review_status?: 'pending' | 'confirmed' | 'ignored'
   reviewed_at?: string
 }
 
