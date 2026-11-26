@@ -285,7 +285,9 @@ watch([() => route.query, entryReady], async ([query, ready], _previous, onClean
   if (!ready || typeof query.recharge_host !== 'string' || typeof query.recharge_delta !== 'string') return
   const delta = Number(query.recharge_delta)
   if (!Number.isFinite(delta) || delta < 1 - 1e-9 || delta > Number.MAX_SAFE_INTEGER) return
-  const host = query.recharge_host.trim().toLowerCase()
+  const host = query.recharge_host.trim().toLowerCase().replace(/\.$/, '')
+  // HBY 以原站充值流水为准，余额提醒不再预填充值金额。
+  if (host === 'hubway.cc' || host === 'z.hubway.cc') return
   const site = sortedSites.value.find(candidate => candidate.normalized_domain.trim().toLowerCase() === host)
   if (!site) return
   const configuredScale = currentUpstreamScales.value.get(host) ?? 1

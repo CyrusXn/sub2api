@@ -61,18 +61,18 @@ vi.mock('@/api/admin', () => ({
       listWithEtag,
       getBatchTodayStats,
       duplicate: duplicateAccount,
-      getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }),
+      getUpstreamBillingProbeSettings: async () => ({ enabled: true, interval_minutes: 30 }),
       createSparkShadow,
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
       toggleSchedulable: vi.fn()
     },
-    proxies: { getAll: getAllProxies },
+    proxies: { getAllWithCount: getAllProxies },
     groups: { getAll: getAllGroups },
     tablePreferences: {
-      get: vi.fn().mockResolvedValue({ exists: false, hidden_columns: [], column_widths: {}, column_order: [], schema_version: 1 }),
-      save: vi.fn().mockResolvedValue({ exists: true, hidden_columns: [], column_widths: {}, column_order: [], schema_version: 1 })
+      get: async () => ({ exists: false, hidden_columns: [], column_widths: {}, column_order: [], schema_version: 1 }),
+      save: async () => ({ exists: true, hidden_columns: [], column_widths: {}, column_order: [], schema_version: 1 })
     }
   }
 }))
@@ -368,7 +368,7 @@ describe('admin AccountsView — 账号行展示', () => {
     const tooltip = wrapper.findComponent(HelpTooltip)
     expect(tooltip.props('content')).toBe('https://relay.example.com')
     expect(tooltip.props('widthClass')).toBe('w-max max-w-sm break-all')
-    expect(tooltip.classes()).toEqual(expect.arrayContaining(['self-start']))
+    expect(tooltip.classes()).toEqual(expect.arrayContaining(['inline-flex', 'items-center', 'align-middle', '-ml-1']))
     expect(wrapper.text()).toContain('oauth-account')
     expect(wrapper.text()).toContain('invalid-url')
 

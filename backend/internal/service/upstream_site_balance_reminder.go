@@ -48,6 +48,8 @@ type UpstreamSiteBalanceObservation struct {
 	ObservedAt              time.Time
 	FailureCount            int
 	RechargeConversionScale float64
+	RechargeHistorySince    time.Time
+	Recharges               []UpstreamSiteRecharge
 }
 
 type UpstreamSiteBalanceReminderRepository interface {
@@ -256,10 +258,17 @@ func (s *UpstreamBillingProbeService) probeUpstreamSiteBalance(ctx context.Conte
 	if currency == "" {
 		currency = "USD"
 	}
-	observation = UpstreamSiteBalanceObservation{
-		Host: observation.Host, DisplayName: observation.DisplayName, BaseURL: observation.BaseURL,
-		Balance: *result.Amount, Currency: currency, ObservedAt: s.currentTime().UTC(),
-		RechargeConversionScale: account.UpstreamRechargeConversionScale(),
+	observation.Balance = *result.Amount
+	observation.Currency = currency
+	observation.ObservedAt = s.currentTime().UTC()
+	observation.RechargeConversionScale = account.UpstreamRechargeConversionScale()
+	if IsHubwayRechargeSite(observation.Host) && !observation.RechargeHistorySince.IsZero() {
+		recharges, since, err := s.fetchHubwayRecharges(ctx, observation, account, proxyURL, tlsProfile, now)
+		if err == nil {
+			observation.Recharges, observation.RechargeHistorySince = recharges, since
+		} else {
+			logger.LegacyPrintf("service.upstream_billing_probe", "HBY 充值流水同步未完成: %s", err)
+		}
 	}
 	reminder, err := s.upstreamSiteBalanceReminderRepo.SaveUpstreamSiteBalanceObservation(ctx, observation)
 	if err != nil {

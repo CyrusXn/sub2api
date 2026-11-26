@@ -1733,7 +1733,7 @@ func (s *UpstreamBillingProbeService) fetchInnomAccountBalance(
 	profilePath := "/api/v1/auth/me"
 	if parsed, err := url.Parse(baseURL); err == nil {
 		switch strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".") {
-		case "hubway.cc", "mxamaxai.com", "ai.maok.shop":
+		case "hubway.cc", "z.hubway.cc", "mxamaxai.com", "ai.maok.shop":
 			// 这些站点的当前登录态资料接口使用 user/profile，旧 auth/me 不返回余额。
 			profilePath = "/api/v1/user/profile"
 		}

@@ -51,7 +51,7 @@ ON CONFLICT (host) DO UPDATE SET
 
 func (r *balanceCenterRepository) ListDueUpstreamSiteBalanceObservations(ctx context.Context, now time.Time, limit int) ([]service.UpstreamSiteBalanceObservation, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT host, display_name, base_url, failure_count
+SELECT host, display_name, base_url, failure_count, recharge_history_since
 FROM upstream_site_balance_observations
 WHERE next_probe_at <= $1
 ORDER BY next_probe_at, host
@@ -63,7 +63,7 @@ LIMIT $2`, now, limit)
 	items := make([]service.UpstreamSiteBalanceObservation, 0)
 	for rows.Next() {
 		var item service.UpstreamSiteBalanceObservation
-		if err := rows.Scan(&item.Host, &item.DisplayName, &item.BaseURL, &item.FailureCount); err != nil {
+		if err := rows.Scan(&item.Host, &item.DisplayName, &item.BaseURL, &item.FailureCount, &item.RechargeHistorySince); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -121,29 +121,30 @@ func (r *balanceCenterRepository) SaveUpstreamSiteBalanceObservation(ctx context
 		alertNewBalance = item.Balance
 		alertDelta = delta
 		alertDetectedAt = detectedAt
-		// 充值归属检测时间；审核时间仅用于 review 字段，绝不回写 occurred_at。
-		// 余额基线保留上游原值。入账前换算为实际充值口径，再按净增量向上匹配档位。
+	}
+	if service.IsHubwayRechargeSite(item.Host) {
+		for _, recharge := range item.Recharges {
+			key := fmt.Sprintf("%s:redeem:%d", strings.ToLower(item.Host), recharge.ID)
+			if err = insertUpstreamAutomaticRecharge(ctx, tx, item, key, recharge.Amount, recharge.UsedAt, "原站余额充值，待审核"); err != nil {
+				return nil, err
+			}
+		}
+		// 和流水同事务提交，写入失败时不推进同步起点。
+		if !item.RechargeHistorySince.IsZero() {
+			if _, err = tx.ExecContext(ctx, `UPDATE upstream_site_balance_observations SET recharge_history_since=GREATEST(recharge_history_since, $2) WHERE host=$1 AND recharge_history_since < $2`, item.Host, item.RechargeHistorySince); err != nil {
+				return nil, err
+			}
+		}
+	} else if increased {
+		// 其他站点沿用按余额差换算和匹配充值档位的逻辑。
 		scale := item.RechargeConversionScale
 		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
 			scale = 1
 		}
 		amount := upstreamAutomaticRechargeAmount(observedDelta * scale)
 		if amount > 0 {
-			sourceKey := fmt.Sprintf("%s:%s", strings.ToLower(item.Host), item.ObservedAt.UTC().Format(time.RFC3339Nano))
-			_, err = tx.ExecContext(ctx, `
-WITH site AS (
- INSERT INTO balance_center_sites (name, display_name, normalized_domain, base_url, source, probe_supported)
- VALUES ($5, $5, LOWER($4), $6, 'sub2api', TRUE)
- ON CONFLICT (normalized_domain) DO UPDATE SET
-   display_name=CASE WHEN balance_center_sites.display_name='' THEN EXCLUDED.display_name ELSE balance_center_sites.display_name END,
-   base_url=CASE WHEN balance_center_sites.base_url='' THEN EXCLUDED.base_url ELSE balance_center_sites.base_url END,
-   updated_at=NOW()
- RETURNING id, COALESCE(NULLIF(display_name, ''), name) AS site_label
-)
-INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, amount, currency, occurred_at, note, record_type, review_status)
-SELECT 'upstream_auto', $1, site.id, site.site_label, $2, 'CNY', $3, '余额增加自动识别，待审核', 'recharge', 'pending' FROM site
-ON CONFLICT (source, source_key) DO NOTHING`, sourceKey, amount, item.ObservedAt, item.Host, item.DisplayName, item.BaseURL)
-			if err != nil {
+			key := fmt.Sprintf("%s:%s", strings.ToLower(item.Host), item.ObservedAt.UTC().Format(time.RFC3339Nano))
+			if err = insertUpstreamAutomaticRecharge(ctx, tx, item, key, amount, item.ObservedAt, "余额增加自动识别，待审核"); err != nil {
 				return nil, err
 			}
 		}
@@ -186,6 +187,23 @@ FROM upstream_site_balance_observations WHERE host=$1 AND alert_active=TRUE`, it
 		return nil, err
 	}
 	return reminder, nil
+}
+
+func insertUpstreamAutomaticRecharge(ctx context.Context, tx *sql.Tx, item service.UpstreamSiteBalanceObservation, key string, amount any, occurredAt time.Time, note string) error {
+	_, err := tx.ExecContext(ctx, `
+WITH site AS (
+ INSERT INTO balance_center_sites (name, display_name, normalized_domain, base_url, source, probe_supported)
+ VALUES ($5, $5, LOWER($4), $6, 'sub2api', TRUE)
+ ON CONFLICT (normalized_domain) DO UPDATE SET
+   display_name=CASE WHEN balance_center_sites.display_name='' THEN EXCLUDED.display_name ELSE balance_center_sites.display_name END,
+   base_url=CASE WHEN balance_center_sites.base_url='' THEN EXCLUDED.base_url ELSE balance_center_sites.base_url END,
+   updated_at=NOW()
+ RETURNING id, COALESCE(NULLIF(display_name, ''), name) AS site_label
+)
+INSERT INTO balance_center_recharge_events (source, source_key, site_id, site_label, amount, currency, occurred_at, note, record_type, review_status)
+SELECT 'upstream_auto', $1, site.id, site.site_label, $2, 'CNY', $3, $7, 'recharge', 'pending' FROM site
+ON CONFLICT (source, source_key) DO NOTHING`, key, amount, occurredAt, item.Host, item.DisplayName, item.BaseURL, note)
+	return err
 }
 
 func (r *balanceCenterRepository) ListActiveUpstreamSiteBalanceReminders(ctx context.Context) ([]service.UpstreamSiteBalanceReminder, error) {

@@ -102,6 +102,18 @@ describe('BalanceCenterView', () => {
     wrapper.unmount()
   })
 
+  it.each(['hubway.cc', 'z.hubway.cc'])('不根据 %s 的余额提醒预填充值金额', async (host) => {
+    api.sites.mockResolvedValue([{ ...sites[0], normalized_domain: host, base_url: `https://${host}` }])
+    api.listUpstreamSites.mockResolvedValue([{ host, website_url: `https://${host}`, account_ids: [10], account_names: [], login_username: '', has_password: false, protocol: 'innom' }])
+    route.query = { recharge_host: host, recharge_delta: '50' }
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-test="recharge-amount-1"]').element.value).toBe('')
+    expect(wrapper.find('[data-test="recharge-suggestion"]').exists()).toBe(false)
+    expect(api.createRechargeEvent).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('重复点击同一提醒会重新选中输入框，但保留手工修正金额', async () => {
     route.query = { recharge_host: 'hby.example', recharge_delta: '8.96', recharge_currency: 'USD', recharge_request: 'third' }
     const wrapper = mountView(document.body)

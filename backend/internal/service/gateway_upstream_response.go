@@ -688,12 +688,14 @@ func sseEventHasSemanticOutput(data string) bool {
 		switch eventType {
 		case "content_block_delta":
 			delta, _ := event["delta"].(map[string]any)
-			kind, _ := delta["type"].(string)
-			if kind == "text_delta" || kind == "thinking_delta" {
+			switch delta["type"] {
+			case "text_delta":
 				text, _ := delta["text"].(string)
 				return strings.TrimSpace(text) != ""
-			}
-			if kind == "input_json_delta" {
+			case "thinking_delta":
+				thinking, _ := delta["thinking"].(string)
+				return strings.TrimSpace(thinking) != ""
+			case "input_json_delta":
 				partialJSON, _ := delta["partial_json"].(string)
 				return strings.TrimSpace(partialJSON) != ""
 			}
@@ -998,6 +1000,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	needModelReplace := strings.TrimSpace(originalModel) != ""
 	clientModel := compositeClientModel(ctx, "")
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
+	toolNameRestorer := newToolNameStreamRestorer(toolNameRewriteFromContext(c))
 	sawTerminalEvent := false
 	useNoopDeltaKeepalive := c != nil && c.Request != nil && shouldUseClaudeCodeNoopDeltaKeepalive(c.GetHeader("User-Agent"))
 	noopDeltaKeepaliveBlockIndex := -1
@@ -1203,6 +1206,73 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		return []string{block}, string(newData), usagePatch, nil
 	}
 
+	flushCarry := func() {
+		if clientDisconnected || !c.Writer.Written() || toolNameRestorer == nil {
+			return
+		}
+		for _, rest := range toolNameRestorer.flush() {
+			block := "event: content_block_delta\ndata: " + string(rest) + "\n\n"
+			_, _ = io.WriteString(w, reverseToolNamesIfPresentString(c, block))
+		}
+		flusher.Flush()
+	}
+
+	markDisconnected := func() {
+		clientDisconnected = true
+		logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
+		// 不 break：客户端断开后仍需继续合并本事件及后续事件的 usage，
+		// 否则会漏计当前事件携带的 usage 导致少计费。后续写入由
+		// clientDisconnected 守卫跳过。
+	}
+
+	writeRestoredBlock := func(block string, semantic bool) {
+		if clientDisconnected {
+			return
+		}
+		if _, werr := io.WriteString(w, reverseToolNamesIfPresentString(c, block)); werr != nil {
+			markDisconnected()
+			return
+		}
+		if semantic {
+			markTextStreamRealOutput(c)
+		}
+		flusher.Flush()
+		if semantic {
+			recordTextStreamPacket(c)
+		}
+		lastDataAt = time.Now()
+		resetKeepaliveTimer()
+	}
+
+	// writeRestoredParts 分三段写出被改写的块，不重建整块字符串。
+	writeRestoredParts := func(prefix string, ev []byte) {
+		semantic := sseEventHasSemanticOutput(string(ev))
+		if clientDisconnected {
+			return
+		}
+		if _, werr := io.WriteString(w, prefix); werr != nil {
+			markDisconnected()
+			return
+		}
+		if _, werr := w.Write(reverseToolNamesIfPresent(c, ev)); werr != nil {
+			markDisconnected()
+			return
+		}
+		if _, werr := io.WriteString(w, "\n\n"); werr != nil {
+			markDisconnected()
+			return
+		}
+		if semantic {
+			markTextStreamRealOutput(c)
+		}
+		flusher.Flush()
+		if semantic {
+			recordTextStreamPacket(c)
+		}
+		lastDataAt = time.Now()
+		resetKeepaliveTimer()
+	}
+
 	for {
 		select {
 		case ev, ok := <-events:
@@ -1211,6 +1281,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 			if !ok {
 				// 上游完成，返回结果
+				flushCarry()
 				if !sawTerminalEvent {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
@@ -1218,6 +1289,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
+					flushCarry()
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
 				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
@@ -1231,6 +1303,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				// 客户端未断开，正常的错误处理
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
+					flushCarry()
 					sendErrorEvent("response_too_large", fmt.Sprintf("upstream SSE line exceeded %d bytes", maxLineSize))
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
 				}
@@ -1256,6 +1329,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						RetryableOnSameAccount: true,
 					}
 				}
+				flushCarry()
 				sendErrorEvent("stream_read_error", disconnectMsg)
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
 			}
@@ -1274,37 +1348,55 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					if clientDisconnected {
 						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 					}
+					flushCarry()
 					return nil, err
 				}
 
-				for _, block := range outputBlocks {
-					if !clientDisconnected {
-						restored := reverseToolNamesIfPresentString(c, block)
-						if _, werr := io.WriteString(w, restored); werr != nil {
-							clientDisconnected = true
-							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
-							// 不 break：客户端断开后仍需继续合并本事件及后续事件的 usage，
-							// 否则会漏计当前事件携带的 usage 导致少计费。后续写入由
-							// clientDisconnected 守卫跳过。
-						} else {
-							if data != "" && sseEventHasSemanticOutput(data) {
-								markTextStreamRealOutput(c)
-							}
-							flusher.Flush()
-							if data != "" && sseEventHasSemanticOutput(data) {
-								recordTextStreamPacket(c)
-							}
-							lastDataAt = time.Now()
-							resetKeepaliveTimer()
-						}
+				// usage 与首 token 时间按原事件算一次，还原器可能把这一事件拆成多个块或整段扣住。
+				if data != "" {
+					if firstTokenMs == nil && sseEventHasSemanticOutput(data) {
+						ms := int(time.Since(startTime).Milliseconds())
+						firstTokenMs = &ms
 					}
-					if data != "" {
-						if firstTokenMs == nil && data != "[DONE]" && sseEventHasSemanticOutput(data) {
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
+					if usagePatch != nil {
+						mergeSSEUsagePatch(usage, usagePatch)
+					}
+				}
+
+				if toolNameRestorer == nil {
+					for _, block := range outputBlocks {
+						writeRestoredBlock(block, sseEventHasSemanticOutput(data))
+					}
+				} else {
+					for _, block := range outputBlocks {
+						dataAt := strings.Index(block, "data:")
+						if dataAt < 0 {
+							writeRestoredBlock(block, false)
+							continue
 						}
-						if usagePatch != nil {
-							mergeSSEUsagePatch(usage, usagePatch)
+						start := dataAt + len("data:")
+						if start < len(block) && block[start] == ' ' {
+							start++
+						}
+						end := len(block) - len("\n\n")
+						if end < start {
+							end = len(block)
+						}
+						payload := streamEventBytes(block[start:end])
+						var restored [2][]byte
+						n := toolNameRestorer.restoreInto(payload, &restored)
+						for i, ev := range restored[:n] {
+							if i == n-1 && bytes.Equal(ev, payload) {
+								writeRestoredBlock(block, sseEventHasSemanticOutput(string(ev)))
+								continue
+							}
+							prefix := block[:start]
+							if i == 0 && n == 2 {
+								// out[0] 是按约定补发的 carry，永远是 content_block_delta；
+								// 原事件（stop 或别的 delta）的 event 行不能套在它上面。
+								prefix = "event: content_block_delta\ndata: "
+							}
+							writeRestoredParts(prefix, ev)
 						}
 					}
 				}
@@ -1326,6 +1418,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 			}
+			flushCarry()
 			sendErrorEvent("stream_timeout", fmt.Sprintf("upstream stream idle for %s", streamInterval))
 			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 

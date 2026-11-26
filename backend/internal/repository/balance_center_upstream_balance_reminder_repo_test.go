@@ -312,6 +312,62 @@ func TestUpstreamSiteBalanceObservationDoesNotReuseInactiveOrSmallReminder(t *te
 func expectAutomaticRechargeReview(mock sqlmock.Sqlmock, host string, observedAt time.Time, amount int64) {
 	sourceKey := host + ":" + observedAt.UTC().Format(time.RFC3339Nano)
 	mock.ExpectExec(regexp.QuoteMeta("WITH site AS (")).
-		WithArgs(sourceKey, amount, observedAt, host, "站点", "https://site.example").
+		WithArgs(sourceKey, amount, observedAt, host, "站点", "https://site.example", "余额增加自动识别，待审核").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+}
+
+func TestHubwayBalanceIncreaseDoesNotGuessRecharge(t *testing.T) {
+	for _, host := range []string{"hubway.cc", "z.hubway.cc"} {
+		t.Run(host, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			now := time.Now().UTC()
+			mock.ExpectBegin()
+			mock.ExpectQuery("SELECT balance, currency, alert_active").WithArgs(host).
+				WillReturnRows(sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).
+					AddRow(100.0, "USD", false, nil, nil, "USD", nil))
+			mock.ExpectExec("INSERT INTO upstream_site_balance_observations").
+				WithArgs(host, "HBY", "https://"+host, 110.5, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), true, 100.0, 110.5, 10.5, "USD", now).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery("SELECT host, display_name, alert_old_balance").WithArgs(host).
+				WillReturnRows(sqlmock.NewRows([]string{"host", "display_name", "old_balance", "new_balance", "delta", "currency", "detected_at", "version"}).
+					AddRow(host, "HBY", 100.0, 110.5, 10.5, "USD", now, 1))
+			mock.ExpectCommit()
+			repo := NewUpstreamSiteBalanceReminderRepository(db)
+			reminder, err := repo.SaveUpstreamSiteBalanceObservation(context.Background(), service.UpstreamSiteBalanceObservation{
+				Host: host, DisplayName: "HBY", BaseURL: "https://" + host,
+				Balance: 110.5, ObservedAt: now, Currency: "USD", RechargeConversionScale: 0.1,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, reminder)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestHubwayRechargeRecordsWithoutBalanceIncrease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	now := time.Now().UTC()
+	usedAt := now.Add(-time.Minute)
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT balance, currency").WithArgs("hubway.cc").WillReturnRows(
+		sqlmock.NewRows([]string{"balance", "currency", "alert_active", "alert_old_balance", "alert_delta", "alert_currency", "alert_detected_at"}).AddRow(100.0, "USD", false, nil, nil, "USD", nil))
+	mock.ExpectExec("ON CONFLICT \\(source, source_key\\) DO NOTHING").
+		WithArgs("hubway.cc:redeem:18", 20.0, usedAt, "hubway.cc", "HBY", "https://hubway.cc", "原站余额充值，待审核").
+		WillReturnResult(sqlmock.NewResult(0, 0)) // 同一条流水重复同步时不再插入。
+	mock.ExpectExec("UPDATE upstream_site_balance_observations SET recharge_history_since").WithArgs("hubway.cc", usedAt).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO upstream_site_balance_observations").
+		WithArgs("hubway.cc", "HBY", "https://hubway.cc", 90.0, "USD", now, now.Add(service.UpstreamSiteBalancePollInterval), false, nil, nil, nil, "USD", nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	reminder, err := NewUpstreamSiteBalanceReminderRepository(db).SaveUpstreamSiteBalanceObservation(context.Background(), service.UpstreamSiteBalanceObservation{
+		Host: "hubway.cc", DisplayName: "HBY", BaseURL: "https://hubway.cc", Balance: 90, Currency: "USD", ObservedAt: now,
+		RechargeHistorySince: usedAt, Recharges: []service.UpstreamSiteRecharge{{ID: 18, Amount: 20, UsedAt: usedAt}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, reminder)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

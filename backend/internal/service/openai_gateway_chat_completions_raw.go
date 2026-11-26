@@ -182,7 +182,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 			return nil, fmt.Errorf("sanitize Grok unsupported fields: %w", err)
 		}
 	}
-	upstreamBody = applyOllamaCloudRawChatCompletionsRequest(account, upstreamBody)
+	upstreamBody = applyRawChatCompletionsReasoningCompatRequest(account, upstreamBody)
 	upstreamBody = clampOllamaCloudUpstreamMaxTokens(account, upstreamBody)
 
 	logger.L().Debug("openai chat_completions raw: forwarding without protocol conversion",
@@ -430,7 +430,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 			}
 		}
-		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
+		line = applyRawChatCompletionsReasoningCompatSSELine(account, line)
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
 
 		line = s.replaceModelInSSELine(line, originalModel)
@@ -614,7 +614,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}
 	respBody = sanitizeOpenAIResponseJSON(respBody, originalModel, upstreamModel)
-	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
+	respBody = applyRawChatCompletionsReasoningCompatResponse(account, respBody)
 	respBody = s.replaceModelInResponseBody(respBody, originalModel)
 
 	copySanitizedOpenAIResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

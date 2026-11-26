@@ -2802,7 +2802,7 @@ onMounted(() => {
         void refreshVisibleUpstreamBillingRates()
       }
     })
-  void adminAPI.proxies.getAll()
+  void adminAPI.proxies.getAllWithCount()
     .then(result => { proxies.value = result })
     .catch(error => { console.error('加载代理失败：', error) })
   window.addEventListener('scroll', handleScroll, true)
